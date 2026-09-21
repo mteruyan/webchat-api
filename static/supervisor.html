@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Consola de Supervisor — Sanitas</title>
+<style>
+  :root {
+    --azul: #0A4C8C; --azul-oscuro: #073A6B; --verde: #2FB88B;
+    --rojo: #E0483E; --naranja: #E0912E; --fondo: #F7F9FB;
+    --texto: #1A2B3C; --texto-suave: #5B6B7C; --borde: #E1E8EF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0; background: var(--fondo); height: 100vh; display: flex; flex-direction: column;
+    color: var(--texto);
+  }
+  #login { display: flex; gap: 8px; padding: 14px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; }
+  #login input { padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  #urlBase { flex: 1.4; }
+  #usuario, #password { flex: 1; }
+  button { padding: 9px 16px; cursor: pointer; border: none; border-radius: 8px; background: var(--azul); color: white; font-size: 13.5px; font-weight: 600; font-family: inherit; }
+  button:hover { background: var(--azul-oscuro); }
+  button.chico { padding: 5px 11px; font-size: 12.5px; }
+  button.rojo { background: var(--rojo); }
+  button.naranja { background: var(--naranja); }
+  button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  button.gris:hover { background: var(--fondo); color: var(--texto); }
+
+  #barraConectado { display: none; padding: 10px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; gap: 10px; }
+  #barraConectado.activa { display: flex; }
+  #barraConectado .estado { font-size: 12.5px; color: var(--texto-suave); flex: 1; }
+
+  #main { flex: 1; display: flex; overflow: hidden; }
+  #tablero { width: 340px; background: white; border-right: 1px solid var(--borde); overflow-y: auto; padding: 10px; flex-shrink: 0; }
+  .asesor-card { border: 1px solid var(--borde); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .asesor-card .cabecera { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .dot.on { background: var(--verde); }
+  .dot.off { background: #B7C4D1; }
+  .asesor-card .nombre { font-weight: 700; font-size: 14px; flex: 1; }
+  .asesor-card .carga { font-size: 12px; color: var(--texto-suave); }
+  .asesor-card .campanas { font-size: 11.5px; color: var(--texto-suave); margin: 4px 0 8px; }
+  .dot.pausado { background: var(--naranja); }
+  .asesor-card .cupo-input {
+    width: 32px; border: 1px solid var(--borde); border-radius: 5px; text-align: center;
+    font-size: 12px; padding: 2px; font-family: inherit;
+  }
+  .asesor-card .stats { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--texto-suave); margin-bottom: 8px; }
+  .asesor-card .stats b { color: var(--texto); font-weight: 600; }
+  #btnEtiquetas { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  #btnRefrescarTablero.girando { animation: girar 0.6s linear; }
+  @keyframes girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  #btnEtiquetas:hover { background: var(--fondo); color: var(--texto); }
+  #btnAsesoresAdmin { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  #btnAsesoresAdmin:hover { background: var(--fondo); color: var(--texto); }
+
+  /* ---- Modal de mantenimiento de asesores ---- */
+  #modalAsesoresOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1002; align-items: center; justify-content: center; }
+  #modalAsesoresOverlay.activa { display: flex; }
+  #modalAsesores { background: white; border-radius: 14px; padding: 22px; width: 460px; max-height: 85vh; overflow-y: auto; }
+  #modalAsesores h3 { margin: 0 0 12px; font-size: 16px; }
+  .asesor-admin-fila { border: 1px solid var(--borde); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+  .asesor-admin-fila .fila-top { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .asesor-admin-fila input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid var(--borde); border-radius: 6px; font-size: 13px; font-family: inherit; }
+  .asesor-admin-fila select { padding: 6px; border: 1px solid var(--borde); border-radius: 6px; font-size: 12.5px; font-family: inherit; }
+  .asesor-admin-fila .cupo-admin { width: 42px; padding: 6px; border: 1px solid var(--borde); border-radius: 6px; text-align: center; font-size: 12.5px; }
+  .asesor-admin-fila .campanas-check { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--texto-suave); margin: 6px 0; }
+  .asesor-admin-fila .campanas-check label { display: flex; align-items: center; gap: 3px; }
+  .asesor-admin-fila .fila-botones { display: flex; gap: 6px; margin-top: 6px; }
+  .asesor-admin-fila.inactivo { opacity: .55; }
+  #nuevoAsesorBox { border-top: 2px solid var(--borde); margin-top: 16px; padding-top: 16px; }
+  #nuevoAsesorBox input, #nuevoAsesorBox select { display: block; width: 100%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13.5px; font-family: inherit; }
+  #btnCerrarModalAsesores { width: 100%; margin-top: 14px; background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+
+  /* ---- Modal de etiquetas ---- */
+  #modalOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
+  #modalOverlay.activa { display: flex; }
+  #modalEtiquetas { background: white; border-radius: 14px; padding: 22px; width: 360px; max-height: 80vh; overflow-y: auto; }
+  #modalEtiquetas h3 { margin: 0 0 14px; font-size: 16px; }
+  .etiqueta-fila { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .etiqueta-fila input[type="text"] { flex: 1; padding: 7px 10px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13.5px; font-family: inherit; }
+  .etiqueta-fila.inactiva input[type="text"] { color: var(--texto-suave); text-decoration: line-through; }
+  #nuevaEtiquetaFila { display: flex; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--borde); }
+  #nuevaEtiquetaFila input { flex: 1; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13.5px; font-family: inherit; }
+  #btnCerrarModalEtiquetas { width: 100%; margin-top: 14px; background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+
+  /* ---- Modal de cierre de conversación ---- */
+  #modalCerrarOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1001; align-items: center; justify-content: center; }
+  #modalCerrarOverlay.activa { display: flex; }
+  #modalCerrarConv { background: white; border-radius: 14px; padding: 22px; width: 320px; }
+  #modalCerrarConv h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalCerrarConv p { margin: 0 0 14px; font-size: 13px; color: var(--texto-suave); }
+  #modalCerrarConv select { width: 100%; padding: 9px; border: 1px solid var(--borde); border-radius: 8px; font-size: 14px; font-family: inherit; margin-bottom: 16px; }
+  #modalCerrarConv .botones { display: flex; gap: 8px; justify-content: flex-end; }
+  .barra { background: var(--fondo); border-radius: 4px; height: 5px; overflow: hidden; margin-bottom: 8px; }
+  .barra-fill { background: var(--azul); height: 100%; }
+  .conv-mini {
+    display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px;
+    cursor: pointer; font-size: 13px;
+  }
+  .conv-mini:hover { background: var(--fondo); }
+  .conv-mini.activa { background: #EAF1F9; }
+  .conv-mini .info { flex: 1; min-width: 0; }
+  .conv-mini .n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv-mini .t { font-size: 11px; color: var(--texto-suave); }
+  .sin-conversaciones { font-size: 12.5px; color: var(--texto-suave); padding: 4px 8px; }
+
+  #panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #panelVacio { margin: auto; color: var(--texto-suave); font-size: 14px; text-align: center; padding: 40px; }
+  .panel-header { display: none; padding: 14px 20px; background: white; border-bottom: 1px solid var(--borde); align-items: center; gap: 12px; }
+  .panel-header.activa { display: flex; }
+  .panel-header .nombre { font-weight: 700; font-size: 15px; }
+  .panel-header .telefono { font-size: 12.5px; color: var(--texto-suave); }
+  .panel-header .acciones-top { margin-left: auto; display: flex; gap: 6px; }
+
+  #chatEscucha { flex: 1; padding: 16px; overflow-y: auto; display: none; }
+  #chatEscucha.activa { display: block; }
+  .msg { margin: 6px 0; max-width: 72%; padding: 9px 13px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+  .usuario { background: #EEF3F8; margin-right: auto; }
+  .asesor { background: var(--azul); color: white; margin-left: auto; }
+  .supervisor { background: var(--naranja); color: white; margin-left: auto; }
+  .bot { background: transparent; border: 1px dashed var(--borde); color: var(--texto-suave); margin: 10px auto; text-align: center; font-size: 12.5px; max-width: 90%; }
+  .sistema { background: transparent; color: var(--texto-suave); font-size: 12px; text-align: center; margin: 10px auto; max-width: 100%; }
+
+  #acciones { display: none; gap: 8px; padding: 12px 16px; background: white; border-top: 1px solid var(--borde); }
+  #acciones.activa { display: flex; }
+  #accionTexto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 999px; font-size: 14px; font-family: inherit; }
+</style>
+</head>
+<body>
+  <div id="login">
+    <input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" />
+    <input id="usuario" placeholder="Usuario" />
+    <input id="password" placeholder="Contraseña" type="password" />
+    <button id="btnConectar">Conectar</button>
+  </div>
+  <div id="barraConectado">
+    <span class="dot on"></span>
+    <span class="estado" id="estadoTexto">Conectando...</span>
+    <button class="gris chico" id="btnRefrescarTablero" title="Actualizar">🔄 Actualizar</button>
+    <button id="btnEtiquetas">🏷️ Etiquetas</button>
+    <button id="btnAsesoresAdmin">👥 Asesores</button>
+    <button class="gris chico" id="btnSalir">Cerrar sesión</button>
+  </div>
+  <div id="main">
+    <div id="tablero"></div>
+    <div id="panel">
+      <div id="panelVacio">Haz clic en "👂 Escuchar" sobre cualquier conversación del tablero para empezar a supervisarla.</div>
+      <div class="panel-header" id="panelHeader">
+        <div>
+          <div class="nombre" id="phNombre"></div>
+          <div class="telefono" id="phTelefono"></div>
+        </div>
+        <div style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
+          <div>⏱ Esperó: <b id="phTiempoEspera">--</b></div>
+          <div>🕐 En atención: <b id="phTiempoAtencion">--</b></div>
+        </div>
+        <div class="acciones-top">
+          <button class="chico gris" id="btnDejarEscuchar">Dejar de escuchar</button>
+          <button class="chico rojo" id="btnControl">✋ Tomar control</button>
+          <button class="chico rojo" id="btnCerrarConversacion">Cerrar</button>
+        </div>
+      </div>
+      <div id="chatEscucha"></div>
+      <div id="acciones">
+        <input id="accionTexto" placeholder="Mensaje..." />
+        <button class="naranja" id="btnSusurro">🤫 Susurrar</button>
+        <button id="btnDirecto">Responder directo</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalOverlay">
+    <div id="modalEtiquetas">
+      <h3>Mensaje de bienvenida del asesor</h3>
+      <p style="margin:0 0 8px;font-size:12.5px;color:var(--texto-suave);">Se envía automáticamente cuando se asigna una conversación. Usa <code>{{ASESOR_NOMBRE}}</code> para insertar el nombre del asesor que atiende.</p>
+      <textarea id="mensajeBienvenidaInput" rows="3" style="width:100%;padding:9px 10px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;"></textarea>
+      <button id="btnGuardarMensajeBienvenida" style="margin-top:8px;width:100%;">Guardar mensaje</button>
+
+      <h3 style="margin-top:22px;">Mensaje de cierre para el usuario</h3>
+      <p style="margin:0 0 8px;font-size:12.5px;color:var(--texto-suave);">Se envía automáticamente cuando un asesor cierra una conversación.</p>
+      <textarea id="mensajeCierreInput" rows="3" style="width:100%;padding:9px 10px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;"></textarea>
+      <button id="btnGuardarMensajeCierre" style="margin-top:8px;width:100%;">Guardar mensaje</button>
+
+      <h3 style="margin-top:22px;">Etiquetas de cierre</h3>
+      <div id="listaEtiquetas"></div>
+      <div id="nuevaEtiquetaFila">
+        <input id="nuevaEtiquetaInput" placeholder="Nueva etiqueta..." />
+        <button id="btnAgregarEtiqueta">Agregar</button>
+      </div>
+      <button id="btnCerrarModalEtiquetas">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalCerrarOverlay">
+    <div id="modalCerrarConv">
+      <h3>Cerrar conversación</h3>
+      <p>Selecciona una etiqueta antes de cerrar — ayuda a las estadísticas del equipo.</p>
+      <select id="selectEtiquetaCierre"></select>
+      <div class="botones">
+        <button class="gris" id="btnCancelarCierreConv">Cancelar</button>
+        <button class="rojo" id="btnConfirmarCierreConv">Cerrar conversación</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalAsesoresOverlay">
+    <div id="modalAsesores">
+      <h3>Mantenimiento de asesores</h3>
+      <div id="listaAsesoresAdmin"></div>
+
+      <div id="nuevoAsesorBox">
+        <h3>Crear nuevo asesor</h3>
+        <input id="nuevoUsuario" placeholder="usuario (ej. maria.perez)" />
+        <input id="nuevoNombre" placeholder="Nombre completo" />
+        <input id="nuevoNombreDisplay" placeholder="Nombre corto (ej. María P.)" />
+        <input id="nuevoPassword" placeholder="Contraseña inicial" type="text" />
+        <select id="nuevoRol">
+          <option value="asesor">Asesor</option>
+          <option value="supervisor">Supervisor</option>
+          <option value="editor">Editor de contenido</option>
+        </select>
+        <div class="campanas-check" id="nuevoCampanasCheck"></div>
+        <button id="btnCrearAsesor" style="width:100%;">Crear asesor</button>
+      </div>
+
+      <button id="btnCerrarModalAsesores">Cerrar</button>
+    </div>
+  </div>
+
+<script>
+if (!document.getElementById('urlBase').value) {
+  document.getElementById('urlBase').value = window.location.origin;
+}
+
+let ws = null;
+let tokenGuardado = null;
+let urlBaseGuardada = null;
+let intentosReconexion = 0;
+let cerradoManualmente = false;
+let asesoresPorId = {};
+let conversacionEscuchada = null;
+let entradaColaActual = null;
+let asignadoEnActual = null;
+let intervaloTiempos = null;
+
+function actualizarTiemposPanel() {
+  const esperaEl = document.getElementById('phTiempoEspera');
+  const atencionEl = document.getElementById('phTiempoAtencion');
+  if (entradaColaActual && asignadoEnActual) {
+    esperaEl.textContent = formatearDuracion((new Date(asignadoEnActual) - new Date(entradaColaActual)) / 1000);
+  } else {
+    esperaEl.textContent = '--';
+  }
+  if (asignadoEnActual) {
+    atencionEl.textContent = formatearDuracion((new Date() - new Date(asignadoEnActual)) / 1000);
+  } else {
+    atencionEl.textContent = '--';
+  }
+}
+let etiquetas = [];
+let asesoresAdmin = [];
+let campanasCatalogo = [];
+
+function formatearDuracion(segundos) {
+  segundos = segundos || 0;
+  const h = Math.floor(segundos / 3600);
+  const m = Math.floor((segundos % 3600) / 60);
+  const s = Math.floor(segundos % 60);
+  return `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
+}
+
+function siguienteEsperaReconexion() {
+  return Math.min(1000 * Math.pow(2, intentosReconexion), 20000);
+}
+
+document.getElementById('btnConectar').onclick = async () => {
+  const urlBase = document.getElementById('urlBase').value.trim().replace(/\/$/, '');
+  const usuario = document.getElementById('usuario').value.trim();
+  const password = document.getElementById('password').value;
+  if (!urlBase || !usuario || !password) return;
+
+  const btn = document.getElementById('btnConectar');
+  btn.disabled = true; btn.textContent = 'Conectando...';
+
+  let data;
+  try {
+    const resp = await fetch(`${urlBase}/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario, password }),
+    });
+    if (!resp.ok) { alert('Usuario o contraseña incorrectos'); btn.disabled = false; btn.textContent = 'Conectar'; return; }
+    data = await resp.json();
+    if (data.rol !== 'supervisor') { alert('Este usuario no tiene rol de supervisor'); btn.disabled = false; btn.textContent = 'Conectar'; return; }
+  } catch (e) {
+    alert('No se pudo contactar al servidor'); btn.disabled = false; btn.textContent = 'Conectar'; return;
+  }
+
+  tokenGuardado = data.token;
+  urlBaseGuardada = urlBase;
+  cerradoManualmente = false;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('barraConectado').classList.add('activa');
+  conectarWs();
+};
+
+document.getElementById('btnSalir').onclick = () => {
+  cerradoManualmente = true;
+  if (ws) ws.close();
+  document.getElementById('login').style.display = 'flex';
+  document.getElementById('barraConectado').classList.remove('activa');
+  document.getElementById('btnConectar').disabled = false;
+  document.getElementById('btnConectar').textContent = 'Conectar';
+  asesoresPorId = {};
+  pintarTablero();
+  cerrarPanel();
+};
+
+function conectarWs() {
+  const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
+  ws = new WebSocket(`${urlWs}/ws/supervisor?token=${tokenGuardado}`);
+
+  ws.onopen = () => { intentosReconexion = 0; document.getElementById('estadoTexto').textContent = 'En línea'; };
+  ws.onclose = (e) => {
+    ws = null;
+    if (cerradoManualmente) return;
+    if (e.code === 4401 || e.code === 4403) {
+      document.getElementById('estadoTexto').textContent = 'Sesión expirada — vuelve a conectarte';
+      return;
+    }
+    document.getElementById('estadoTexto').textContent = 'Reconectando...';
+    const espera = siguienteEsperaReconexion();
+    intentosReconexion++;
+    setTimeout(() => { if (!cerradoManualmente) conectarWs(); }, espera);
+  };
+  ws.onerror = () => { document.getElementById('estadoTexto').textContent = 'Error de conexión'; };
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    const p = data.payload || {};
+    if (data.type === 'estado_global') {
+      asesoresPorId = {};
+      p.asesores.forEach(a => asesoresPorId[a.asesor_id] = a);
+      pintarTablero();
+    } else if (data.type === 'asesor_estado_cambio') {
+      asesoresPorId[p.asesor_id] = p;
+      pintarTablero();
+    } else if (data.type === 'mensaje_conversacion') {
+      if (String(p.conversacion_id) === String(conversacionEscuchada)) {
+        agregarMensajeEscucha(p.texto, p.emisor_tipo);
+      }
+    } else if (data.type === 'historial_conversacion') {
+      if (String(p.conversacion_id) === String(conversacionEscuchada)) {
+        const chat = document.getElementById('chatEscucha');
+        chat.innerHTML = '';
+        (p.historial || []).forEach(m => {
+          const texto = m.tipo_contenido === 'archivo' ? `📎 ${m.contenido}` : m.contenido;
+          agregarMensajeEscucha(texto, m.emisor_tipo, m.enviado_en);
+        });
+      }
+    } else if (data.type === 'etiquetas_disponibles') {
+      etiquetas = p.etiquetas || [];
+      renderEtiquetas();
+    } else if (data.type === 'configuracion') {
+      document.getElementById('mensajeCierreInput').value = p.mensaje_cierre_conversacion || '';
+      document.getElementById('mensajeBienvenidaInput').value = p.mensaje_bienvenida_asesor || '';
+    } else if (data.type === 'asesores_admin') {
+      asesoresAdmin = p.asesores || [];
+      campanasCatalogo = p.campanas || [];
+      renderAsesoresAdmin();
+    }
+  };
+}
+
+function pintarTablero() {
+  const tablero = document.getElementById('tablero');
+  tablero.innerHTML = '';
+  Object.values(asesoresPorId).forEach(a => {
+    const pct = a.cupo_maximo ? Math.min(100, (a.conversaciones_activas / a.cupo_maximo) * 100) : 0;
+    const div = document.createElement('div');
+    div.className = 'asesor-card';
+    const convsHtml = (a.conversaciones && a.conversaciones.length > 0)
+      ? a.conversaciones.map(c => `
+          <div class="conv-mini ${String(c.conversacion_id) === String(conversacionEscuchada) ? 'activa' : ''}"
+               data-id="${c.conversacion_id}" data-nombre="${c.usuario_nombre}" data-telefono="${c.telefono || ''}"
+               data-entrada-cola="${c.entrada_cola || ''}" data-asignado-en="${c.asignado_en || ''}"
+               data-asesor="${a.nombre_display}">
+            <span>👂</span>
+            <div class="info">
+              <div class="n">${c.usuario_nombre}</div>
+              <div class="t">${c.telefono || ''}</div>
+            </div>
+          </div>`).join('')
+      : '<div class="sin-conversaciones">Sin conversaciones activas</div>';
+
+    const dotClase = a.en_pausa ? 'pausado' : (a.conectado ? 'on' : 'off');
+    const etiquetaEstado = a.en_pausa ? 'En pausa' : (a.conectado ? 'Conectado' : 'Desconectado');
+
+    div.innerHTML = `
+      <div class="cabecera">
+        <span class="dot ${dotClase}" title="${etiquetaEstado}"></span>
+        <span class="nombre">${a.nombre_display}</span>
+        <span class="carga">
+          ${a.conversaciones_activas}/<input type="number" class="cupo-input" min="1" max="99"
+            value="${a.cupo_maximo}" data-asesor-id="${a.asesor_id}" title="Cambiar cupo máximo" />
+        </span>
+      </div>
+      <div class="campanas">${(a.campanas || []).join(', ')}</div>
+      <div class="barra"><div class="barra-fill" style="width:${pct}%"></div></div>
+      <div class="stats">
+        <div>🟢 En línea hoy: <b>${formatearDuracion(a.segundos_conectado_hoy)}</b></div>
+        <div>⏸ Pausado hoy: <b>${formatearDuracion(a.segundos_pausado_hoy)}</b></div>
+        <div>✅ Atendidas hoy: <b>${a.atendidas_hoy || 0}</b></div>
+      </div>
+      ${convsHtml}
+    `;
+    div.querySelectorAll('.conv-mini').forEach(el => {
+      el.onclick = () => escuchar(el.dataset.id, el.dataset.nombre, el.dataset.telefono,
+                                   el.dataset.entradaCola, el.dataset.asignadoEn);
+    });
+    const cupoInput = div.querySelector('.cupo-input');
+    cupoInput.addEventListener('click', (e) => e.stopPropagation());
+    cupoInput.addEventListener('change', () => {
+      const nuevoCupo = parseInt(cupoInput.value, 10);
+      if (!nuevoCupo || nuevoCupo < 1) { cupoInput.value = a.cupo_maximo; return; }
+      ws.send(JSON.stringify({
+        type: 'cambiar_cupo',
+        payload: { asesor_id: a.asesor_id, nuevo_cupo: nuevoCupo },
+      }));
+    });
+    tablero.appendChild(div);
+  });
+}
+
+function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn) {
+  if (conversacionEscuchada && String(conversacionEscuchada) !== String(conversacionId)) {
+    ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
+  }
+  conversacionEscuchada = conversacionId;
+  ws.send(JSON.stringify({ type: 'escuchar_conversacion', payload: { conversacion_id: Number(conversacionId) } }));
+
+  document.getElementById('panelVacio').style.display = 'none';
+  document.getElementById('panelHeader').classList.add('activa');
+  document.getElementById('chatEscucha').classList.add('activa');
+  document.getElementById('acciones').classList.add('activa');
+  document.getElementById('phNombre').textContent = nombre;
+  document.getElementById('phTelefono').textContent = telefono || '';
+  document.getElementById('chatEscucha').innerHTML = '';
+
+  entradaColaActual = entradaCola || null;
+  asignadoEnActual = asignadoEn || null;
+  if (intervaloTiempos) clearInterval(intervaloTiempos);
+  actualizarTiemposPanel();
+  intervaloTiempos = setInterval(actualizarTiemposPanel, 1000);
+
+  pintarTablero();
+}
+
+function cerrarPanel() {
+  if (conversacionEscuchada && ws) {
+    ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
+  }
+  conversacionEscuchada = null;
+  if (intervaloTiempos) { clearInterval(intervaloTiempos); intervaloTiempos = null; }
+  document.getElementById('panelVacio').style.display = 'flex';
+  document.getElementById('panelHeader').classList.remove('activa');
+  document.getElementById('chatEscucha').classList.remove('activa');
+  document.getElementById('acciones').classList.remove('activa');
+}
+
+document.getElementById('btnDejarEscuchar').onclick = cerrarPanel;
+
+document.getElementById('btnCerrarConversacion').onclick = () => {
+  if (!conversacionEscuchada) return;
+  const select = document.getElementById('selectEtiquetaCierre');
+  const activas = etiquetas.filter(e => e.activo);
+  select.innerHTML = activas.length > 0
+    ? activas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('')
+    : '<option value="">(sin etiquetas configuradas)</option>';
+  document.getElementById('modalCerrarOverlay').classList.add('activa');
+};
+
+document.getElementById('btnCancelarCierreConv').onclick = () => {
+  document.getElementById('modalCerrarOverlay').classList.remove('activa');
+};
+
+document.getElementById('btnConfirmarCierreConv').onclick = () => {
+  if (!conversacionEscuchada || !ws) return;
+  const etiquetaId = document.getElementById('selectEtiquetaCierre').value;
+  ws.send(JSON.stringify({
+    type: 'cerrar_conversacion',
+    payload: { conversacion_id: Number(conversacionEscuchada), etiqueta_cierre_id: etiquetaId ? Number(etiquetaId) : null },
+  }));
+  document.getElementById('modalCerrarOverlay').classList.remove('activa');
+  cerrarPanel();
+};
+
+function agregarMensajeEscucha(texto, emisorTipo, horaIso) {
+  const chat = document.getElementById('chatEscucha');
+  const div = document.createElement('div');
+  div.className = 'msg ' + emisorTipo;
+  div.textContent = texto;
+  const hora = document.createElement('span');
+  hora.style.cssText = 'font-size:11px;margin-left:6px;opacity:.7;';
+  const d = horaIso ? new Date(horaIso) : new Date();
+  hora.textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  div.appendChild(hora);
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+document.getElementById('btnSusurro').onclick = () => {
+  const texto = document.getElementById('accionTexto').value.trim();
+  if (!conversacionEscuchada || !texto || !ws) return;
+  ws.send(JSON.stringify({ type: 'enviar_susurro', payload: { conversacion_id: Number(conversacionEscuchada), texto } }));
+  agregarMensajeEscucha('🤫 (susurro) ' + texto, 'supervisor');
+  document.getElementById('accionTexto').value = '';
+};
+
+document.getElementById('btnControl').onclick = () => {
+  if (!conversacionEscuchada || !ws) return;
+  if (!confirm('¿Tomar control de esta conversación? El asesor dejará de atenderla.')) return;
+  ws.send(JSON.stringify({ type: 'tomar_control', payload: { conversacion_id: Number(conversacionEscuchada) } }));
+  agregarMensajeEscucha('✋ Tomaste el control de la conversación', 'supervisor');
+};
+
+document.getElementById('btnDirecto').onclick = () => {
+  const texto = document.getElementById('accionTexto').value.trim();
+  if (!conversacionEscuchada || !texto || !ws) return;
+  ws.send(JSON.stringify({ type: 'responder_directo', payload: { conversacion_id: Number(conversacionEscuchada), texto } }));
+  // No se agrega localmente: el servidor lo reenvía vía notificar_escuchas
+  // (estamos escuchando esta misma conversación), agregarlo acá también lo duplicaba.
+  document.getElementById('accionTexto').value = '';
+};
+document.getElementById('btnGuardarMensajeCierre').onclick = () => {
+  const texto = document.getElementById('mensajeCierreInput').value.trim();
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'guardar_mensaje_cierre', payload: { texto } }));
+  const btn = document.getElementById('btnGuardarMensajeCierre');
+  const original = btn.textContent;
+  btn.textContent = '✅ Guardado';
+  setTimeout(() => { btn.textContent = original; }, 1500);
+};
+
+document.getElementById('btnGuardarMensajeBienvenida').onclick = () => {
+  const texto = document.getElementById('mensajeBienvenidaInput').value.trim();
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'guardar_mensaje_bienvenida', payload: { texto } }));
+  const btn = document.getElementById('btnGuardarMensajeBienvenida');
+  const original = btn.textContent;
+  btn.textContent = '✅ Guardado';
+  setTimeout(() => { btn.textContent = original; }, 1500);
+};
+
+document.getElementById('btnRefrescarTablero').onclick = (e) => {
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'refrescar_estado', payload: {} }));
+  const btn = document.getElementById('btnRefrescarTablero');
+  btn.classList.remove('girando');
+  void btn.offsetWidth;
+  btn.classList.add('girando');
+};
+
+document.getElementById('btnEtiquetas').onclick = () => {
+  document.getElementById('modalOverlay').classList.add('activa');
+};
+
+document.getElementById('btnCerrarModalEtiquetas').onclick = () => {
+  document.getElementById('modalOverlay').classList.remove('activa');
+};
+
+function renderEtiquetas() {
+  const lista = document.getElementById('listaEtiquetas');
+  lista.innerHTML = '';
+  etiquetas.forEach(e => {
+    const fila = document.createElement('div');
+    fila.className = 'etiqueta-fila' + (e.activo ? '' : ' inactiva');
+    fila.innerHTML = `
+      <input type="text" value="${e.nombre}" data-id="${e.id}" />
+      <button class="chico gris" data-accion="guardar">💾</button>
+      <button class="chico ${e.activo ? 'rojo' : ''}" data-accion="toggle">${e.activo ? '🚫' : '✅'}</button>
+    `;
+    const input = fila.querySelector('input');
+    fila.querySelector('[data-accion="guardar"]').onclick = () => {
+      const nuevoNombre = input.value.trim();
+      if (!nuevoNombre) return;
+      ws.send(JSON.stringify({ type: 'editar_etiqueta', payload: { id: e.id, nombre: nuevoNombre } }));
+    };
+    fila.querySelector('[data-accion="toggle"]').onclick = () => {
+      if (e.activo) {
+        ws.send(JSON.stringify({ type: 'eliminar_etiqueta', payload: { id: e.id } }));
+      } else {
+        ws.send(JSON.stringify({ type: 'editar_etiqueta', payload: { id: e.id, activo: true } }));
+      }
+    };
+    lista.appendChild(fila);
+  });
+}
+
+document.getElementById('btnAgregarEtiqueta').onclick = () => {
+  const input = document.getElementById('nuevaEtiquetaInput');
+  const nombre = input.value.trim();
+  if (!nombre || !ws) return;
+  ws.send(JSON.stringify({ type: 'crear_etiqueta', payload: { nombre } }));
+  input.value = '';
+};
+
+// ---- Mantenimiento de asesores ----
+
+document.getElementById('btnAsesoresAdmin').onclick = () => {
+  if (ws) ws.send(JSON.stringify({ type: 'obtener_asesores_admin', payload: {} }));
+  document.getElementById('modalAsesoresOverlay').classList.add('activa');
+};
+
+document.getElementById('btnCerrarModalAsesores').onclick = () => {
+  document.getElementById('modalAsesoresOverlay').classList.remove('activa');
+};
+
+function renderAsesoresAdmin() {
+  const lista = document.getElementById('listaAsesoresAdmin');
+  lista.innerHTML = '';
+  asesoresAdmin.forEach(a => {
+    const fila = document.createElement('div');
+    fila.className = 'asesor-admin-fila' + (a.activo ? '' : ' inactivo');
+    const campanasHtml = campanasCatalogo.map(c => `
+      <label>
+        <input type="checkbox" value="${c.id}" ${a.campana_ids.includes(c.id) ? 'checked' : ''} />
+        ${c.nombre}
+      </label>
+    `).join('');
+    fila.innerHTML = `
+      <div class="fila-top">
+        <input type="text" value="${a.nombre_display || ''}" data-campo="nombre_display" />
+        <select data-campo="rol">
+          <option value="asesor" ${a.rol === 'asesor' ? 'selected' : ''}>Asesor</option>
+          <option value="supervisor" ${a.rol === 'supervisor' ? 'selected' : ''}>Supervisor</option>
+          <option value="editor" ${a.rol === 'editor' ? 'selected' : ''}>Editor de contenido</option>
+        </select>
+        <input type="number" class="cupo-admin" value="${a.cupo_maximo}" min="1" data-campo="cupo" title="Cupo máximo" />
+      </div>
+      <div style="font-size:11px;color:var(--texto-suave);">usuario: ${a.usuario}</div>
+      <div class="campanas-check">${campanasHtml}</div>
+      <div class="fila-botones">
+        <button class="chico" data-accion="guardar">💾 Guardar</button>
+        <button class="chico gris" data-accion="reset">🔑 Resetear clave</button>
+        <button class="chico ${a.activo ? 'rojo' : ''}" data-accion="toggle">${a.activo ? 'Desactivar' : 'Activar'}</button>
+      </div>
+    `;
+    fila.querySelector('[data-accion="guardar"]').onclick = () => {
+      const nombreDisplay = fila.querySelector('[data-campo="nombre_display"]').value.trim();
+      const rol = fila.querySelector('[data-campo="rol"]').value;
+      const cupo = parseInt(fila.querySelector('[data-campo="cupo"]').value, 10) || a.cupo_maximo;
+      const campanaIds = Array.from(fila.querySelectorAll('.campanas-check input:checked')).map(i => Number(i.value));
+      ws.send(JSON.stringify({
+        type: 'editar_asesor',
+        payload: { asesor_id: a.asesor_id, nombre_display: nombreDisplay, rol, cupo, campana_ids: campanaIds },
+      }));
+    };
+    fila.querySelector('[data-accion="reset"]').onclick = () => {
+      const nueva = prompt(`Nueva contraseña para ${a.usuario}:`);
+      if (!nueva) return;
+      ws.send(JSON.stringify({ type: 'resetear_password_asesor', payload: { asesor_id: a.asesor_id, password: nueva } }));
+      alert('Contraseña actualizada.');
+    };
+    fila.querySelector('[data-accion="toggle"]').onclick = () => {
+      ws.send(JSON.stringify({ type: 'editar_asesor', payload: { asesor_id: a.asesor_id, activo: !a.activo } }));
+    };
+    lista.appendChild(fila);
+  });
+
+  const check = document.getElementById('nuevoCampanasCheck');
+  check.innerHTML = campanasCatalogo.map(c => `
+    <label><input type="checkbox" value="${c.id}" /> ${c.nombre}</label>
+  `).join('');
+}
+
+document.getElementById('btnCrearAsesor').onclick = () => {
+  const usuario = document.getElementById('nuevoUsuario').value.trim();
+  const nombre = document.getElementById('nuevoNombre').value.trim();
+  const nombreDisplay = document.getElementById('nuevoNombreDisplay').value.trim();
+  const password = document.getElementById('nuevoPassword').value.trim();
+  const rol = document.getElementById('nuevoRol').value;
+  const campanaIds = Array.from(document.querySelectorAll('#nuevoCampanasCheck input:checked')).map(i => Number(i.value));
+  if (!usuario || !nombre || !nombreDisplay || !password) {
+    alert('Completa usuario, nombre, nombre corto y contraseña.');
+    return;
+  }
+  ws.send(JSON.stringify({
+    type: 'crear_asesor',
+    payload: { usuario, nombre, nombre_display: nombreDisplay, password, rol, campana_ids: campanaIds },
+  }));
+  document.getElementById('nuevoUsuario').value = '';
+  document.getElementById('nuevoNombre').value = '';
+  document.getElementById('nuevoNombreDisplay').value = '';
+  document.getElementById('nuevoPassword').value = '';
+  document.querySelectorAll('#nuevoCampanasCheck input:checked').forEach(i => i.checked = false);
+};
+</script>
+</body>
+</html>

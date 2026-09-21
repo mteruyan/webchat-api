@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Editor de Contenido — Sanitas</title>
+<style>
+  :root {
+    --azul: #0A4C8C; --azul-oscuro: #073A6B; --verde: #2FB88B;
+    --rojo: #E0483E; --fondo: #F7F9FB; --texto: #1A2B3C;
+    --texto-suave: #5B6B7C; --borde: #E1E8EF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0; background: var(--fondo); min-height: 100vh; color: var(--texto);
+  }
+  #login { display: flex; gap: 8px; padding: 14px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; }
+  #login input { padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  #urlBase { flex: 1.4; }
+  #usuario, #password { flex: 1; }
+  button { padding: 9px 16px; cursor: pointer; border: none; border-radius: 8px; background: var(--azul); color: white; font-size: 13.5px; font-weight: 600; font-family: inherit; }
+  button:hover { background: var(--azul-oscuro); }
+  button:disabled { background: #B7C4D1; cursor: not-allowed; }
+  button.chico { padding: 5px 10px; font-size: 12px; }
+  button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  button.gris:hover { background: var(--fondo); color: var(--texto); }
+
+  #barraConectado { display: none; padding: 10px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; gap: 10px; }
+  #barraConectado.activa { display: flex; }
+  #barraConectado .estado { font-size: 12.5px; color: var(--texto-suave); flex: 1; }
+
+  #contenido { max-width: 780px; margin: 0 auto; padding: 20px 16px 60px; }
+  .campana-header { font-size: 13px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .04em; margin: 28px 0 10px; }
+  .campana-header:first-of-type { margin-top: 4px; }
+
+  .nodo-card { background: white; border: 1px solid var(--borde); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .nodo-card .cabecera { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .nodo-card .codigo { font-weight: 700; font-size: 13.5px; }
+  .nodo-card .tipo-badge { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: var(--fondo); color: var(--texto-suave); font-weight: 600; }
+  .nodo-card textarea {
+    width: 100%; min-height: 70px; padding: 9px 11px; border: 1px solid var(--borde); border-radius: 8px;
+    font-size: 13.5px; font-family: inherit; resize: vertical; line-height: 1.5;
+  }
+  .nodo-card textarea:focus { outline: none; border-color: var(--azul); }
+  .nodo-card .guardar-fila { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+  .opciones-lista { margin-top: 12px; border-top: 1px solid var(--borde); padding-top: 12px; }
+  .opciones-lista .titulo { font-size: 11.5px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .opcion-fila { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .opcion-fila input[type="text"] { flex: 1; padding: 7px 10px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13px; font-family: inherit; }
+  .opcion-fila .flechas { display: flex; flex-direction: column; gap: 1px; }
+  .opcion-fila .flechas button { padding: 1px 6px; font-size: 10px; line-height: 1.4; }
+
+  #vacio { text-align: center; color: var(--texto-suave); padding: 60px 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <div id="login">
+    <input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" />
+    <input id="usuario" placeholder="Usuario" />
+    <input id="password" placeholder="Contraseña" type="password" />
+    <button id="btnConectar">Conectar</button>
+  </div>
+  <div id="barraConectado">
+    <span class="estado" id="estadoTexto"></span>
+    <button class="gris chico" id="btnSalir">Cerrar sesión</button>
+  </div>
+  <div id="contenido">
+    <div id="vacio">Conéctate para ver y editar los textos del bot.</div>
+  </div>
+
+<script>
+if (!document.getElementById('urlBase').value) {
+  document.getElementById('urlBase').value = window.location.origin;
+}
+
+let urlBaseGuardada = null;
+let tokenGuardado = null;
+let nodos = [];
+
+document.getElementById('btnConectar').onclick = async () => {
+  const urlBase = document.getElementById('urlBase').value.trim().replace(/\/$/, '');
+  const usuario = document.getElementById('usuario').value.trim();
+  const password = document.getElementById('password').value;
+  if (!urlBase || !usuario || !password) return;
+
+  const btn = document.getElementById('btnConectar');
+  btn.disabled = true; btn.textContent = 'Conectando...';
+
+  let data;
+  try {
+    const resp = await fetch(`${urlBase}/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario, password }),
+    });
+    if (!resp.ok) { alert('Usuario o contraseña incorrectos'); btn.disabled = false; btn.textContent = 'Conectar'; return; }
+    data = await resp.json();
+    if (data.rol !== 'editor' && data.rol !== 'supervisor') {
+      alert('Este usuario no tiene permiso para editar contenido');
+      btn.disabled = false; btn.textContent = 'Conectar';
+      return;
+    }
+  } catch (e) {
+    alert('No se pudo contactar al servidor'); btn.disabled = false; btn.textContent = 'Conectar'; return;
+  }
+
+  urlBaseGuardada = urlBase;
+  tokenGuardado = data.token;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('barraConectado').classList.add('activa');
+  document.getElementById('estadoTexto').textContent = `Conectado como ${data.nombre_display}`;
+  cargarNodos();
+};
+
+document.getElementById('btnSalir').onclick = () => {
+  urlBaseGuardada = null;
+  tokenGuardado = null;
+  nodos = [];
+  document.getElementById('login').style.display = 'flex';
+  document.getElementById('barraConectado').classList.remove('activa');
+  document.getElementById('btnConectar').disabled = false;
+  document.getElementById('btnConectar').textContent = 'Conectar';
+  document.getElementById('password').value = '';
+  document.getElementById('contenido').innerHTML = '<div id="vacio">Conéctate para ver y editar los textos del bot.</div>';
+};
+
+async function cargarNodos() {
+  const cont = document.getElementById('contenido');
+  cont.innerHTML = '<div id="vacio">Cargando textos...</div>';
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/editor/nodos`, {
+      headers: { 'Authorization': `Bearer ${tokenGuardado}` },
+    });
+    if (!resp.ok) throw new Error('fallo');
+    nodos = await resp.json();
+    renderNodos();
+  } catch (e) {
+    cont.innerHTML = '<div id="vacio">No se pudieron cargar los textos. Intenta de nuevo.</div>';
+  }
+}
+
+function renderNodos() {
+  const cont = document.getElementById('contenido');
+  cont.innerHTML = '';
+  if (nodos.length === 0) {
+    cont.innerHTML = '<div id="vacio">No hay textos configurados todavía.</div>';
+    return;
+  }
+
+  let campanaActual = undefined;
+  nodos.forEach(n => {
+    const campana = n.campana || 'Sin campaña (flujo general)';
+    if (campana !== campanaActual) {
+      campanaActual = campana;
+      const header = document.createElement('div');
+      header.className = 'campana-header';
+      header.textContent = campana;
+      cont.appendChild(header);
+    }
+    cont.appendChild(renderNodoCard(n));
+  });
+}
+
+function renderNodoCard(n) {
+  const card = document.createElement('div');
+  card.className = 'nodo-card';
+
+  const cabecera = document.createElement('div');
+  cabecera.className = 'cabecera';
+  cabecera.innerHTML = `<span class="codigo">${n.codigo}</span><span class="tipo-badge">${n.tipo}</span>`;
+  card.appendChild(cabecera);
+
+  const imagenBox = document.createElement('div');
+  imagenBox.style.cssText = 'margin-bottom:10px;';
+  const imagenInput = document.createElement('input');
+  imagenInput.type = 'text';
+  imagenInput.placeholder = 'URL de imagen (opcional) — pégala aquí';
+  imagenInput.value = n.imagen_url || '';
+  imagenInput.style.cssText = 'width:100%;padding:7px 10px;border:1px solid var(--borde);border-radius:7px;font-size:12.5px;font-family:inherit;margin-bottom:6px;';
+  const preview = document.createElement('img');
+  preview.style.cssText = 'max-width:160px;max-height:100px;border-radius:8px;display:' + (n.imagen_url ? 'block' : 'none') + ';margin-bottom:6px;';
+  if (n.imagen_url) preview.src = n.imagen_url;
+  imagenInput.addEventListener('input', () => {
+    if (imagenInput.value.trim()) {
+      preview.src = imagenInput.value.trim();
+      preview.style.display = 'block';
+    } else {
+      preview.style.display = 'none';
+    }
+  });
+
+  const filaSubida = document.createElement('div');
+  filaSubida.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;';
+  const archivoInput = document.createElement('input');
+  archivoInput.type = 'file';
+  archivoInput.accept = 'image/*';
+  archivoInput.style.cssText = 'display:none;';
+  const btnSubir = document.createElement('button');
+  btnSubir.className = 'chico gris';
+  btnSubir.type = 'button';
+  btnSubir.textContent = '📤 Subir imagen desde mi compu';
+  btnSubir.onclick = () => archivoInput.click();
+  archivoInput.addEventListener('change', async () => {
+    const archivo = archivoInput.files[0];
+    if (!archivo) return;
+    const original = btnSubir.textContent;
+    btnSubir.disabled = true;
+    btnSubir.textContent = 'Subiendo...';
+    try {
+      const formData = new FormData();
+      formData.append('file', archivo);
+      const resp = await fetch(`${urlBaseGuardada}/editor/subir-imagen`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokenGuardado}` },
+        body: formData,
+      });
+      if (!resp.ok) throw new Error('fallo');
+      const data = await resp.json();
+      imagenInput.value = data.url;
+      preview.src = data.url;
+      preview.style.display = 'block';
+      btnSubir.textContent = '✅ Subida — recuerda Guardar';
+    } catch (e) {
+      alert('No se pudo subir la imagen. Intenta de nuevo.');
+      btnSubir.textContent = original;
+    } finally {
+      btnSubir.disabled = false;
+      archivoInput.value = '';
+      setTimeout(() => { btnSubir.textContent = original; }, 3000);
+    }
+  });
+  filaSubida.appendChild(btnSubir);
+  filaSubida.appendChild(archivoInput);
+
+  imagenBox.appendChild(filaSubida);
+  imagenBox.appendChild(preview);
+  imagenBox.appendChild(imagenInput);
+  card.appendChild(imagenBox);
+
+  const textarea = document.createElement('textarea');
+  textarea.value = n.texto || '';
+  card.appendChild(textarea);
+
+  const guardarFila = document.createElement('div');
+  guardarFila.className = 'guardar-fila';
+  const btnGuardarTexto = document.createElement('button');
+  btnGuardarTexto.className = 'chico';
+  btnGuardarTexto.textContent = 'Guardar texto e imagen';
+  btnGuardarTexto.onclick = () => guardarNodo(n.codigo, { texto: textarea.value, imagen_url: imagenInput.value.trim() }, btnGuardarTexto);
+  guardarFila.appendChild(btnGuardarTexto);
+  card.appendChild(guardarFila);
+
+  if (n.tipo === 'menu' && Array.isArray(n.opciones) && n.opciones.length > 0) {
+    const opcionesLista = document.createElement('div');
+    opcionesLista.className = 'opciones-lista';
+    opcionesLista.innerHTML = '<div class="titulo">Botones (orden = de izquierda a derecha)</div>';
+
+    let opciones = n.opciones.map(o => ({ ...o }));
+
+    function renderOpciones() {
+      opcionesLista.querySelectorAll('.opcion-fila').forEach(el => el.remove());
+      opciones.forEach((op, i) => {
+        const fila = document.createElement('div');
+        fila.className = 'opcion-fila';
+        fila.innerHTML = `
+          <div class="flechas">
+            <button class="chico gris" data-dir="arriba" ${i === 0 ? 'disabled' : ''}>▲</button>
+            <button class="chico gris" data-dir="abajo" ${i === opciones.length - 1 ? 'disabled' : ''}>▼</button>
+          </div>
+          <input type="text" value="${op.label}" />
+        `;
+        fila.querySelector('input').addEventListener('input', (e) => { op.label = e.target.value; });
+        fila.querySelector('[data-dir="arriba"]').onclick = () => {
+          [opciones[i - 1], opciones[i]] = [opciones[i], opciones[i - 1]];
+          renderOpciones();
+        };
+        fila.querySelector('[data-dir="abajo"]').onclick = () => {
+          [opciones[i + 1], opciones[i]] = [opciones[i], opciones[i + 1]];
+          renderOpciones();
+        };
+        opcionesLista.appendChild(fila);
+      });
+    }
+    renderOpciones();
+
+    const btnGuardarOpciones = document.createElement('button');
+    btnGuardarOpciones.className = 'chico';
+    btnGuardarOpciones.style.marginTop = '8px';
+    btnGuardarOpciones.textContent = 'Guardar botones';
+    btnGuardarOpciones.onclick = () => guardarNodo(n.codigo, { opciones }, btnGuardarOpciones);
+    opcionesLista.appendChild(btnGuardarOpciones);
+
+    card.appendChild(opcionesLista);
+  }
+
+  return card;
+}
+
+async function guardarNodo(codigo, cambios, boton) {
+  const original = boton.textContent;
+  boton.disabled = true;
+  boton.textContent = 'Guardando...';
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/editor/nodos/${encodeURIComponent(codigo)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenGuardado}` },
+      body: JSON.stringify(cambios),
+    });
+    if (!resp.ok) throw new Error('fallo');
+    boton.textContent = '✅ Guardado';
+  } catch (e) {
+    boton.textContent = '⚠️ Error, reintenta';
+  } finally {
+    setTimeout(() => { boton.textContent = original; boton.disabled = false; }, 1500);
+  }
+}
+</script>
+</body>
+</html>

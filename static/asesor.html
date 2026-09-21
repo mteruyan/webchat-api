@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Consola de Asesor — Sanitas</title>
+<style>
+  :root {
+    --azul: #0A4C8C;
+    --azul-oscuro: #073A6B;
+    --verde: #2FB88B;
+    --rojo: #E0483E;
+    --fondo: #F7F9FB;
+    --texto: #1A2B3C;
+    --texto-suave: #5B6B7C;
+    --borde: #E1E8EF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0; background: var(--fondo); height: 100vh; display: flex; flex-direction: column;
+    color: var(--texto);
+  }
+
+  /* ---- Barra de login (se recoge una vez conectado) ---- */
+  #login { display: flex; gap: 8px; padding: 14px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; }
+  #login input { padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  #login input:focus { outline: none; border-color: var(--azul); }
+  #urlBase { flex: 1.4; }
+  #usuario, #password { flex: 1; }
+  button { padding: 9px 16px; cursor: pointer; border: none; border-radius: 8px; background: var(--azul); color: white; font-size: 13.5px; font-weight: 600; font-family: inherit; }
+  button:hover { background: var(--azul-oscuro); }
+  button:disabled { background: #B7C4D1; cursor: not-allowed; }
+  button.chico { padding: 5px 11px; font-size: 12px; }
+  button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  button.gris:hover { background: var(--fondo); color: var(--texto); }
+
+  /* ---- Modal de historial de conversaciones del usuario ---- */
+  #modalHistorialOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
+  #modalHistorialOverlay.activa { display: flex; }
+  #modalHistorial { background: white; border-radius: 14px; padding: 20px; width: 380px; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; }
+  #modalHistorial h3 { margin: 0 0 12px; font-size: 16px; }
+  .historial-dia { font-size: 11.5px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+  .historial-dia:first-of-type { margin-top: 0; }
+  .historial-item { padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; margin-bottom: 6px; cursor: pointer; font-size: 13px; }
+  .historial-item:hover { background: var(--fondo); }
+  .historial-item .campana { font-weight: 600; }
+  .historial-item .meta { font-size: 11.5px; color: var(--texto-suave); margin-top: 2px; }
+  #historialVacio { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 20px; }
+  #historialMensajesView { display: none; }
+  #historialMensajesView.activa { display: block; }
+  #historialMensajesView .volver { font-size: 12.5px; color: var(--azul); cursor: pointer; margin-bottom: 10px; display: inline-block; }
+  #historialMensajesChat .msg { max-width: 90%; }
+  #btnCerrarModalHistorial { width: 100%; margin-top: 14px; }
+
+  #barraConectado { display: none; padding: 10px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; gap: 10px; }
+  #barraConectado.activa { display: flex; }
+  #barraConectado .nombre-asesor { font-weight: 600; font-size: 14px; }
+  #barraConectado .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--verde); flex-shrink: 0; }
+  #barraConectado .estado { font-size: 12.5px; color: var(--texto-suave); flex: 1; }
+  #barraConectado .btn-salir { background: transparent; color: var(--texto-suave); font-weight: 500; padding: 6px 12px; }
+  #barraConectado .btn-salir:hover { background: var(--fondo); color: var(--texto); }
+  #btnPausa { background: white; color: var(--texto-suave); border: 1.5px solid var(--borde); padding: 6px 14px; font-size: 13px; }
+  #btnPausa.pausado { background: #FDF3E7; color: var(--naranja, #C2760F); border-color: #F0D9B5; }
+  #barraConectado .dot.pausado { background: #E0912E; }
+
+  /* ---- Modal de etiqueta de cierre ---- */
+  #modalOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
+  #modalOverlay.activa { display: flex; }
+  #modalCierre { background: white; border-radius: 14px; padding: 22px; width: 320px; }
+  #modalCierre h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalCierre p { margin: 0 0 14px; font-size: 13px; color: var(--texto-suave); }
+  #modalCierre select { width: 100%; padding: 9px; border: 1px solid var(--borde); border-radius: 8px; font-size: 14px; font-family: inherit; margin-bottom: 16px; }
+  #modalCierre .botones { display: flex; gap: 8px; justify-content: flex-end; }
+  #modalCierre .botones button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+
+  #main { flex: 1; display: flex; overflow: hidden; }
+
+  /* ---- Lista de conversaciones ---- */
+  #lista { width: 280px; background: white; border-right: 1px solid var(--borde); overflow-y: auto; flex-shrink: 0; }
+  #lista .lista-header { padding: 14px 16px 8px; font-size: 12px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center; justify-content: space-between; }
+  #btnRefrescarLista { background: none; border: none; cursor: pointer; font-size: 15px; padding: 2px 4px; color: var(--texto-suave); }
+  #btnRefrescarLista:hover { color: var(--azul); }
+  #btnRefrescarLista.girando { animation: girar 0.6s linear; }
+  @keyframes girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  #lista .vacio-lista { padding: 24px 16px; color: var(--texto-suave); font-size: 13.5px; text-align: center; }
+  .conv-item { padding: 12px 16px; border-bottom: 1px solid #F0F3F6; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+  .conv-item:hover { background: var(--fondo); }
+  .conv-item.activa { background: #EAF1F9; border-left: 3px solid var(--azul); padding-left: 13px; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 50%; background: var(--azul); color: white;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+    flex-shrink: 0;
+  }
+  .conv-item .info { flex: 1; min-width: 0; }
+  .conv-item .nombre { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv-item .telefono { font-size: 12px; color: var(--texto-suave); margin-top: 1px; }
+  .conv-item .badge { background: var(--rojo); color: white; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 2px 7px; flex-shrink: 0; }
+
+  /* ---- Panel de chat ---- */
+  #panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #panel .chat-header { padding: 14px 20px; background: white; border-bottom: 1px solid var(--borde); display: none; align-items: center; gap: 12px; }
+  #panel .chat-header.activa { display: flex; }
+  #panel .chat-header .avatar { width: 34px; height: 34px; font-size: 13px; }
+  #panel .chat-header .nombre { font-weight: 700; font-size: 15px; }
+  #panel .chat-header .telefono { font-size: 12.5px; color: var(--texto-suave); }
+
+  #chat { flex: 1; padding: 18px; overflow-y: auto; }
+  #vacio { margin: auto; color: var(--texto-suave); font-size: 14px; text-align: center; padding: 40px; }
+  .msg { margin: 6px 0; max-width: 72%; padding: 9px 13px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
+  .usuario { background: #EEF3F8; color: var(--texto); margin-right: auto; border-bottom-left-radius: 4px; }
+  .asesor { background: var(--azul); color: white; margin-left: auto; text-align: left; border-bottom-right-radius: 4px; }
+  .bot { background: transparent; border: 1px dashed var(--borde); color: var(--texto-suave); margin: 10px auto; text-align: center; font-size: 12.5px; max-width: 90%; }
+
+  #entrada { display: none; gap: 8px; padding: 12px 16px; background: white; border-top: 1px solid var(--borde); }
+  #entrada.activa { display: flex; }
+  #texto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 999px; font-size: 14px; font-family: inherit; }
+  #texto:focus { outline: none; border-color: var(--azul); }
+  #btnCerrar { background: white; color: var(--rojo); border: 1.5px solid var(--rojo); }
+  #btnCerrar:hover { background: #FDF0EF; }
+</style>
+</head>
+<body>
+  <div id="login">
+    <input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" />
+    <input id="usuario" placeholder="Usuario" />
+    <input id="password" placeholder="Contraseña" type="password" />
+    <button id="btnConectar">Conectar</button>
+  </div>
+  <div id="barraConectado">
+    <span class="dot" id="dotEstado"></span>
+    <span class="nombre-asesor" id="nombreAsesorTexto"></span>
+    <span class="estado" id="estadoTexto"></span>
+    <button id="btnPausa">⏸ Pausar</button>
+    <button class="btn-salir" id="btnSalir">Cerrar sesión</button>
+  </div>
+  <div id="main">
+    <div id="lista">
+      <div class="lista-header">
+        Conversaciones
+        <button id="btnRefrescarLista" title="Actualizar">🔄</button>
+      </div>
+      <div class="vacio-lista" id="listaVacia">Todavía no tienes conversaciones asignadas.</div>
+    </div>
+    <div id="panel">
+      <div class="chat-header" id="chatHeader">
+        <div class="avatar" id="chatAvatar"></div>
+        <div>
+          <div class="nombre" id="chatNombre"></div>
+          <div class="telefono" id="chatTelefono"></div>
+        </div>
+        <div id="chatTiempos" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
+          <div>⏱ Esperó: <b id="tiempoEspera">--</b></div>
+          <div>🕐 En atención: <b id="tiempoAtencion">--</b></div>
+        </div>
+        <button class="chico gris" id="btnHistorialUsuario" style="margin-left:auto;">🕘 Historial</button>
+      </div>
+      <div id="chat"><div id="vacio">Selecciona una conversación de la lista para empezar a responder.</div></div>
+      <div id="entrada">
+        <input id="texto" placeholder="Escribe tu respuesta..." />
+        <button id="btnEnviar">Enviar</button>
+        <button id="btnCerrar">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalOverlay">
+    <div id="modalCierre">
+      <h3>Cerrar conversación</h3>
+      <p>Selecciona una etiqueta antes de cerrar — ayuda a las estadísticas del equipo.</p>
+      <select id="selectEtiqueta"></select>
+      <div class="botones">
+        <button class="gris" id="btnCancelarCierre">Cancelar</button>
+        <button id="btnConfirmarCierre">Cerrar conversación</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalHistorialOverlay">
+    <div id="modalHistorial">
+      <h3>Historial de conversaciones</h3>
+      <div id="historialListaView">
+        <div id="historialAgrupado"></div>
+        <div id="historialVacio" style="display:none;">Este usuario no tiene conversaciones anteriores.</div>
+      </div>
+      <div id="historialMensajesView">
+        <span class="volver" id="btnVolverHistorial">← Volver a la lista</span>
+        <div id="historialMensajesChat"></div>
+      </div>
+      <button class="gris" id="btnCerrarModalHistorial">Cerrar</button>
+    </div>
+  </div>
+
+<script>
+if (!document.getElementById('urlBase').value) {
+  document.getElementById('urlBase').value = window.location.origin;
+}
+
+let conversaciones = {};  // id -> {resumen_usuario, telefono, mensajes: [], noLeidos: 0, entrada_cola, asignado_en}
+let activaId = null;
+let intervaloTiempos = null;
+
+function formatearDuracion(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0
+    ? `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`
+    : `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function actualizarTiempos() {
+  if (activaId === null) return;
+  const c = conversaciones[activaId];
+  if (!c) return;
+  const esperaEl = document.getElementById('tiempoEspera');
+  const atencionEl = document.getElementById('tiempoAtencion');
+  if (c.entrada_cola && c.asignado_en) {
+    esperaEl.textContent = formatearDuracion(new Date(c.asignado_en) - new Date(c.entrada_cola));
+  } else {
+    esperaEl.textContent = '--';
+  }
+  if (c.asignado_en) {
+    atencionEl.textContent = formatearDuracion(new Date() - new Date(c.asignado_en));
+  } else {
+    atencionEl.textContent = '--';
+  }
+}
+let ws = null;
+let tokenGuardado = null;
+let urlBaseGuardada = null;
+let intentosReconexion = 0;
+let cerradoManualmente = false;
+let enPausa = false;
+let etiquetasDisponibles = [];
+
+function iniciales(nombre) {
+  if (!nombre) return '?';
+  const partes = nombre.trim().split(/\s+/);
+  return (partes[0][0] + (partes[1] ? partes[1][0] : '')).toUpperCase();
+}
+
+function renderLista() {
+  const lista = document.getElementById('lista');
+  const vacio = document.getElementById('listaVacia');
+  const items = lista.querySelectorAll('.conv-item');
+  items.forEach(el => el.remove());
+
+  const entradas = Object.entries(conversaciones)
+    .sort((a, b) => new Date(b[1].ultimaActividad || 0) - new Date(a[1].ultimaActividad || 0));
+  vacio.style.display = entradas.length === 0 ? 'block' : 'none';
+
+  entradas.forEach(([id, c]) => {
+    const div = document.createElement('div');
+    div.className = 'conv-item' + (String(activaId) === id ? ' activa' : '');
+    const nombre = c.resumen_usuario || ('Usuario ' + id);
+    div.innerHTML = `
+      <div class="avatar">${iniciales(nombre)}</div>
+      <div class="info">
+        <div class="nombre">${nombre}</div>
+        ${c.telefono ? `<div class="telefono">${c.telefono}</div>` : ''}
+      </div>
+      ${c.noLeidos > 0 ? `<span class="badge">${c.noLeidos}</span>` : ''}
+    `;
+    div.onclick = () => seleccionar(id);
+    lista.appendChild(div);
+  });
+}
+
+function seleccionar(id) {
+  activaId = id;
+  conversaciones[id].noLeidos = 0;
+  document.getElementById('entrada').classList.add('activa');
+
+  const c = conversaciones[id];
+  const nombre = c.resumen_usuario || ('Usuario ' + id);
+  document.getElementById('chatHeader').classList.add('activa');
+  document.getElementById('chatAvatar').textContent = iniciales(nombre);
+  document.getElementById('chatNombre').textContent = nombre;
+  document.getElementById('chatTelefono').textContent = c.telefono || '';
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'marcar_leido', payload: { conversacion_id: Number(id) } }));
+  }
+
+  if (intervaloTiempos) clearInterval(intervaloTiempos);
+  actualizarTiempos();
+  intervaloTiempos = setInterval(actualizarTiempos, 1000);
+
+  renderLista();
+  renderChat();
+}
+
+function renderChat() {
+  const chat = document.getElementById('chat');
+  chat.innerHTML = '';
+  if (activaId === null) {
+    chat.innerHTML = '<div id="vacio">Selecciona una conversación de la lista para empezar a responder.</div>';
+    return;
+  }
+  (conversaciones[activaId].mensajes || []).forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'msg ' + m.tipo;
+    if (m.url) {
+      const a = document.createElement('a');
+      a.href = m.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = m.texto;
+      a.style.color = 'inherit';
+      div.appendChild(a);
+    } else {
+      div.textContent = m.texto;
+    }
+    if (m.hora) {
+      const hora = document.createElement('span');
+      hora.style.cssText = 'font-size:11px;margin-left:6px;opacity:.7;';
+      const d = new Date(m.hora);
+      hora.textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      div.appendChild(hora);
+    }
+    if (m.tipo === 'asesor') {
+      const check = document.createElement('span');
+      check.className = 'check';
+      check.style.cssText = 'font-size:11px;margin-left:4px;opacity:.85;';
+      check.textContent = m.leido ? '✓✓' : '✓';
+      div.appendChild(check);
+    }
+    chat.appendChild(div);
+  });
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function agregarArchivo(id, url) {
+  if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+  conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'usuario', url, hora: new Date().toISOString() });
+  conversaciones[id].ultimaActividad = new Date().toISOString();
+  if (String(activaId) === String(id)) {
+    renderChat();
+  } else {
+    conversaciones[id].noLeidos = (conversaciones[id].noLeidos || 0) + 1;
+  }
+  renderLista();
+}
+
+function agregarMensaje(id, texto, tipo) {
+  if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+  conversaciones[id].mensajes.push({ texto, tipo, leido: false, hora: new Date().toISOString() });
+  conversaciones[id].ultimaActividad = new Date().toISOString();
+  if (String(activaId) === String(id)) {
+    renderChat();
+  } else {
+    conversaciones[id].noLeidos = (conversaciones[id].noLeidos || 0) + 1;
+  }
+  renderLista();
+}
+
+function siguienteEsperaReconexion() {
+  return Math.min(1000 * Math.pow(2, intentosReconexion), 20000);
+}
+
+document.getElementById('btnConectar').onclick = async () => {
+  const urlBase = document.getElementById('urlBase').value.trim().replace(/\/$/, '');
+  const usuario = document.getElementById('usuario').value.trim();
+  const password = document.getElementById('password').value;
+  if (!urlBase || !usuario || !password) return;
+
+  const btn = document.getElementById('btnConectar');
+  btn.disabled = true;
+  btn.textContent = 'Conectando...';
+
+  let data;
+  try {
+    const resp = await fetch(`${urlBase}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario, password }),
+    });
+    if (!resp.ok) {
+      alert('Usuario o contraseña incorrectos');
+      btn.disabled = false; btn.textContent = 'Conectar';
+      return;
+    }
+    data = await resp.json();
+  } catch (e) {
+    alert('No se pudo contactar al servidor');
+    btn.disabled = false; btn.textContent = 'Conectar';
+    return;
+  }
+
+  tokenGuardado = data.token;
+  urlBaseGuardada = urlBase;
+  cerradoManualmente = false;
+
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('barraConectado').classList.add('activa');
+  document.getElementById('nombreAsesorTexto').textContent = data.nombre_display;
+
+  conectarWs();
+};
+
+document.getElementById('btnPausa').onclick = () => {
+  if (!ws) return;
+  enPausa = !enPausa;
+  ws.send(JSON.stringify({ type: 'cambiar_disponibilidad', payload: { pausado: enPausa } }));
+  const btn = document.getElementById('btnPausa');
+  const dot = document.getElementById('dotEstado');
+  if (enPausa) {
+    btn.textContent = '▶ Reanudar';
+    btn.classList.add('pausado');
+    dot.classList.add('pausado');
+    document.getElementById('estadoTexto').textContent = 'En pausa — no recibirás nuevas conversaciones';
+  } else {
+    btn.textContent = '⏸ Pausar';
+    btn.classList.remove('pausado');
+    dot.classList.remove('pausado');
+    document.getElementById('estadoTexto').textContent = 'En línea';
+  }
+};
+
+document.getElementById('btnSalir').onclick = () => {
+  cerradoManualmente = true;
+  if (ws) ws.close();
+  document.getElementById('login').style.display = 'flex';
+  document.getElementById('barraConectado').classList.remove('activa');
+  document.getElementById('btnConectar').disabled = false;
+  document.getElementById('btnConectar').textContent = 'Conectar';
+  document.getElementById('password').value = '';
+  conversaciones = {};
+  activaId = null;
+  enPausa = false;
+  document.getElementById('btnPausa').textContent = '⏸ Pausar';
+  document.getElementById('btnPausa').classList.remove('pausado');
+  document.getElementById('dotEstado').classList.remove('pausado');
+  renderLista();
+  renderChat();
+  document.getElementById('entrada').classList.remove('activa');
+  document.getElementById('chatHeader').classList.remove('activa');
+};
+
+function conectarWs() {
+  const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
+  ws = new WebSocket(`${urlWs}/ws/asesor?token=${tokenGuardado}`);
+
+  ws.onopen = () => {
+    intentosReconexion = 0;
+    document.getElementById('estadoTexto').textContent = 'En línea';
+  };
+
+  ws.onclose = (e) => {
+    ws = null;
+    if (cerradoManualmente) return;
+    if (e.code === 4401 || e.code === 4403) {
+      document.getElementById('estadoTexto').textContent = 'Sesión expirada — vuelve a conectarte';
+      return;
+    }
+    document.getElementById('estadoTexto').textContent = 'Reconectando...';
+    const espera = siguienteEsperaReconexion();
+    intentosReconexion++;
+    setTimeout(() => { if (!cerradoManualmente) conectarWs(); }, espera);
+  };
+
+  ws.onerror = () => { document.getElementById('estadoTexto').textContent = 'Error de conexión'; };
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    const p = data.payload || {};
+    switch (data.type) {
+      case 'nueva_asignacion': {
+        const esNueva = !conversaciones[p.conversacion_id];
+        conversaciones[p.conversacion_id] = {
+          resumen_usuario: p.resumen_usuario || ('Usuario ' + p.conversacion_id),
+          telefono: p.telefono || '',
+          entrada_cola: p.entrada_cola || null,
+          asignado_en: p.asignado_en || null,
+          mensajes: (p.historial || []).map(h => (
+            h.tipo_contenido === 'archivo'
+              ? { texto: '📎 Ver archivo enviado', tipo: 'usuario', url: h.texto, hora: h.enviado_en }
+              : {
+                  texto: h.texto,
+                  tipo: h.emisor_tipo === 'usuario' ? 'usuario' : (h.emisor_tipo === 'asesor' ? 'asesor' : 'bot'),
+                  leido: h.leido,
+                  hora: h.enviado_en,
+                }
+          )),
+          noLeidos: esNueva ? 1 : 0,
+          ultimaActividad: new Date().toISOString(),
+        };
+        renderLista();
+        if (activaId === null) seleccionar(String(p.conversacion_id));
+        else if (String(activaId) === String(p.conversacion_id)) renderChat();
+        break;
+      }
+      case 'mensaje_usuario':
+        agregarMensaje(p.conversacion_id, p.texto, 'usuario');
+        if (String(activaId) === String(p.conversacion_id) && ws) {
+          ws.send(JSON.stringify({ type: 'marcar_leido', payload: { conversacion_id: Number(p.conversacion_id) } }));
+        }
+        break;
+      case 'archivo_usuario':
+        agregarArchivo(p.conversacion_id, p.url);
+        break;
+      case 'conversacion_cerrada':
+        agregarMensaje(p.conversacion_id, '— Conversación cerrada —', 'bot');
+        break;
+      case 'mensajes_leidos': {
+        const conv = conversaciones[p.conversacion_id];
+        if (conv) {
+          conv.mensajes.forEach(m => { if (m.tipo === 'asesor') m.leido = true; });
+          if (String(activaId) === String(p.conversacion_id)) renderChat();
+        }
+        break;
+      }
+      case 'mensaje_supervisor_directo':
+        agregarMensaje(p.conversacion_id, `👤 ${p.supervisor_nombre} (supervisor) le respondió al usuario: "${p.texto}"`, 'bot');
+        break;
+      case 'etiquetas_disponibles':
+        etiquetasDisponibles = p.etiquetas || [];
+        break;
+      case 'historial_usuario':
+        renderHistorialAgrupado(p.conversaciones || []);
+        break;
+      case 'mensajes_conversacion_pasada':
+        renderMensajesHistorial(p.mensajes || []);
+        break;
+    }
+  };
+}
+
+document.getElementById('btnEnviar').onclick = enviar;
+document.getElementById('texto').addEventListener('keydown', (e) => { if (e.key === 'Enter') enviar(); });
+
+function enviar() {
+  const input = document.getElementById('texto');
+  const texto = input.value.trim();
+  if (!texto || activaId === null || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'mensaje_asesor', payload: { conversacion_id: Number(activaId), texto } }));
+  agregarMensaje(activaId, texto, 'asesor');
+  input.value = '';
+}
+
+document.getElementById('btnCerrar').onclick = () => {
+  if (activaId === null) return;
+  const select = document.getElementById('selectEtiqueta');
+  select.innerHTML = etiquetasDisponibles
+    .map(e => `<option value="${e.id}">${e.nombre}</option>`)
+    .join('');
+  if (etiquetasDisponibles.length === 0) {
+    select.innerHTML = '<option value="">(sin etiquetas configuradas)</option>';
+  }
+  document.getElementById('modalOverlay').classList.add('activa');
+};
+
+document.getElementById('btnCancelarCierre').onclick = () => {
+  document.getElementById('modalOverlay').classList.remove('activa');
+};
+
+document.getElementById('btnConfirmarCierre').onclick = () => {
+  if (activaId === null || !ws) return;
+  const etiquetaId = document.getElementById('selectEtiqueta').value;
+  ws.send(JSON.stringify({
+    type: 'cerrar_conversacion',
+    payload: { conversacion_id: Number(activaId), etiqueta_cierre_id: etiquetaId ? Number(etiquetaId) : null },
+  }));
+  document.getElementById('modalOverlay').classList.remove('activa');
+  delete conversaciones[activaId];
+  activaId = null;
+  renderLista();
+  renderChat();
+  document.getElementById('entrada').classList.remove('activa');
+  document.getElementById('chatHeader').classList.remove('activa');
+};
+
+// ---- Historial de conversaciones anteriores del usuario ----
+
+document.getElementById('btnRefrescarLista').onclick = (e) => {
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: 'refrescar_conversaciones', payload: {} }));
+  e.target.classList.remove('girando');
+  void e.target.offsetWidth; // fuerza el reinicio de la animación si se hace doble clic
+  e.target.classList.add('girando');
+};
+
+document.getElementById('btnHistorialUsuario').onclick = () => {
+  if (activaId === null || !ws) return;
+  document.getElementById('historialListaView').style.display = 'block';
+  document.getElementById('historialMensajesView').classList.remove('activa');
+  ws.send(JSON.stringify({ type: 'obtener_historial_usuario', payload: { conversacion_id: Number(activaId) } }));
+  document.getElementById('modalHistorialOverlay').classList.add('activa');
+};
+
+document.getElementById('btnCerrarModalHistorial').onclick = () => {
+  document.getElementById('modalHistorialOverlay').classList.remove('activa');
+};
+
+function formatearFechaDia(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+function formatearHoraCorta(iso) {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function renderHistorialAgrupado(conversacionesPasadas) {
+  const cont = document.getElementById('historialAgrupado');
+  const vacio = document.getElementById('historialVacio');
+  cont.innerHTML = '';
+
+  if (conversacionesPasadas.length === 0) {
+    vacio.style.display = 'block';
+    return;
+  }
+  vacio.style.display = 'none';
+
+  let diaActual = null;
+  conversacionesPasadas.forEach(c => {
+    const dia = formatearFechaDia(c.iniciado_en);
+    if (dia !== diaActual) {
+      diaActual = dia;
+      const header = document.createElement('div');
+      header.className = 'historial-dia';
+      header.textContent = dia;
+      cont.appendChild(header);
+    }
+    const item = document.createElement('div');
+    item.className = 'historial-item';
+    item.innerHTML = `
+      <div class="campana">${c.campana || 'Sin campaña'} ${c.etiqueta ? '· ' + c.etiqueta : ''}</div>
+      <div class="meta">${formatearHoraCorta(c.iniciado_en)} — ${c.estado}</div>
+    `;
+    item.onclick = () => {
+      ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: c.conversacion_id } }));
+    };
+    cont.appendChild(item);
+  });
+}
+
+function renderMensajesHistorial(mensajes) {
+  document.getElementById('historialListaView').style.display = 'none';
+  document.getElementById('historialMensajesView').classList.add('activa');
+  const chat = document.getElementById('historialMensajesChat');
+  chat.innerHTML = '';
+  mensajes.forEach(m => {
+    const div = document.createElement('div');
+    const tipo = m.emisor_tipo === 'usuario' ? 'usuario' : (m.emisor_tipo === 'asesor' ? 'asesor' : 'bot');
+    div.className = 'msg ' + tipo;
+    div.textContent = m.tipo_contenido === 'archivo' ? ('📎 ' + m.contenido) : m.contenido;
+    chat.appendChild(div);
+  });
+}
+
+document.getElementById('btnVolverHistorial').onclick = () => {
+  document.getElementById('historialListaView').style.display = 'block';
+  document.getElementById('historialMensajesView').classList.remove('activa');
+};
+</script>
+</body>
+</html>
