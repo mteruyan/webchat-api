@@ -33,6 +33,9 @@
   button.chico { padding: 5px 11px; font-size: 12px; }
   button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
   button.gris:hover { background: var(--fondo); color: var(--texto); }
+  a.chico { padding: 5px 11px; font-size: 12px; display: inline-flex; align-items: center; border-radius: 6px; cursor: pointer; }
+  a.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  a.gris:hover { background: var(--fondo); color: var(--texto); }
 
   /* ---- Modal de historial de conversaciones del usuario ---- */
   #modalHistorialOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
@@ -57,11 +60,45 @@
   #barraConectado .nombre-asesor { font-weight: 600; font-size: 14px; }
   #barraConectado .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--verde); flex-shrink: 0; }
   #barraConectado .estado { font-size: 12.5px; color: var(--texto-suave); flex: 1; }
+  #barraConectado .stats-conexion { font-size: 12px; color: var(--texto-suave); white-space: nowrap; display: flex; gap: 10px; }
   #barraConectado .btn-salir { background: transparent; color: var(--texto-suave); font-weight: 500; padding: 6px 12px; }
   #barraConectado .btn-salir:hover { background: var(--fondo); color: var(--texto); }
   #btnPausa { background: white; color: var(--texto-suave); border: 1.5px solid var(--borde); padding: 6px 14px; font-size: 13px; }
   #btnPausa.pausado { background: #FDF3E7; color: var(--naranja, #C2760F); border-color: #F0D9B5; }
   #barraConectado .dot.pausado { background: #E0912E; }
+
+  /* ---- Buscador de conversaciones y "Ayudar en el bot" ---- */
+  #modalBuscarOverlay, #modalAyudarBotOverlay, #modalAyudaBotChatOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
+  #modalBuscarOverlay.activa, #modalAyudarBotOverlay.activa, #modalAyudaBotChatOverlay.activa { display: flex; }
+  .modal-buscar { background: white; border-radius: 14px; padding: 22px; width: 460px; max-width: 94vw; max-height: 82vh; overflow-y: auto; display: flex; flex-direction: column; }
+  .modal-buscar h3 { margin: 0 0 12px; font-size: 16px; }
+  .modal-buscar p.ayuda { margin: 0 0 10px; font-size: 12.5px; color: var(--texto-suave); }
+  .buscar-fila { display: flex; gap: 8px; margin-bottom: 14px; }
+  .buscar-fila input { flex: 1; padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  .buscar-fila input:focus { outline: none; border-color: var(--azul); }
+  .resultado-item { border: 1px solid var(--borde); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+  .resultado-item:hover { background: var(--fondo); }
+  .resultado-item .nombre { font-weight: 700; font-size: 14px; }
+  .resultado-item .datos { font-size: 12px; color: var(--texto-suave); margin-top: 2px; }
+  .resultado-item .fila-estado { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .estado-pill { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .02em; }
+  .estado-pill.bot { background: #EAF1F9; color: var(--azul); }
+  .estado-pill.en_cola { background: #FDF3E7; color: #8A5A15; }
+  .estado-pill.asignada { background: #E4F6EE; color: #197A54; }
+  .estado-pill.cerrada { background: #F0F0F0; color: var(--texto-suave); }
+  .buscar-aviso { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 20px; }
+  .modal-buscar .btn-cerrar-modal { width: 100%; margin-top: 14px; }
+  #modalAyudaBotChat { background: white; border-radius: 14px; width: 520px; max-width: 94vw; height: 78vh; display: flex; flex-direction: column; overflow: hidden; }
+  #ayudaBotCabecera { padding: 14px 18px; border-bottom: 1px solid var(--borde); display: flex; align-items: center; gap: 10px; }
+  #ayudaBotCabecera .nombre { font-weight: 700; font-size: 15px; }
+  #ayudaBotCabecera .datos { font-size: 12px; color: var(--texto-suave); }
+  #ayudaBotMensajes { flex: 1; overflow-y: auto; padding: 14px 16px; background: var(--fondo); }
+  #ayudaBotMensajes .msg { max-width: 85%; }
+  #ayudaBotEntrada { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--borde); }
+  #ayudaBotEntrada input { flex: 1; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  #ayudaBotEntrada input:focus { outline: none; border-color: var(--azul); }
+  #ayudaBotAviso { display: none; background: #FDF3E7; color: #8A5A15; font-size: 12.5px; padding: 8px 16px; border-bottom: 1px solid #F0D9B5; }
+  #ayudaBotAviso.activa { display: block; }
 
   /* ---- Modal de etiqueta de cierre ---- */
   #modalOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
@@ -73,6 +110,47 @@
   #modalCierre .botones { display: flex; gap: 8px; justify-content: flex-end; }
   #modalCierre .botones button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
 
+  /* ---- Nota interna del cliente (vinculada a su DNI/RUC) — solo la ve el
+     staff, nunca el paciente; sirve de orientación si vuelve a escribir. ---- */
+  #notaClienteBanner { display: none; align-items: flex-start; gap: 10px; padding: 10px 16px; background: #FFF8E1; border-bottom: 1px solid #F0DFA0; font-size: 13px; }
+  #notaClienteBanner.activa { display: flex; }
+  #notaClienteBanner.sin-nota .nota-cliente-texto { color: var(--texto-suave); font-style: italic; }
+  .nota-cliente-icono { flex-shrink: 0; }
+  .nota-cliente-texto { flex: 1; white-space: pre-wrap; line-height: 1.4; align-self: center; }
+  .nota-cliente-meta { display: block; font-size: 11px; color: var(--texto-suave); margin-top: 3px; font-style: normal; }
+
+  #modalNotaOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
+  #modalNotaOverlay.activa { display: flex; }
+  #modalNota { background: white; border-radius: 14px; padding: 22px; width: 380px; }
+  #modalNota h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalNota p { margin: 0 0 14px; font-size: 13px; color: var(--texto-suave); }
+  #modalNota label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 4px; color: var(--texto-suave); }
+  #modalNota input, #modalNota textarea { width: 100%; padding: 9px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; margin-bottom: 14px; }
+  #modalNota textarea { min-height: 110px; resize: vertical; }
+  #modalNota .botones { display: flex; gap: 8px; justify-content: flex-end; }
+
+  #modalTransferirOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
+  #modalTransferirOverlay.activa { display: flex; }
+  #modalTransferir { background: white; border-radius: 14px; padding: 20px; width: 340px; max-height: 75vh; overflow-y: auto; display: flex; flex-direction: column; }
+  #modalTransferir h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalTransferir p { margin: 0 0 12px; font-size: 13px; color: var(--texto-suave); }
+  .asesor-transferir-item { padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; margin-bottom: 6px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .asesor-transferir-item:hover { background: var(--fondo); }
+  .asesor-transferir-item.deshabilitado { opacity: .45; cursor: not-allowed; }
+  .asesor-transferir-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .asesor-transferir-item .dot.on { background: #2ECC71; }
+  .asesor-transferir-item .dot.off { background: #C0C6CC; }
+  .asesor-transferir-item .dot.pausado { background: #F5A623; }
+  .asesor-transferir-item .info { flex: 1; }
+  .asesor-transferir-item .carga { font-size: 11.5px; color: var(--texto-suave); }
+  .asesor-transferir-item .campanas { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+  .asesor-transferir-item .campana-chip {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    background: #EAF1F9; color: var(--azul); border-radius: 999px; padding: 1px 7px;
+  }
+  #modalTransferir .vacio-transferir { font-size: 13px; color: var(--texto-suave); text-align: center; padding: 14px 0; }
+  #modalTransferir .cerrar { align-self: flex-end; margin-top: 10px; }
+
   #main { flex: 1; display: flex; overflow: hidden; }
 
   /* ---- Lista de conversaciones ---- */
@@ -83,6 +161,15 @@
   #btnRefrescarLista.girando { animation: girar 0.6s linear; }
   @keyframes girar { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   #lista .vacio-lista { padding: 24px 16px; color: var(--texto-suave); font-size: 13.5px; text-align: center; }
+  .tabs-lista { display: flex; gap: 4px; padding: 0 12px 10px; }
+  .tab-lista { flex: 1; text-align: center; padding: 7px 6px; border-radius: 7px; font-size: 12.5px; font-weight: 600; color: var(--texto-suave); background: var(--fondo); cursor: pointer; border: 1px solid transparent; }
+  .tab-lista:hover { background: #EAF1F9; }
+  .tab-lista.activa { background: #EAF1F9; color: var(--azul); border-color: var(--azul); }
+  .conv-item.pausada { opacity: .72; }
+  .conv-item .chip-pausada { font-size: 10.5px; font-weight: 700; color: #8a6d00; background: #FFF3CD; border-radius: 6px; padding: 1px 6px; margin-top: 3px; display: inline-block; }
+  .pausa-motivo.elegido { background: #EAF1F9; border-color: var(--azul); color: var(--azul); font-weight: 700; }
+  #btnPausarConv.pausada-activa { background: #FFF3CD; border-color: #E0B400; color: #8a6d00; }
+  #btnAvisoInactividad.inactividad-apagada { background: #FBEAEA; border-color: #E0483E; color: #B3261E; }
   .conv-item { padding: 12px 16px; border-bottom: 1px solid #F0F3F6; cursor: pointer; display: flex; gap: 10px; align-items: center; }
   .conv-item:hover { background: var(--fondo); }
   .conv-item.activa { background: #EAF1F9; border-left: 3px solid var(--azul); padding-left: 13px; }
@@ -94,7 +181,54 @@
   .conv-item .info { flex: 1; min-width: 0; }
   .conv-item .nombre { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .conv-item .telefono { font-size: 12px; color: var(--texto-suave); margin-top: 1px; }
+  .conv-item .dni { font-size: 12px; color: var(--texto-suave); margin-top: 1px; }
+  .conv-item .meta-derecha { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; }
+  .conv-item .ultima-hora { font-size: 11px; color: var(--texto-suave); white-space: nowrap; }
   .conv-item .badge { background: var(--rojo); color: white; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 2px 7px; flex-shrink: 0; }
+
+  /* ---- Bandera de color: marca interna de asesor/supervisor para el proceso
+     de una conversación (nunca la ve el paciente). Vive solo mientras la
+     conversación sigue asignada — se limpia sola al cerrarla. ---- */
+  .bandera-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(10,20,30,.15);
+  }
+  .bandera-dot.rojo { background: #E0483E; }
+  .bandera-dot.azul { background: var(--azul); }
+  .bandera-dot.amarillo { background: #F2C230; }
+  .bandera-dot.verde { background: #2FB88B; }
+  .bandera-dot.blanco { background: white; }
+  .conv-item .bandera-dot { margin-right: -2px; }
+  .bandera-selector { position: relative; flex-shrink: 0; }
+  #btnBandera {
+    width: 26px; height: 26px; border-radius: 50%; background: white; border: 1px solid var(--borde);
+    display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  #btnBandera:hover { background: var(--fondo); }
+  .bandera-menu {
+    display: none; position: absolute; top: 32px; right: 0; z-index: 30; background: white;
+    border: 1px solid var(--borde); border-radius: 10px; box-shadow: 0 4px 14px rgba(10,20,30,.18);
+    padding: 8px; gap: 8px; flex-direction: row;
+  }
+  .bandera-menu.abierto { display: flex; }
+  .bandera-opcion {
+    width: 22px; height: 22px; border-radius: 50%; padding: 0; border: 1px solid rgba(10,20,30,.15);
+    cursor: pointer;
+  }
+  .bandera-opcion.rojo { background: #E0483E; }
+  .bandera-opcion.azul { background: var(--azul); }
+  .bandera-opcion.amarillo { background: #F2C230; }
+  .bandera-opcion.verde { background: #2FB88B; }
+  .bandera-opcion.blanco { background: white; }
+  .bandera-opcion:hover { transform: scale(1.15); }
+
+  /* ---- Tooltip del último mensaje (aparece al pasar el mouse por la tarjeta) ---- */
+  #tooltipUltimoMensaje {
+    display: none; position: fixed; z-index: 2000; max-width: 320px;
+    background: white; border: 1px solid var(--borde); border-radius: 10px;
+    padding: 10px 13px; font-size: 13px; line-height: 1.45; color: var(--texto);
+    box-shadow: 0 6px 20px rgba(10,20,30,.18); white-space: pre-wrap; word-wrap: break-word;
+    pointer-events: none;
+  }
 
   /* ---- Panel de chat ---- */
   #panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -105,31 +239,352 @@
   #panel .chat-header .telefono { font-size: 12.5px; color: var(--texto-suave); }
 
   #chat { flex: 1; padding: 18px; overflow-y: auto; }
+  #chat.arrastrando { outline: 2px dashed var(--azul); outline-offset: -8px; background: #F4F8FC; }
   #vacio { margin: auto; color: var(--texto-suave); font-size: 14px; text-align: center; padding: 40px; }
-  .msg { margin: 6px 0; max-width: 72%; padding: 9px 13px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
+  .msg { position: relative; margin: 6px 0; max-width: 72%; padding: 9px 13px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; font-size: 14px; box-shadow: 0 1px 1.5px rgba(10,20,30,.08); }
   .usuario { background: #EEF3F8; color: var(--texto); margin-right: auto; border-bottom-left-radius: 4px; }
   .asesor { background: var(--azul); color: white; margin-left: auto; text-align: left; border-bottom-right-radius: 4px; }
   .bot { background: transparent; border: 1px dashed var(--borde); color: var(--texto-suave); margin: 10px auto; text-align: center; font-size: 12.5px; max-width: 90%; }
+  .susurro { background: #FDF3E7; border: 1px solid #F0D9B5; color: #8A5A15; margin: 10px auto; text-align: center; max-width: 90%; font-weight: 600; }
+  .msg.eliminado { font-style: italic; opacity: .65; }
+  .msg .editado-tag { font-size: 10.5px; opacity: .7; font-style: italic; margin-left: 5px; }
+  .msg-cita { display: block; border-left: 3px solid rgba(0,0,0,.2); background: rgba(0,0,0,.06); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; font-size: 12px; opacity: .85; }
+  .asesor .msg-cita { border-left-color: rgba(255,255,255,.6); background: rgba(255,255,255,.12); }
+  .msg-acciones { position: absolute; top: -9px; right: -8px; background: white; border: 1px solid var(--borde); border-radius: 999px; width: 20px; height: 20px; font-size: 12px; line-height: 1; cursor: pointer; opacity: .5; display: flex; align-items: center; justify-content: center; color: var(--texto-suave); }
+  .usuario .msg-acciones { right: auto; left: -8px; }
+  .msg-acciones:hover, .msg-acciones.abierto { opacity: 1; }
+  .msg-menu { display: none; position: absolute; top: 12px; right: -8px; z-index: 20; background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(10,30,50,.2); padding: 4px; min-width: 130px; }
+  .usuario .msg-menu { right: auto; left: -8px; }
+  .msg-menu.abierto { display: block; }
+  .msg-menu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 7px 9px; font-size: 12.5px; font-family: inherit; color: var(--texto); cursor: pointer; border-radius: 6px; white-space: nowrap; font-weight: 400; }
+  .msg-menu button:hover { background: var(--fondo); }
+  .msg-editar-input { width: 100%; border: 1px solid rgba(255,255,255,.6); border-radius: 6px; padding: 5px 7px; font: inherit; }
+  #respondiendoBanner { display: none; align-items: center; gap: 8px; background: var(--fondo); border-top: 1px solid var(--borde); padding: 7px 16px; font-size: 12.5px; }
+  #respondiendoBanner.abierto { display: flex; }
+  #respondiendoBanner .texto-cita { flex: 1; border-left: 3px solid var(--azul); padding-left: 8px; opacity: .85; }
+  #respondiendoBanner button { background: none; border: none; font-size: 15px; cursor: pointer; color: var(--texto-suave); padding: 0; }
+
+  .msg-imagen { display: block; max-width: 240px; width: 100%; border-radius: 10px; cursor: pointer; }
+  #lightboxOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.85); z-index: 2000; align-items: center; justify-content: center; padding: 24px; }
+  #lightboxOverlay.activa { display: flex; }
+  #lightboxOverlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  #lightboxOverlay .cerrar { position: absolute; top: 16px; right: 20px; color: white; font-size: 32px; line-height: 1; cursor: pointer; background: none; border: none; opacity: .85; }
+  #lightboxOverlay .cerrar:hover { opacity: 1; }
+
+  /* ---- Burbuja de "opciones" (menú del bot) — legible en vez de JSON crudo ---- */
+  .msg-opciones { background: #F5F8FB; border: 1px solid var(--borde); color: var(--texto); margin-right: auto; border-bottom-left-radius: 4px; text-align: left; box-shadow: none; max-width: 78%; }
+  .msg-opciones .opciones-titulo { font-size: 11.5px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 7px; }
+  .msg-opciones .opcion-chip { background: white; border: 1px solid var(--borde); border-radius: 8px; padding: 7px 10px; font-size: 13.5px; margin-bottom: 6px; line-height: 1.35; }
+  .msg-opciones .opcion-chip:last-child { margin-bottom: 0; }
 
   #entrada { display: none; gap: 8px; padding: 12px 16px; background: white; border-top: 1px solid var(--borde); }
   #entrada.activa { display: flex; }
   #texto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 999px; font-size: 14px; font-family: inherit; }
   #texto:focus { outline: none; border-color: var(--azul); }
+  #btnAdjuntar { background: #EEF3F8; color: var(--azul); border: none; border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+  #btnAdjuntar:hover { background: #E1EBF5; }
+  #btnAdjuntar:disabled { opacity: .5; cursor: default; }
+  /* ---- Emojis: selector en la caja de texto + reacciones rápidas por mensaje ---- */
+  #emojiWrap { position: relative; flex-shrink: 0; }
+  #btnEmoji { background: #EEF3F8; color: var(--azul); border: none; border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 19px; }
+  #btnEmoji:hover { background: #E1EBF5; }
+  #emojiPopover { display: none; position: absolute; bottom: 48px; left: 0; width: 308px; max-height: 260px; overflow-y: auto; background: white; border: 1px solid var(--borde); border-radius: 10px; box-shadow: 0 8px 28px rgba(10,30,50,.18); padding: 8px; z-index: 20; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+  #emojiPopover.abierto { display: grid; }
+  #emojiPopover button { background: none; border: none; padding: 4px 0; font-size: 21px; line-height: 1.2; cursor: pointer; border-radius: 6px; }
+  #emojiPopover button:hover { background: var(--fondo); }
+  .msg-reacciones-barra { display: flex; gap: 2px; padding: 2px 2px 6px; border-bottom: 1px solid var(--borde); margin-bottom: 4px; }
+  .msg-menu .msg-reacciones-barra button { display: inline-block; width: auto; padding: 3px 5px; font-size: 18px; border-radius: 8px; }
+  .reacciones { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+  .reaccion-chip { background: white; color: var(--texto); border: 1px solid var(--borde); border-radius: 999px; padding: 0 7px; font-size: 12.5px; line-height: 20px; box-shadow: 0 1px 2px rgba(10,20,30,.1); }
+  .codigo-sesion { font-size: 11px; color: var(--azul); font-weight: 600; margin-top: 1px; letter-spacing: .01em; }
+  #rrWrap { position: relative; flex-shrink: 0; }
+  #btnRespuestasRapidas { background: #EEF3F8; color: var(--azul); border: none; border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 17px; }
+  #btnRespuestasRapidas:hover { background: #E1EBF5; }
+  #btnRespuestasRapidas:disabled { opacity: .5; cursor: default; }
+  #rrPopover { display: none; position: absolute; bottom: 48px; left: 0; width: 320px; max-height: 360px; overflow-y: auto; background: white; border: 1px solid var(--borde); border-radius: 10px; box-shadow: 0 8px 28px rgba(10,30,50,.18); padding: 8px; z-index: 20; }
+  #rrPopover.abierto { display: block; }
+  #rrPopover .rr-vacio { padding: 14px 10px; font-size: 12.5px; color: var(--texto-suave); text-align: center; }
+  #rrPopover .rr-grupo-titulo { font-size: 11px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; padding: 8px 8px 4px; }
+  #rrPopover .rr-item { padding: 8px; border-radius: 7px; cursor: pointer; }
+  #rrPopover .rr-item:hover { background: var(--fondo); }
+  #rrPopover .rr-item .rr-item-titulo { font-size: 13px; font-weight: 600; color: var(--texto); }
+  #rrPopover .rr-item .rr-item-cuerpo { font-size: 12px; color: var(--texto-suave); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   #btnCerrar { background: white; color: var(--rojo); border: 1.5px solid var(--rojo); }
   #btnCerrar:hover { background: #FDF0EF; }
 </style>
+<link rel="icon" type="image/png" href="/static/imagenes/sofi-cara-chica.png">
+<style id="sofi-css">
+/* ===== Sofi Desk — capa de look & feel compartida (login, asesor, supervisor, editor, dashboard) =====
+   Se inyecta inline en cada página (build_sofi.py) porque la CSP solo permite 'self' + inline.
+   La fuente se sirve por /static/imagenes/plus-jakarta-sans.woff2 (ruta ya permitida en Cloud Armor). */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/static/imagenes/plus-jakarta-sans.woff2') format('woff2');
+  font-weight: 400 800; font-style: normal; font-display: swap;
+}
+:root {
+  --azul: #0A4C8C; --azul-oscuro: #083A6E; --marino: #0A2C52;
+  --verde: #1E8A55; --verde-fondo: #E3F4EA; --verde-texto: #17663F;
+  --rojo: #D0392F; --naranja: #B8650A;
+  --fondo: #F4F7FB; --texto: #10233A; --texto-suave: #4A5B70; --borde: #E1E8F0;
+  --borde-fuerte: #C9D4E1; --celeste: #D7E6F5; --celeste-claro: #EAF1F9;
+  --radio: 12px; --sombra: 0 12px 40px rgba(16,35,58,.08);
+}
+html { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+body, button, input, select, textarea { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important; }
+body { background: var(--fondo); color: var(--texto); }
+
+/* ---------- Botones ---------- */
+button { border-radius: var(--radio); font-weight: 700; padding: 0 16px; min-height: 40px; letter-spacing: 0; transition: background .15s, border-color .15s, color .15s; }
+button.chico, a.chico { min-height: 34px; padding: 0 12px; font-size: 12.5px; border-radius: 10px; }
+a.chico { padding: 0 12px; min-height: 34px; }
+button.gris, a.gris { background: #fff; color: var(--texto); border: 1.5px solid var(--borde-fuerte); font-weight: 600; }
+button.gris:hover, a.gris:hover { background: var(--fondo); color: var(--texto); border-color: #9FB6CE; }
+button:disabled { background: #B7C4D1; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(10,76,140,.35); outline-offset: 1px; }
+input, select, textarea { border-radius: var(--radio) !important; border: 1.5px solid var(--borde-fuerte); color: var(--texto); }
+input:focus, select:focus, textarea:focus { border-color: var(--azul) !important; outline: none; }
+
+/* ---------- Modales (todos los overlays existentes) ---------- */
+[id$="Overlay"] { background: rgba(16,35,58,.5) !important; backdrop-filter: blur(2px); }
+[id$="Overlay"] > div, .modal-buscar { border-radius: 20px !important; box-shadow: 0 20px 60px rgba(16,35,58,.25); }
+[id$="Overlay"] h3, .modal-buscar h3 { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+
+/* ---------- Chips / pills ---------- */
+.estado-pill, .campana-chip { border-radius: 999px; }
+
+/* ===================================================
+   LOGIN dividido (marca a la izquierda, formulario a la derecha)
+   =================================================== */
+#login.sofi-login { position: fixed; inset: 0; z-index: 5000; padding: 0; gap: 0; border: 0; background: var(--fondo); align-items: stretch; flex-wrap: wrap; overflow: auto; }
+.sofi-login .login-marca { flex: 1 1 520px; min-width: 0; background: var(--azul); color: #fff; padding: 56px 64px; display: flex; flex-direction: column; justify-content: space-between; gap: 40px; }
+.sofi-login .marca-logo { display: flex; align-items: center; gap: 14px; }
+.sofi-login .marca-logo .ico { width: 48px; height: 48px; border-radius: 14px; background: #fff; display: flex; align-items: center; justify-content: center; }
+.sofi-login .marca-logo b { display: block; font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-login .marca-logo span { font-size: 13px; color: #CFE0F2; }
+.sofi-login h1 { margin: 0; font-size: 42px; line-height: 1.12; font-weight: 800; letter-spacing: -.025em; max-width: 520px; }
+.sofi-login .marca-sub { margin: 18px 0 0; font-size: 17px; line-height: 1.6; color: #DCE8F5; max-width: 520px; }
+.sofi-login .marca-roles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
+.sofi-login .marca-roles a { background: rgba(255,255,255,.10); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px; color: #fff; text-decoration: none; transition: background .15s; }
+.sofi-login .marca-roles a:hover { background: rgba(255,255,255,.18); }
+.sofi-login .marca-roles a.actual { background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.55); }
+.sofi-login .marca-roles b { font-size: 15px; }
+.sofi-login .marca-roles span { font-size: 12.5px; line-height: 1.45; color: #DCE8F5; }
+.sofi-login .login-form { flex: 1 1 440px; min-width: 0; padding: 40px 24px; display: flex; align-items: center; justify-content: center; }
+.sofi-login .login-card { width: 100%; max-width: 400px; background: #fff; border-radius: 20px; padding: 40px; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 20px; }
+.sofi-login .login-card h2 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-login .login-card p { margin: 6px 0 0; font-size: 14px; color: var(--texto-suave); }
+.sofi-login .campo { display: flex; flex-direction: column; gap: 8px; }
+.sofi-login .campo label { font-size: 14px; font-weight: 600; }
+.sofi-login input { width: 100%; height: 48px; padding: 0 14px; font-size: 15px; flex: none !important; }
+.sofi-login .campo-clave { position: relative; }
+.sofi-login .campo-clave input { padding-right: 52px; }
+.sofi-login .ver-clave { position: absolute; right: 4px; top: 2px; width: 44px; height: 44px; min-height: 0; padding: 0; background: transparent; color: var(--texto-suave); border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.sofi-login .ver-clave:hover { background: var(--fondo); }
+.sofi-login #btnConectar { height: 50px; font-size: 15px; width: 100%; }
+.sofi-login details.avanzado { font-size: 12.5px; color: var(--texto-suave); }
+.sofi-login details.avanzado summary { cursor: pointer; }
+.sofi-login details.avanzado input { margin-top: 8px; height: 40px; font-size: 13px; }
+.sofi-login .login-pie { font-size: 12px; color: var(--texto-suave); text-align: center; }
+@media (max-width: 760px) { .sofi-login .login-marca { padding: 28px 24px; } .sofi-login h1 { font-size: 28px; } .sofi-login .marca-roles { display: none; } .sofi-login .login-card { padding: 28px 22px; } }
+
+/* ===================================================
+   SHELL: barra lateral + cabecera (visibles al conectar)
+   =================================================== */
+body.sofi { display: grid !important; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100vh; margin: 0; }
+body.sofi:not(.sofi-conectado) { display: block !important; }
+.sofi-nav { display: none; grid-column: 1; grid-row: 1 / span 2; background: var(--marino); color: #fff; padding: 24px 16px; flex-direction: column; gap: 26px; overflow-y: auto; }
+body.sofi-conectado .sofi-nav { display: flex; }
+.sofi-nav .nav-logo { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
+.sofi-nav .nav-logo .ico { width: 36px; height: 36px; border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: center; }
+.sofi-nav .nav-logo b { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-nav .nav-links { display: flex; flex-direction: column; gap: 4px; }
+.sofi-nav .nav-links a { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 10px; color: #B9CDE2; text-decoration: none; font-size: 14px; font-weight: 500; }
+.sofi-nav .nav-links a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.sofi-nav .nav-links a.actual { background: rgba(255,255,255,.14); color: #fff; font-weight: 600; }
+.sofi-nav .nav-links a .insignia { margin-left: auto; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #fff; color: var(--marino); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.sofi-nav .nav-seccion { padding: 0 12px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7F9BBB; margin-bottom: -14px; }
+.sofi-nav .nav-usuario { margin-top: auto; padding: 14px; border-radius: 14px; background: rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 12px; }
+.sofi-nav .nav-usuario .fila { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sofi-nav .nav-usuario .avatar-nav { width: 36px; height: 36px; border-radius: 50%; background: var(--celeste); color: var(--marino); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.sofi-nav .nav-usuario b { font-size: 14px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sofi-nav .nav-usuario small { font-size: 12px; color: #B9CDE2; }
+.sofi-nav .nav-usuario a { font-size: 13px; color: #B9CDE2; cursor: pointer; text-decoration: none; }
+.sofi-nav .nav-usuario a:hover { color: #fff; }
+
+/* Cabecera blanca (reutiliza la barra existente de cada página) */
+body.sofi #barraConectado, body.sofi .sofi-top { grid-column: 2; grid-row: 1; background: #fff !important; border-bottom: 1px solid var(--borde) !important; padding: 12px 24px !important; gap: 10px !important; flex-wrap: wrap; align-items: center; }
+.sofi-titulo { display: flex; flex-direction: column; gap: 2px; margin-right: 12px; }
+.sofi-titulo h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-titulo span { font-size: 13px; color: var(--texto-suave); }
+body.sofi #barraConectado .estado { flex: 1; font-size: 13px; }
+body.sofi #barraConectado .nombre-asesor { font-size: 13px; font-weight: 700; padding: 0 12px; height: 36px; display: inline-flex; align-items: center; border-radius: 18px; background: var(--fondo); }
+body.sofi #barraConectado .dot { width: 9px; height: 9px; background: var(--verde); }
+body.sofi #barraConectado .stats-conexion { background: var(--fondo); border-radius: 18px; padding: 0 12px; height: 36px; align-items: center; font-weight: 600; color: var(--texto-suave); }
+body.sofi #barraConectado .btn-salir { display: none; } /* "Cerrar sesión" vive en la barra lateral; el botón sigue en el DOM para el JS */
+body.sofi #btnPausa { border-radius: var(--radio); min-height: 40px; background: #fff; border: 1.5px solid var(--borde-fuerte); color: var(--texto); font-weight: 600; }
+body.sofi #btnPausa.pausado { background: #FDF3E7; color: var(--naranja); border-color: #F0D9B5; }
+body.sofi #main { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; }
+@media (max-width: 900px) { body.sofi { grid-template-columns: 1fr; } .sofi-nav { display: none !important; } body.sofi #barraConectado, body.sofi .sofi-top, body.sofi #main { grid-column: 1; } }
+
+/* ---------- Asesor: bandeja / chat / datos del afiliado ---------- */
+body.sofi #lista { width: 320px; background: #fff; border-right: 1px solid var(--borde); }
+body.sofi #lista .lista-header { padding: 16px 16px 8px; font-size: 13px; color: var(--texto); text-transform: none; letter-spacing: 0; font-weight: 800; }
+body.sofi .tabs-lista { gap: 6px; padding: 0 14px 12px; }
+body.sofi .tab-lista { border-radius: 10px; padding: 9px 6px; font-size: 13px; background: var(--fondo); border: 1.5px solid transparent; }
+body.sofi .tab-lista.activa { background: var(--celeste-claro); border-color: var(--azul); color: var(--azul); font-weight: 700; }
+body.sofi .conv-item { padding: 14px 16px; gap: 12px; border-bottom: 1px solid var(--borde); align-items: flex-start; }
+body.sofi .conv-item.activa { background: var(--celeste-claro); border-left: 4px solid var(--azul); padding-left: 12px; }
+body.sofi .avatar { width: 40px; height: 40px; background: var(--celeste); color: var(--marino); font-size: 14px; }
+body.sofi .conv-item.activa .avatar { background: var(--azul); color: #fff; }
+body.sofi .conv-item .nombre { font-size: 14px; font-weight: 700; }
+body.sofi .conv-item .badge { background: var(--azul); border-radius: 11px; min-width: 22px; text-align: center; }
+body.sofi #panel { background: var(--fondo); }
+body.sofi #panel .chat-header { padding: 14px 24px; flex-wrap: wrap; gap: 10px 12px; }
+body.sofi #panel .chat-header .avatar { width: 44px; height: 44px; background: var(--azul); color: #fff; font-size: 15px; }
+body.sofi #panel .chat-header .nombre { font-size: 16px; font-weight: 800; }
+body.sofi #chat { padding: 24px; }
+body.sofi .msg { border-radius: 4px 16px 16px 16px; padding: 12px 14px; font-size: 14px; line-height: 1.5; box-shadow: none; }
+body.sofi .usuario { background: #fff; border: 1px solid var(--borde); }
+body.sofi .asesor { background: var(--azul); color: #fff; border-radius: 16px 4px 16px 16px; }
+body.sofi .bot { background: #E6EDF5; border: 0; color: var(--texto-suave); border-radius: 10px; padding: 5px 12px; font-size: 12px; }
+body.sofi #entrada { padding: 14px 24px; gap: 10px; align-items: center; }
+body.sofi #texto { height: 46px; border-radius: var(--radio); border: 1.5px solid var(--borde-fuerte); padding: 0 14px; }
+body.sofi #btnAdjuntar, body.sofi #btnEmoji, body.sofi #btnRespuestasRapidas { background: var(--fondo); color: var(--texto-suave); border-radius: var(--radio); width: 44px; height: 44px; }
+body.sofi #btnEnviar { height: 46px; min-width: 46px; border-radius: var(--radio); }
+body.sofi #btnCerrar { height: 46px; background: var(--azul); color: #fff; border: 0; }
+body.sofi #btnCerrar:hover { background: var(--azul-oscuro); }
+
+/* Columna derecha “Datos del afiliado” */
+#datosAfiliado { display: none; width: 280px; flex-shrink: 0; background: #fff; border-left: 1px solid var(--borde); padding: 22px; flex-direction: column; gap: 18px; overflow-y: auto; }
+body.sofi-con-chat #datosAfiliado { display: flex; }
+#datosAfiliado h2 { margin: 0; font-size: 15px; font-weight: 800; }
+#datosAfiliado dl { margin: 0; display: grid; gap: 14px; }
+#datosAfiliado dt { font-size: 12px; color: var(--texto-suave); }
+#datosAfiliado dd { margin: 3px 0 0; font-size: 14px; font-weight: 600; word-break: break-word; }
+#datosAfiliado .bloque-tiempos { background: var(--fondo); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #2E4560; }
+@media (max-width: 1280px) { #datosAfiliado { display: none !important; } }
+
+/* ---------- Tablas / paneles genéricos (dashboard, supervisor, editor) ---------- */
+body.sofi table { border-collapse: collapse; }
+body.sofi th { font-weight: 700; color: var(--texto-suave); }
+.sofi-card, body.sofi .panel, body.sofi .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 16px; }
+
+/* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
+body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnAyudarBot,
+body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
+body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi { display: none !important; }
+body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
+body.sofi-conectado #barraConectado:not(.activa) { }
+body.sofi { word-spacing: .06em; }
+body.sofi #barraConectado .stats-conexion:empty { display: none; }
+body.sofi #barraConectado .sofi-titulo { margin-right: auto; }
+body.sofi button, body.sofi input, body.sofi select, body.sofi textarea { word-spacing: .06em; }
+body.sofi #barraConectado #btnSalir { display: none !important; }
+
+/* ===================================================
+   CALIDEZ: la cara de Sofi como sello + acentos turquesa
+   =================================================== */
+:root { --turquesa: #1AA6B7; --turquesa-oscuro: #12899A; --coral: #F26B5B; --coral-claro: #FDEBE7; --ambar: #F5A524; }
+body { background: linear-gradient(180deg, #EEF5FC 0%, #F4F7FB 220px); background-attachment: fixed; }
+.sello, .sofi-sello { border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 4px 12px rgba(10,44,82,.25); }
+
+/* Login */
+#login.sofi-login .login-marca { background: radial-gradient(120% 90% at 0% 0%, #0C6BB5 0%, #0A4C8C 45%, #0A3A70 100%); position: relative; overflow: hidden; }
+#login.sofi-login .login-marca::before { content: ''; position: absolute; width: 520px; height: 520px; right: -160px; top: 18%; border-radius: 50%; background: radial-gradient(circle, rgba(26,166,183,.55), rgba(26,166,183,0) 68%); pointer-events: none; }
+#login.sofi-login .login-marca::after { content: ''; position: absolute; width: 360px; height: 360px; left: -120px; bottom: -140px; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.14), rgba(255,255,255,0) 70%); pointer-events: none; }
+.sofi-login .login-marca > * { position: relative; z-index: 1; }
+.sofi-login .marca-logo .sello { width: 52px; height: 52px; }
+.sofi-login .login-card { border-top: 4px solid var(--turquesa); }
+.sofi-login #btnConectar { background: linear-gradient(135deg, #0A4C8C, #0C6BB5); box-shadow: 0 8px 20px rgba(10,76,140,.28); }
+.sofi-login #btnConectar:hover { background: linear-gradient(135deg, #083A6E, #0A5CA0); }
+/* Barra lateral */
+.sofi-nav { background: linear-gradient(180deg, #0B3463 0%, #0A2C52 55%, #08233F 100%); }
+.sofi-nav .nav-logo .sello { width: 40px; height: 40px; }
+.sofi-nav .nav-links a.actual { background: rgba(26,166,183,.22); box-shadow: inset 3px 0 0 var(--turquesa); }
+.sofi-nav .nav-links a .insignia { background: var(--turquesa); color: #fff; }
+.sofi-nav .nav-usuario { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.08); }
+.sofi-nav .nav-usuario .avatar-nav { background: linear-gradient(135deg, #1AA6B7, #7FD3DE); color: #06324a; }
+
+/* Cabecera */
+body.sofi #barraConectado, body.sofi .sofi-top { border-bottom: 0 !important; box-shadow: 0 1px 0 var(--borde), 0 3px 0 -1px rgba(26,166,183,.35); }
+.sofi-sello { width: 44px; height: 44px; box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(26,166,183,.45); margin-right: 4px; }
+.sofi-titulo h1 { color: var(--marino); }
+
+/* Acentos */
+#btnEnviar, #btnCerrar { background: linear-gradient(135deg, #0A4C8C, #0C63A8); }
+#btnEnviar:hover, #btnCerrar:hover { background: linear-gradient(135deg, #083A6E, #0A5594); }
+button:disabled { background: #B7C4D1 !important; }
+body.sofi .tab-lista.activa { border-color: var(--turquesa); color: var(--turquesa-oscuro); background: #E6F6F8; }
+body.sofi .conv-item.activa { background: #EAF6F8; border-left-color: var(--turquesa); }
+body.sofi .conv-item .badge { background: var(--turquesa); }
+body.sofi .asesor { background: linear-gradient(135deg, #0A4C8C, #0C63A8); }
+body.sofi #datosAfiliado { background: linear-gradient(180deg, #fff 0%, #F7FBFD 100%); }
+
+/* Estados vacíos: icono (no la cara) en el tercer color */
+#vacio, #panelVacio, .vacio-lista, #listaVacia { position: relative; }
+#vacio::before, #panelVacio::before, #listaVacia::before { content: ''; display: block; width: 84px; height: 84px; margin: 0 auto 14px; border-radius: 50%;
+  background: center/44px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F26B5B' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z'/><path d='M8.5 12h.01M12 12h.01M15.5 12h.01'/></svg>"), #FDEBE7; }
+#listaVacia::before { width: 64px; height: 64px; background-size: 34px; }
+
+/* Tercer color (coral): icono de cabecera y pequeños acentos */
+.sofi-icono { width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, #F26B5B, #F5A524); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-right: 4px; box-shadow: 0 6px 14px rgba(242,107,91,.32); }
+.sofi-nav .nav-seccion { color: #F5A58F; }
+.sofi-nav .nav-links a .insignia { background: var(--coral); }
+body.sofi .conv-item .badge { background: var(--coral); }
+#datosAfiliado h2::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--coral); margin-right: 8px; }
+
+/* Botones de acción de la conversación: todos del mismo tamaño */
+#btnDescargarPdf, #btnEnviarSms, #btnPausarConv, #btnAvisoInactividad, #btnTransferir, #btnHistorialUsuario,
+#btnAvisoInactividadEscucha, #btnDejarEscuchar, #btnControl, #btnCerrarConversacion, #btnCerrar {
+  box-sizing: border-box; width: 104px; min-width: 104px; max-width: 104px; height: 38px; min-height: 38px; padding: 0 8px !important;
+  display: inline-flex !important; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12.5px !important; font-weight: 700; border-radius: 10px; text-decoration: none; line-height: 1; flex: none; }
+#btnControl, #btnCerrarConversacion { background: var(--rojo); color: #fff; border: 0; }
+#btnControl:hover, #btnCerrarConversacion:hover { background: #B02F26; }
+.acciones-conv { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+.acciones-asesor { max-width: 344px; }              /* 3 + 3, ordenados */
+@media (min-width: 1700px) { .acciones-asesor { max-width: none; } }
+.acciones-supervisor { max-width: 456px; }          /* 4 + 3 */
+@media (min-width: 1560px) { .acciones-supervisor { max-width: none; } }
+
+</style>
 </head>
 <body>
-  <div id="login">
-    <input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" />
-    <input id="usuario" placeholder="Usuario" />
-    <input id="password" placeholder="Contraseña" type="password" />
-    <button id="btnConectar">Conectar</button>
+  <div id="login" class="sofi-login">
+    <section class="login-marca">
+      <div class="marca-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="52" height="52"><div><b>Sofi Desk</b><span>Sanitas Perú</span></div></div>
+      <div><h1>Cada conversación de Sofi, en buenas manos.</h1>
+      <p class="marca-sub">Atiende a los afiliados, supervisa al equipo en vivo y mantén al día las respuestas del asistente, todo desde un solo lugar.</p></div>
+      <div class="marca-roles"><a href="/asesor" class="actual"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><b>Asesor</b><span>Atiende las conversaciones asignadas a tus campañas.</span></a><a href="/supervisor" class=""><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><b>Supervisor</b><span>Monitorea al equipo, escucha y apoya en vivo.</span></a><a href="/editor" class=""><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><b>Editor</b><span>Actualiza textos, menús e imágenes del bot.</span></a></div>
+    </section>
+    <section class="login-form"><div class="login-card">
+      <div><h2>Ingresa a tu cuenta</h2><p>Consola de asesor · Sanitas Perú</p></div>
+      <div class="campo"><label for="usuario">Usuario</label><input id="usuario" type="text" placeholder="ej. vcapia" autocomplete="username" /></div>
+      <div class="campo"><label for="password">Contraseña</label><div class="campo-clave"><input id="password" type="password" placeholder="Tu contraseña" autocomplete="current-password" />
+        <button type="button" class="ver-clave" id="btnVerClave" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      <button id="btnConectar">Ingresar</button>
+      <details class="avanzado"><summary>Opciones avanzadas</summary><input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" /></details>
+      <div class="login-pie">¿Problemas para ingresar? Contacta a tu supervisor.</div>
+    </div></section>
   </div>
+  <nav class="sofi-nav" aria-label="Menú principal">
+    <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Conversaciones</span><span class="insignia" id="insigAsesor" style="display:none"></span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
+    <div class="nav-seccion">Ir a</div>
+    <div class="nav-links"><a href="/supervisor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Supervisor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a><a href="/dashboard" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
+    <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Asesor</small></div></div>
+      <a href="#" id="navSalir">Cerrar sesión</a></div>
+  </nav>
   <div id="barraConectado">
+    <div class="sofi-icono" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></div><div class="sofi-titulo"><h1>Conversaciones</h1><span>Bandeja de atención en vivo</span></div>
     <span class="dot" id="dotEstado"></span>
     <span class="nombre-asesor" id="nombreAsesorTexto"></span>
     <span class="estado" id="estadoTexto"></span>
+    <span class="stats-conexion" id="statsConexion" title="Tiempo de hoy"></span>
+    <button class="chico gris" id="btnBuscar" title="Buscar una conversación por celular, DNI o nombre">🔎 Buscar</button>
+    <button class="chico gris" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
+    <button class="chico gris" id="btnAyudarBot" title="Ayudar a una persona que todavía está navegando el bot o en cola">🧭 Ayudar en el bot</button>
     <button id="btnPausa">⏸ Pausar</button>
     <button class="btn-salir" id="btnSalir">Cerrar sesión</button>
   </div>
@@ -139,6 +594,10 @@
         Conversaciones
         <button id="btnRefrescarLista" title="Actualizar">🔄</button>
       </div>
+      <div class="tabs-lista">
+        <div class="tab-lista activa" id="tabPrincipal" data-tab="principal">Principal (0)</div>
+        <div class="tab-lista" id="tabPausados" data-tab="pausados">⏸ Pausados (0)</div>
+      </div>
       <div class="vacio-lista" id="listaVacia">Todavía no tienes conversaciones asignadas.</div>
     </div>
     <div id="panel">
@@ -147,20 +606,65 @@
         <div>
           <div class="nombre" id="chatNombre"></div>
           <div class="telefono" id="chatTelefono"></div>
+          <div class="telefono" id="chatDni"></div>
+          <div class="codigo-sesion" id="chatCodigo" title="Código único de esta sesión de chat"></div>
         </div>
         <div id="chatTiempos" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
           <div>⏱ Esperó: <b id="tiempoEspera">--</b></div>
           <div>🕐 En atención: <b id="tiempoAtencion">--</b></div>
         </div>
-        <button class="chico gris" id="btnHistorialUsuario" style="margin-left:auto;">🕘 Historial</button>
+        <div class="bandera-selector" style="margin-left:auto;">
+          <button id="btnBandera" type="button" title="Marcar conversación">
+            <span class="bandera-dot blanco" id="banderaDotActual"></span>
+          </button>
+          <div class="bandera-menu" id="banderaMenu">
+            <button type="button" class="bandera-opcion rojo" data-bandera="rojo" title="Rojo"></button>
+            <button type="button" class="bandera-opcion azul" data-bandera="azul" title="Azul"></button>
+            <button type="button" class="bandera-opcion amarillo" data-bandera="amarillo" title="Amarillo"></button>
+            <button type="button" class="bandera-opcion verde" data-bandera="verde" title="Verde"></button>
+            <button type="button" class="bandera-opcion blanco" data-bandera="" title="Sin marca"></button>
+          </div>
+        </div>
+        <div class="acciones-conv acciones-asesor"><a class="chico gris" id="btnDescargarPdf" title="Descargar la conversación en PDF" target="_blank" rel="noopener">📄 PDF</a>
+        <button class="chico gris" id="btnEnviarSms" title="Manda un SMS al cliente con un enlace directo a esta conversación, por si cerró el chat">📲 SMS</button>
+        <button class="chico gris" id="btnPausarConv" title="Pausar o reanudar esta conversación: la pasa a la bandeja 'Pausados' mientras esperas que el cliente responda">⏸ Pausar</button>
+        <button class="chico gris" id="btnAvisoInactividad" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
+        <button class="chico gris" id="btnTransferir" title="Transferir esta conversación a otro asesor">🔀 Transf.</button>
+        <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones de este usuario">🕘 Histor.</button></div>
+      </div>
+      <div id="notaClienteBanner">
+        <span class="nota-cliente-icono">📝</span>
+        <span class="nota-cliente-texto" id="notaClienteTexto"></span>
+        <button class="chico gris" id="btnEditarNotaCliente" type="button">✏️ Nota</button>
       </div>
       <div id="chat"><div id="vacio">Selecciona una conversación de la lista para empezar a responder.</div></div>
+      <div id="respondiendoBanner">
+        <span class="texto-cita"></span>
+        <button id="btnCancelarResponder" type="button" aria-label="Cancelar respuesta">✕</button>
+      </div>
       <div id="entrada">
-        <input id="texto" placeholder="Escribe tu respuesta..." />
+        <input id="texto" placeholder="Escribe tu respuesta..." spellcheck="true" lang="es" />
+        <div id="emojiWrap">
+          <button id="btnEmoji" type="button" title="Emojis">😊</button>
+          <div id="emojiPopover"></div>
+        </div>
+        <div id="rrWrap">
+          <button id="btnRespuestasRapidas" type="button" title="Respuestas rápidas">⚡</button>
+          <div id="rrPopover"></div>
+        </div>
+        <button id="btnAdjuntar" type="button" title="Adjuntar imagen o PDF">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <input id="archivoInput" type="file" accept="image/*,application/pdf,.xls,.xlsx,.csv,.doc,.docx" style="display:none" />
         <button id="btnEnviar">Enviar</button>
-        <button id="btnCerrar">Cerrar</button>
+        <button id="btnCerrar" title="Cerrar la conversación y elegir su etiqueta de cierre">✅ Cerrar</button>
       </div>
     </div>
+    <aside id="datosAfiliado" aria-label="Datos del afiliado"><h2>Datos del afiliado</h2>
+      <dl><div><dt>Nombre</dt><dd id="dNombre">—</dd></div><div><dt>DNI</dt><dd id="dDni">—</dd></div><div><dt>Celular</dt><dd id="dCelular">—</dd></div><div><dt>Código de sesión</dt><dd id="dCodigo">—</dd></div></dl>
+      <div class="bloque-tiempos"><span>⏱ Esperó: <b id="dEspera">--</b></span><span>🕐 En atención: <b id="dAtencion">--</b></span></div></aside>
   </div>
 
   <div id="modalOverlay">
@@ -175,6 +679,28 @@
     </div>
   </div>
 
+  <div id="modalNotaOverlay">
+    <div id="modalNota">
+      <h3>Nota del cliente</h3>
+      <p>Solo la ven asesores y supervisores — el cliente nunca la ve. Sirve de orientación para la próxima vez que escriba.</p>
+      <label for="notaClienteDocumentoInput">DNI / RUC</label>
+      <input id="notaClienteDocumentoInput" type="text" placeholder="Ej: 40401071" />
+      <label for="notaClienteTextarea">Nota</label>
+      <textarea id="notaClienteTextarea" placeholder="Ej: Cliente suele confundirse con la opción de 'Estado de pedido'..."></textarea>
+      <div class="botones">
+        <button class="gris" id="btnCancelarNota">Cancelar</button>
+        <button id="btnGuardarNota">Guardar nota</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tooltipUltimoMensaje"></div>
+
+  <div id="lightboxOverlay">
+    <button class="cerrar" id="btnCerrarLightbox">✕</button>
+    <img src="" alt="" />
+  </div>
+
   <div id="modalHistorialOverlay">
     <div id="modalHistorial">
       <h3>Historial de conversaciones</h3>
@@ -184,9 +710,102 @@
       </div>
       <div id="historialMensajesView">
         <span class="volver" id="btnVolverHistorial">← Volver a la lista</span>
+        <a id="btnDescargarPdfHistorial" style="float:right;font-size:12.5px;color:var(--azul);text-decoration:none;" target="_blank" rel="noopener">⬇️ PDF</a>
         <div id="historialMensajesChat"></div>
       </div>
       <button class="gris" id="btnCerrarModalHistorial">Cerrar</button>
+    </div>
+  </div>
+
+
+  <div id="modalPausaOverlay" style="display:none;position:fixed;inset:0;background:rgba(10,20,30,.4);z-index:1004;align-items:center;justify-content:center;">
+    <div style="background:white;border-radius:14px;padding:22px;width:380px;max-width:94vw;display:flex;flex-direction:column;">
+      <h3 style="margin:0 0 4px;font-size:16px;">¿Por qué te pones en pausa?</h3>
+      <p style="margin:0 0 12px;font-size:12.5px;color:var(--texto-suave);">Mientras estés en pausa no recibirás conversaciones nuevas. Tu supervisor verá el motivo.</p>
+      <div id="pausaMotivos" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <button type="button" class="gris pausa-motivo" data-motivo="reunion">👥 Reunión</button>
+        <button type="button" class="gris pausa-motivo" data-motivo="bano">🚻 Baño</button>
+        <button type="button" class="gris pausa-motivo" data-motivo="almuerzo">🍽️ Almuerzo</button>
+        <button type="button" class="gris pausa-motivo" data-motivo="otro">✏️ Otro</button>
+      </div>
+      <input id="pausaOtroTexto" maxlength="60" placeholder="Cuéntanos el motivo (opcional)" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:14px;font-family:inherit;" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button class="gris" id="btnCancelarPausa" type="button">Cancelar</button>
+        <button id="btnConfirmarPausa" type="button" disabled>Ponerme en pausa</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalSmsInvitacionOverlay" style="display:none;position:fixed;inset:0;background:rgba(10,20,30,.4);z-index:1003;align-items:center;justify-content:center;">
+    <div style="background:white;border-radius:14px;padding:22px;width:420px;max-width:94vw;display:flex;flex-direction:column;">
+      <h3 style="margin:0 0 8px;font-size:16px;">Invitar por SMS a escribirnos</h3>
+      <p style="margin:0 0 12px;font-size:12.5px;color:var(--texto-suave);">Envía un SMS a un número que todavía no ha iniciado una conversación, con el enlace para escribirnos por el webchat. (Para un cliente que ya tiene conversación usa el botón 📲 SMS de esa conversación.)</p>
+      <input id="smsInvitacionCelular" inputmode="numeric" maxlength="15" placeholder="Celular (9 dígitos, ej. 987654321)" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:14px;font-family:inherit;" />
+      <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Mensaje que se enviará</label>
+      <textarea id="smsInvitacionTexto" rows="4" maxlength="160" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;"></textarea>
+      <div id="smsInvitacionContador" style="text-align:right;font-size:12px;margin-top:3px;color:var(--texto-suave);">0 / 160</div>
+      <div id="smsInvitacionEstado" style="min-height:20px;margin-top:10px;font-size:12.5px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button class="gris" id="btnCancelarSmsInvitacion" type="button">Cerrar</button>
+        <button id="btnEnviarSmsInvitacion" type="button">Enviar SMS</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalBuscarOverlay">
+    <div class="modal-buscar">
+      <h3>Buscar conversación</h3>
+      <div class="buscar-fila">
+        <input id="buscarInput" placeholder="Celular, DNI o nombre del cliente (mín. 3 caracteres)..." />
+        <button id="btnEjecutarBusqueda">Buscar</button>
+      </div>
+      <div id="buscarResultados"></div>
+      <div class="buscar-aviso" id="buscarVacio">Escribe un celular, DNI o nombre y presiona buscar.</div>
+      <div class="buscar-aviso" id="buscarSinResultados" style="display:none;">No se encontraron conversaciones.</div>
+      <button class="gris btn-cerrar-modal" id="btnCerrarModalBuscar">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalAyudarBotOverlay">
+    <div class="modal-buscar">
+      <h3>Ayudar en el bot</h3>
+      <p class="ayuda">Busca por número de celular conversaciones que todavía no llegan a un asesor (en el bot o en cola), para ayudar a la persona a navegar el chat en vivo.</p>
+      <div class="buscar-fila">
+        <input id="buscarBotInput" placeholder="Número de celular (mín. 3 dígitos)..." />
+        <button id="btnEjecutarBusquedaBot">Buscar</button>
+      </div>
+      <div id="buscarBotResultados"></div>
+      <div class="buscar-aviso" id="buscarBotVacio">Escribe un número de celular y presiona buscar.</div>
+      <div class="buscar-aviso" id="buscarBotSinResultados" style="display:none;">No hay conversaciones en el bot o en cola con ese celular.</div>
+      <button class="gris btn-cerrar-modal" id="btnCerrarModalAyudarBot">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalAyudaBotChatOverlay">
+    <div id="modalAyudaBotChat">
+      <div id="ayudaBotCabecera">
+        <div style="flex:1;">
+          <div class="nombre" id="ayudaBotNombre"></div>
+          <div class="datos" id="ayudaBotDatos"></div>
+        </div>
+        <button class="chico gris" id="btnCerrarAyudaBotChat">Cerrar</button>
+      </div>
+      <div id="ayudaBotAviso"></div>
+      <div id="ayudaBotMensajes"></div>
+      <div id="ayudaBotEntrada">
+        <input id="ayudaBotTexto" placeholder="Escribe un mensaje para esta persona..." autocomplete="off" />
+        <button id="btnAyudaBotEnviar">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalTransferirOverlay">
+    <div id="modalTransferir">
+      <h3>Transferir conversación</h3>
+      <p>Selecciona a qué asesor conectado le quieres pasar esta conversación.</p>
+      <div id="listaAsesoresTransferir"></div>
+      <div class="vacio-transferir" id="transferirVacio" style="display:none;">No hay otros asesores conectados ahora mismo.</div>
+      <button class="gris cerrar" id="btnCancelarTransferir">Cancelar</button>
     </div>
   </div>
 
@@ -195,9 +814,35 @@ if (!document.getElementById('urlBase').value) {
   document.getElementById('urlBase').value = window.location.origin;
 }
 
-let conversaciones = {};  // id -> {resumen_usuario, telefono, mensajes: [], noLeidos: 0, entrada_cola, asignado_en}
+let conversaciones = {};  // id -> {resumen_usuario, telefono, mensajes: [], noLeidos: 0, entrada_cola, asignado_en, pausada}
 let activaId = null;
 let intervaloTiempos = null;
+let pestanaActual = 'principal';  // 'principal' | 'pausados'
+
+// Tiempo de conexión/pausa de HOY, en la barra superior (lo mismo que ya ve
+// el supervisor por cada asesor). El servidor manda el total hasta el
+// momento (evento "mis_estadisticas": al conectar y al pausar/reanudar) y
+// acá se va sumando en vivo, segundo a segundo, al balde que corresponda
+// según si en este momento está pausado o no.
+let statsSegundosConectado = 0;
+let statsSegundosPausado = 0;
+let statsAtendidasHoy = 0;
+let sincronizarPausaPendiente = false;  // true tras (re)conectar: la 1ª "mis_estadisticas" trae la pausa real del servidor
+let statsDesde = Date.now();
+let intervaloStatsConexion = null;
+
+// Respuestas rápidas: el servidor ya manda solo las activas de las campañas
+// que este asesor tiene asignadas (ver supervisor.py: enviar_respuestas_rapidas).
+let respuestasRapidas = [];
+
+function actualizarStatsConexion() {
+  const el = document.getElementById('statsConexion');
+  if (!el) return;
+  const transcurrido = Math.floor((Date.now() - statsDesde) / 1000);
+  const conectado = statsSegundosConectado + (enPausa ? 0 : transcurrido);
+  const pausado = statsSegundosPausado + (enPausa ? transcurrido : 0);
+  el.textContent = `🕒 En línea hoy: ${formatearDuracion(conectado * 1000)} · ⏸ Pausado hoy: ${formatearDuracion(pausado * 1000)} · 📨 Atendidas hoy: ${statsAtendidasHoy}`;
+}
 
 function formatearDuracion(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -228,16 +873,133 @@ function actualizarTiempos() {
 }
 let ws = null;
 let tokenGuardado = null;
+let tokenArchivo = null; // token de vida corta (5 min) solo para links de /archivo-receta y /conversacion-pdf
+let intervaloTokenArchivo = null;
 let urlBaseGuardada = null;
 let intentosReconexion = 0;
 let cerradoManualmente = false;
 let enPausa = false;
 let etiquetasDisponibles = [];
 
+// Escapa HTML antes de insertar cualquier dato que venga del paciente o de
+// otro asesor (nombre, teléfono, DNI, etiquetas, etc.) dentro de un
+// innerHTML — sin esto, alguien podría poner "<img src=x onerror=...>"
+// como su nombre en el widget y ejecutar código en la pantalla del asesor
+// apenas le llegue esa conversación.
+// Los links de /archivo-receta y /conversacion-pdf van en una URL (query
+// string), que queda escrita en los logs de acceso — por eso no usan el JWT
+// de sesión de 12 horas, sino uno de solo 5 minutos que se renueva solo.
+async function refrescarTokenArchivo() {
+  if (!tokenGuardado || !urlBaseGuardada) return;
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/staff/token-archivo`, {
+      headers: { Authorization: `Bearer ${tokenGuardado}` },
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      tokenArchivo = data.token;
+    }
+  } catch (e) { /* si falla, urlArchivo()/conversacion-pdf usan tokenGuardado como respaldo */ }
+}
+function iniciarRenovacionTokenArchivo() {
+  refrescarTokenArchivo();
+  if (intervaloTokenArchivo) clearInterval(intervaloTokenArchivo);
+  intervaloTokenArchivo = setInterval(refrescarTokenArchivo, 4 * 60 * 1000);
+}
+
+function escapeHtml(valor) {
+  return String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Construye el link protegido para ver un archivo del paciente. Nunca se
+// guarda ni se reenvía la URL firmada de GCS — solo la "ruta" (nombre del
+// objeto en el bucket); al abrir este link, el backend genera una firmada
+// NUEVA de corta duración (ver GET /archivo-receta en main.py), así nunca
+// queda una URL vieja y expirada guardada en ningún lado.
+function urlArchivo(ruta) {
+  if (!ruta) return '#';
+  return `${urlBaseGuardada}/archivo-receta?ruta=${encodeURIComponent(ruta)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+}
+
+function esImagen(ruta) {
+  return /\.(jpe?g|png|gif|webp|bmp)$/i.test(ruta || '');
+}
+
+function esAudio(ruta) {
+  return /\.(webm|ogg|m4a|mp3|wav)$/i.test(ruta || '');
+}
+
+function abrirLightbox(url) {
+  document.querySelector('#lightboxOverlay img').src = url;
+  document.getElementById('lightboxOverlay').classList.add('activa');
+}
+function cerrarLightbox() {
+  document.getElementById('lightboxOverlay').classList.remove('activa');
+  document.querySelector('#lightboxOverlay img').src = '';
+}
+document.getElementById('btnCerrarLightbox').onclick = cerrarLightbox;
+document.getElementById('lightboxOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'lightboxOverlay') cerrarLightbox();
+});
+
 function iniciales(nombre) {
   if (!nombre) return '?';
   const partes = nombre.trim().split(/\s+/);
   return (partes[0][0] + (partes[1] ? partes[1][0] : '')).toUpperCase();
+}
+
+// Hora sola si el último mensaje es de hoy; si es de otro día, agrega la fecha (DD/MM).
+function formatearFechaHoraLista(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const hoy = new Date();
+  const esHoy = d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth() && d.getDate() === hoy.getDate();
+  const hora = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  if (esHoy) return hora;
+  const fecha = String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0');
+  return `${fecha} ${hora}`;
+}
+
+function ultimoMensajeDe(c) {
+  const mensajes = c.mensajes || [];
+  return mensajes.length ? mensajes[mensajes.length - 1] : null;
+}
+
+function mostrarTooltipUltimoMensaje(e, texto) {
+  if (!texto) return;
+  const tip = document.getElementById('tooltipUltimoMensaje');
+  tip.textContent = texto;
+  tip.style.display = 'block';
+  posicionarTooltipUltimoMensaje(e);
+}
+function posicionarTooltipUltimoMensaje(e) {
+  const tip = document.getElementById('tooltipUltimoMensaje');
+  if (tip.style.display !== 'block') return;
+  const offset = 16;
+  let x = e.clientX + offset;
+  let y = e.clientY + offset;
+  const maxX = window.innerWidth - 336;
+  const maxY = window.innerHeight - 90;
+  if (x > maxX) x = Math.max(8, maxX);
+  if (y > maxY) y = Math.max(8, maxY);
+  tip.style.left = x + 'px';
+  tip.style.top = y + 'px';
+}
+function ocultarTooltipUltimoMensaje() {
+  document.getElementById('tooltipUltimoMensaje').style.display = 'none';
+}
+
+// Código único de la sesión de chat = número de la conversación (el mismo que
+// ve el supervisor y que sirve para ubicarla). NO es el token interno de
+// sesión del cliente: ese da acceso a la conversación y nunca se muestra.
+function codigoSesion(id) {
+  return 'Sesión #' + String(id).padStart(6, '0');
 }
 
 function renderLista() {
@@ -246,22 +1008,51 @@ function renderLista() {
   const items = lista.querySelectorAll('.conv-item');
   items.forEach(el => el.remove());
 
-  const entradas = Object.entries(conversaciones)
+  const todas = Object.entries(conversaciones);
+  const numPausadas = todas.filter(([, c]) => c.pausada).length;
+  document.getElementById('tabPausados').textContent = `⏸ Pausados (${numPausadas})`;
+  document.getElementById('tabPrincipal').textContent = `Principal (${todas.length - numPausadas})`;
+
+  const entradas = todas
+    .filter(([, c]) => (pestanaActual === 'pausados') === !!c.pausada)
     .sort((a, b) => new Date(b[1].ultimaActividad || 0) - new Date(a[1].ultimaActividad || 0));
   vacio.style.display = entradas.length === 0 ? 'block' : 'none';
+  vacio.textContent = pestanaActual === 'pausados'
+    ? 'No hay conversaciones pausadas.'
+    : 'Todavía no tienes conversaciones asignadas.';
 
   entradas.forEach(([id, c]) => {
     const div = document.createElement('div');
-    div.className = 'conv-item' + (String(activaId) === id ? ' activa' : '');
+    div.className = 'conv-item' + (String(activaId) === id ? ' activa' : '') + (c.pausada ? ' pausada' : '');
     const nombre = c.resumen_usuario || ('Usuario ' + id);
+    const ultimoMsg = ultimoMensajeDe(c);
+    const horaTexto = formatearFechaHoraLista(ultimoMsg ? ultimoMsg.hora : c.ultimaActividad);
+    const textoPlano = ultimoMsg ? (ultimoMsg.texto || (ultimoMsg.ruta ? '📎 Archivo enviado' : '')) : '';
     div.innerHTML = `
-      <div class="avatar">${iniciales(nombre)}</div>
+      <div class="avatar">${escapeHtml(iniciales(nombre))}</div>
       <div class="info">
-        <div class="nombre">${nombre}</div>
-        ${c.telefono ? `<div class="telefono">${c.telefono}</div>` : ''}
+        <div class="nombre">${escapeHtml(nombre)}</div>
+        ${c.telefono ? `<div class="telefono">${escapeHtml(c.telefono)}</div>` : ''}
+        ${c.dni ? `<div class="dni">DNI: ${escapeHtml(c.dni)}</div>` : ''}
+        <div class="codigo-sesion">${escapeHtml(codigoSesion(id))}</div>
+        ${c.pausada ? `<div><span class="chip-pausada">⏸ Pausada</span></div>` : ''}
       </div>
-      ${c.noLeidos > 0 ? `<span class="badge">${c.noLeidos}</span>` : ''}
+      <div class="meta-derecha">
+        ${horaTexto ? `<div class="ultima-hora">${horaTexto}</div>` : ''}
+        ${c.noLeidos > 0 ? `<span class="badge">${c.noLeidos}</span>` : ''}
+      </div>
+      ${c.bandera ? `<span class="bandera-dot ${c.bandera}" title="Marcada"></span>` : ''}
     `;
+    // Los <div> no soportan el atributo "alt" de HTML (eso es solo para
+    // <img>) — acá se usa un tooltip propio (en vez del "title" nativo, que
+    // es lento y sin estilo) que aparece al instante al pasar el mouse,
+    // igual que en WhatsApp Web. No marca el mensaje como leído (✓✓ azul)
+    // porque nunca se envía marcar_leido solo por esto.
+    if (textoPlano) {
+      div.addEventListener('mouseenter', (e) => mostrarTooltipUltimoMensaje(e, textoPlano));
+      div.addEventListener('mousemove', posicionarTooltipUltimoMensaje);
+      div.addEventListener('mouseleave', ocultarTooltipUltimoMensaje);
+    }
     div.onclick = () => seleccionar(id);
     lista.appendChild(div);
   });
@@ -278,6 +1069,22 @@ function seleccionar(id) {
   document.getElementById('chatAvatar').textContent = iniciales(nombre);
   document.getElementById('chatNombre').textContent = nombre;
   document.getElementById('chatTelefono').textContent = c.telefono || '';
+  document.getElementById('chatDni').textContent = c.dni ? ('DNI: ' + c.dni) : '';
+  document.getElementById('chatCodigo').textContent = codigoSesion(id);
+  document.getElementById('btnDescargarPdf').href =
+    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+  actualizarBotonBandera();
+  cargarNotaCliente(id);
+
+  const btnPausarConv = document.getElementById('btnPausarConv');
+  if (c.pausada) {
+    btnPausarConv.textContent = '▶ Reanudar';
+    btnPausarConv.classList.add('pausada-activa');
+  } else {
+    btnPausarConv.textContent = '⏸ Pausar';
+    btnPausarConv.classList.remove('pausada-activa');
+  }
+  actualizarBotonAvisoInactividad(c);
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'marcar_leido', payload: { conversacion_id: Number(id) } }));
@@ -291,6 +1098,246 @@ function seleccionar(id) {
   renderChat();
 }
 
+// ---- Aviso automático de inactividad, por conversación ----
+// Toda conversación nace con esto encendido (ver main.py: columna
+// aviso_inactividad_activo, default TRUE) -- este botón es solo para
+// apagarlo puntualmente en una conversación donde el asesor sabe que el
+// cliente va a demorar en responder (coordinando algo, por ejemplo) y no
+// quiere que el bot le mande igual el mensaje de "¿sigues ahí?".
+function actualizarBotonAvisoInactividad(c) {
+  const btn = document.getElementById('btnAvisoInactividad');
+  if (!btn) return;
+  const activo = c.avisoInactividadActivo !== false;
+  btn.textContent = activo ? '🔔 Aviso' : '🔕 Aviso';
+  btn.classList.toggle('inactividad-apagada', !activo);
+}
+
+document.getElementById('btnAvisoInactividad').onclick = () => {
+  if (activaId === null || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const c = conversaciones[activaId];
+  if (!c) return;
+  const nuevoValor = !(c.avisoInactividadActivo !== false);
+  c.avisoInactividadActivo = nuevoValor;
+  actualizarBotonAvisoInactividad(c);
+  ws.send(JSON.stringify({
+    type: 'cambiar_aviso_inactividad',
+    payload: { conversacion_id: Number(activaId), activo: nuevoValor },
+  }));
+};
+
+// ---- Nota interna del cliente (ligada a su DNI/RUC) ----
+// Se carga apenas se abre la conversación (ver seleccionar() arriba) y es
+// 100% interna: el paciente nunca la ve. Sirve de orientación para
+// asesor/supervisor si el mismo cliente vuelve a escribir en el futuro.
+let notaClienteActual = null; // { documento, nota, actualizado_por, actualizado_en } de la conversación activa
+
+function renderNotaBanner() {
+  const banner = document.getElementById('notaClienteBanner');
+  const texto = document.getElementById('notaClienteTexto');
+  if (!notaClienteActual) {
+    banner.classList.remove('activa');
+    return;
+  }
+  banner.classList.add('activa');
+  if (notaClienteActual.nota) {
+    banner.classList.remove('sin-nota');
+    let meta = '';
+    if (notaClienteActual.actualizado_por) {
+      const fecha = notaClienteActual.actualizado_en ? new Date(notaClienteActual.actualizado_en) : null;
+      const fechaTexto = fecha ? fecha.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+      meta = `<span class="nota-cliente-meta">— ${escapeHtml(notaClienteActual.actualizado_por)}${fechaTexto ? ', ' + fechaTexto : ''}</span>`;
+    }
+    texto.innerHTML = escapeHtml(notaClienteActual.nota).replace(/\n/g, '<br>') + meta;
+  } else {
+    banner.classList.add('sin-nota');
+    texto.textContent = notaClienteActual.documento
+      ? 'Sin nota guardada para este cliente todavía.'
+      : 'Todavía no se detectó un DNI/RUC para guardar una nota -- puedes ingresarlo manualmente.';
+  }
+}
+
+async function cargarNotaCliente(conversacionId) {
+  notaClienteActual = null;
+  renderNotaBanner();
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/notas-cliente/${conversacionId}`, {
+      headers: { Authorization: `Bearer ${tokenGuardado}` },
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    // Puede haber cambiado de conversación mientras esto cargaba.
+    if (activaId === conversacionId) {
+      notaClienteActual = data;
+      renderNotaBanner();
+    }
+  } catch (e) { /* si falla, simplemente no se muestra nota -- no bloquea el chat */ }
+}
+
+document.getElementById('btnEditarNotaCliente').onclick = () => {
+  document.getElementById('notaClienteDocumentoInput').value = (notaClienteActual && notaClienteActual.documento) || '';
+  document.getElementById('notaClienteTextarea').value = (notaClienteActual && notaClienteActual.nota) || '';
+  document.getElementById('modalNotaOverlay').classList.add('activa');
+};
+document.getElementById('btnCancelarNota').onclick = () => {
+  document.getElementById('modalNotaOverlay').classList.remove('activa');
+};
+document.getElementById('btnGuardarNota').onclick = async () => {
+  if (!activaId) return;
+  const documento = document.getElementById('notaClienteDocumentoInput').value.trim();
+  const nota = document.getElementById('notaClienteTextarea').value.trim();
+  const idAlGuardar = activaId;
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/notas-cliente/${idAlGuardar}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenGuardado}` },
+      body: JSON.stringify({ nota, documento: documento || null }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      alert(data.detail || 'No se pudo guardar la nota.');
+      return;
+    }
+    document.getElementById('modalNotaOverlay').classList.remove('activa');
+    if (activaId === idAlGuardar) {
+      notaClienteActual = {
+        documento: data.documento,
+        nota: data.nota,
+        actualizado_por: document.getElementById('nombreAsesorTexto').textContent || null,
+        actualizado_en: new Date().toISOString(),
+      };
+      renderNotaBanner();
+    }
+  } catch (e) {
+    alert('No se pudo guardar la nota.');
+  }
+};
+
+// El bot guarda los menús como JSON crudo (tipo_contenido "opciones") — acá
+// se intenta parsear para mostrar cada botón como una lista legible, en vez
+// del texto JSON tal cual. Si no se puede parsear, devuelve null y el llamador
+// cae de vuelta al texto plano.
+function parsearOpcionesBot(contenidoCrudo) {
+  try {
+    const arr = JSON.parse(contenidoCrudo);
+    if (Array.isArray(arr)) return arr;
+  } catch (e) { /* no era JSON válido — se muestra como texto normal */ }
+  return null;
+}
+
+function crearBurbujaOpciones(opciones, horaIso) {
+  const div = document.createElement('div');
+  div.className = 'msg bot msg-opciones';
+  const titulo = document.createElement('div');
+  titulo.className = 'opciones-titulo';
+  titulo.textContent = '🤖 Opciones mostradas al paciente';
+  div.appendChild(titulo);
+  opciones.forEach(o => {
+    const chip = document.createElement('div');
+    chip.className = 'opcion-chip';
+    chip.textContent = (o && (o.label || o.texto)) || '(opción)';
+    div.appendChild(chip);
+  });
+  if (horaIso) {
+    const hora = document.createElement('div');
+    hora.style.cssText = 'font-size:11px;color:var(--texto-suave);margin-top:7px;text-align:right;';
+    const d = new Date(horaIso);
+    hora.textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    div.appendChild(hora);
+  }
+  return div;
+}
+
+// ---- Editar / responder-citando / eliminar mensajes (igual que WhatsApp) ----
+const VENTANA_EDICION_MS = 2 * 60 * 1000;
+let editandoMensajeId = null;
+let respondiendoA = null; // { id, tipo, texto } del mensaje que se está citando
+
+function etiquetaEmisor(tipo) {
+  if (tipo === 'usuario') return 'Cliente';
+  if (tipo === 'asesor') return 'Tú';
+  if (tipo === 'supervisor') return 'Supervisor';
+  return 'Asistente';
+}
+
+function iniciarRespuesta(m) {
+  if (!m.id) return;
+  respondiendoA = { id: m.id, tipo: m.tipo, texto: m.texto || '' };
+  const banner = document.getElementById('respondiendoBanner');
+  banner.querySelector('.texto-cita').textContent = `${etiquetaEmisor(m.tipo)}: ${(m.texto || '').slice(0, 120)}`;
+  banner.classList.add('abierto');
+  document.getElementById('texto').focus();
+}
+function cancelarRespuesta() {
+  respondiendoA = null;
+  document.getElementById('respondiendoBanner').classList.remove('abierto');
+}
+document.getElementById('btnCancelarResponder').onclick = cancelarRespuesta;
+
+function confirmarEliminarMensaje(m) {
+  if (!m.id || !activaId || !ws) return;
+  if (!confirm('¿Eliminar este mensaje?')) return;
+  ws.send(JSON.stringify({ type: 'eliminar_mensaje', payload: { conversacion_id: Number(activaId), mensaje_id: m.id } }));
+}
+
+function cerrarTodosLosMenusMsg() {
+  document.querySelectorAll('#chat .msg-menu.abierto').forEach(el => el.classList.remove('abierto'));
+  document.querySelectorAll('#chat .msg-acciones.abierto').forEach(el => el.classList.remove('abierto'));
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.msg-acciones') && !e.target.closest('.msg-menu')) cerrarTodosLosMenusMsg();
+});
+
+function agregarBotonAccionesMsg(div, m) {
+  if (!m.id) return;
+  const btn = document.createElement('button');
+  btn.className = 'msg-acciones';
+  btn.type = 'button';
+  btn.textContent = '⋯';
+  const menu = document.createElement('div');
+  menu.className = 'msg-menu';
+  const item = (label, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.onclick = (e) => { e.stopPropagation(); cerrarTodosLosMenusMsg(); fn(); };
+    menu.appendChild(b);
+  };
+  if (m.tipo === 'usuario' || m.tipo === 'asesor') {
+    const barra = document.createElement('div');
+    barra.className = 'msg-reacciones-barra';
+    EMOJIS_REACCION.forEach(em => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = em;
+      b.onclick = (e) => {
+        e.stopPropagation();
+        cerrarTodosLosMenusMsg();
+        if (!ws || ws.readyState !== WebSocket.OPEN || !m.id) return;
+        ws.send(JSON.stringify({ type: 'reaccionar_mensaje',
+                                 payload: { conversacion_id: Number(activaId), mensaje_id: m.id, emoji: em } }));
+      };
+      barra.appendChild(b);
+    });
+    menu.appendChild(barra);
+  }
+  item('↩️ Responder', () => iniciarRespuesta(m));
+  if (m.tipo === 'asesor') {
+    const dentroDeVentana = Date.now() - new Date(m.hora).getTime() <= VENTANA_EDICION_MS;
+    if (!m.ruta && dentroDeVentana) {
+      item('✏️ Editar', () => { editandoMensajeId = m.id; renderChat(); });
+    }
+    item('🗑️ Eliminar', () => confirmarEliminarMensaje(m));
+  }
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const yaAbierto = menu.classList.contains('abierto');
+    cerrarTodosLosMenusMsg();
+    if (!yaAbierto) { menu.classList.add('abierto'); btn.classList.add('abierto'); }
+  };
+  div.appendChild(btn);
+  div.appendChild(menu);
+}
+
 function renderChat() {
   const chat = document.getElementById('chat');
   chat.innerHTML = '';
@@ -299,18 +1346,82 @@ function renderChat() {
     return;
   }
   (conversaciones[activaId].mensajes || []).forEach(m => {
+    if (m.tipoContenido === 'opciones') {
+      const opciones = parsearOpcionesBot(m.texto);
+      if (opciones) {
+        chat.appendChild(crearBurbujaOpciones(opciones, m.hora));
+        return;
+      }
+    }
     const div = document.createElement('div');
-    div.className = 'msg ' + m.tipo;
-    if (m.url) {
+    div.className = 'msg ' + m.tipo + (m.eliminadoEn ? ' eliminado' : '');
+    if (m.id) div.dataset.id = String(m.id);
+
+    if (m.eliminadoEn) {
+      div.textContent = `🚫 Mensaje eliminado por ${m.eliminadoPor || '—'}`;
+      chat.appendChild(div);
+      return;
+    }
+
+    if (m.respondidoA) {
+      const cita = document.createElement('span');
+      cita.className = 'msg-cita';
+      cita.textContent = `${etiquetaEmisor(m.respondidoA.emisor_tipo)}: ${(m.respondidoA.texto || '').slice(0, 120)}`;
+      div.appendChild(cita);
+    }
+
+    if (editandoMensajeId && m.id === editandoMensajeId) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'msg-editar-input';
+      input.value = m.texto;
+      div.appendChild(input);
+      setTimeout(() => { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }, 0);
+      const confirmar = () => {
+        const nuevo = input.value.trim();
+        editandoMensajeId = null;
+        if (nuevo && nuevo !== m.texto && ws) {
+          ws.send(JSON.stringify({ type: 'editar_mensaje', payload: { conversacion_id: Number(activaId), mensaje_id: m.id, texto: nuevo } }));
+        } else {
+          renderChat();
+        }
+      };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') confirmar();
+        if (e.key === 'Escape') { editandoMensajeId = null; renderChat(); }
+      });
+      input.addEventListener('blur', confirmar);
+    } else if (m.ruta && esImagen(m.ruta)) {
+      const url = urlArchivo(m.ruta);
+      const img = document.createElement('img');
+      img.className = 'msg-imagen';
+      img.src = url;
+      img.loading = 'lazy';
+      img.onclick = () => abrirLightbox(url);
+      div.appendChild(img);
+    } else if (m.ruta && esAudio(m.ruta)) {
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = urlArchivo(m.ruta);
+      audio.style.cssText = 'max-width:230px;width:100%;';
+      div.appendChild(audio);
+    } else if (m.ruta) {
       const a = document.createElement('a');
-      a.href = m.url;
+      a.href = urlArchivo(m.ruta);
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
       a.textContent = m.texto;
       a.style.color = 'inherit';
       div.appendChild(a);
     } else {
-      div.textContent = m.texto;
+      div.appendChild(document.createTextNode(m.texto));
+    }
+    if (m.editadoEn) {
+      const tag = document.createElement('span');
+      tag.className = 'editado-tag';
+      tag.textContent = '(editado)';
+      div.appendChild(tag);
     }
     if (m.hora) {
       const hora = document.createElement('span');
@@ -326,14 +1437,29 @@ function renderChat() {
       check.textContent = m.leido ? '✓✓' : '✓';
       div.appendChild(check);
     }
+    const emojisUsados = Object.entries(m.reacciones || {});
+    if (emojisUsados.length) {
+      const fila = document.createElement('div');
+      fila.className = 'reacciones';
+      emojisUsados.forEach(([emoji, cantidad]) => {
+        const chip = document.createElement('span');
+        chip.className = 'reaccion-chip';
+        chip.textContent = cantidad > 1 ? `${emoji} ${cantidad}` : emoji;
+        fila.appendChild(chip);
+      });
+      div.appendChild(fila);
+    }
+    agregarBotonAccionesMsg(div, m);
     chat.appendChild(div);
   });
   chat.scrollTop = chat.scrollHeight;
 }
 
-function agregarArchivo(id, url) {
+function agregarArchivo(id, ruta, extra) {
+  extra = extra || {};
   if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
-  conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'usuario', url, hora: new Date().toISOString() });
+  conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'usuario', ruta, hora: new Date().toISOString(),
+                                      id: extra.mensajeId || null, respondidoA: extra.respondidoA || null });
   conversaciones[id].ultimaActividad = new Date().toISOString();
   if (String(activaId) === String(id)) {
     renderChat();
@@ -343,9 +1469,11 @@ function agregarArchivo(id, url) {
   renderLista();
 }
 
-function agregarMensaje(id, texto, tipo) {
+function agregarMensaje(id, texto, tipo, extra) {
+  extra = extra || {};
   if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
-  conversaciones[id].mensajes.push({ texto, tipo, leido: false, hora: new Date().toISOString() });
+  conversaciones[id].mensajes.push({ texto, tipo, leido: false, hora: new Date().toISOString(),
+                                      id: extra.mensajeId || null, respondidoA: extra.respondidoA || null });
   conversaciones[id].ultimaActividad = new Date().toISOString();
   if (String(activaId) === String(id)) {
     renderChat();
@@ -359,15 +1487,52 @@ function siguienteEsperaReconexion() {
   return Math.min(1000 * Math.pow(2, intentosReconexion), 20000);
 }
 
+// ---- Aviso sonoro cuando entra una conversación nueva a la bandeja ----
+// Se genera con el Web Audio API (dos tonos tipo "campanita"), sin depender
+// de ningún archivo de audio externo. El AudioContext se crea recién al
+// hacer clic en "Conectar" (gesto del usuario) porque los navegadores
+// bloquean el audio si no hay una interacción previa.
+let audioCtx = null;
+let sonidoHabilitado = false;
+
+function inicializarAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) { /* navegador sin soporte de Web Audio — sin aviso sonoro */ }
+}
+
+function reproducirAvisoNuevaConversacion() {
+  if (!audioCtx) return;
+  try {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const ahora = audioCtx.currentTime;
+    [[880, ahora], [1175, ahora + 0.14]].forEach(([frecuencia, inicio]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = frecuencia;
+      gain.gain.setValueAtTime(0, inicio);
+      gain.gain.linearRampToValueAtTime(0.22, inicio + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, inicio + 0.22);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(inicio);
+      osc.stop(inicio + 0.24);
+    });
+  } catch (e) { /* si algo falla, no interrumpe el flujo normal */ }
+}
+
 document.getElementById('btnConectar').onclick = async () => {
   const urlBase = document.getElementById('urlBase').value.trim().replace(/\/$/, '');
   const usuario = document.getElementById('usuario').value.trim();
   const password = document.getElementById('password').value;
   if (!urlBase || !usuario || !password) return;
 
+  inicializarAudio();
+
   const btn = document.getElementById('btnConectar');
   btn.disabled = true;
-  btn.textContent = 'Conectando...';
+  btn.textContent = 'Ingresando...';
 
   let data;
   try {
@@ -378,53 +1543,124 @@ document.getElementById('btnConectar').onclick = async () => {
     });
     if (!resp.ok) {
       alert('Usuario o contraseña incorrectos');
-      btn.disabled = false; btn.textContent = 'Conectar';
+      btn.disabled = false; btn.textContent = 'Ingresar';
       return;
     }
     data = await resp.json();
   } catch (e) {
     alert('No se pudo contactar al servidor');
-    btn.disabled = false; btn.textContent = 'Conectar';
+    btn.disabled = false; btn.textContent = 'Ingresar';
     return;
   }
 
   tokenGuardado = data.token;
   urlBaseGuardada = urlBase;
   cerradoManualmente = false;
+  iniciarRenovacionTokenArchivo();
 
   document.getElementById('login').style.display = 'none';
   document.getElementById('barraConectado').classList.add('activa');
   document.getElementById('nombreAsesorTexto').textContent = data.nombre_display;
 
   conectarWs();
+  if (intervaloStatsConexion) clearInterval(intervaloStatsConexion);
+  intervaloStatsConexion = setInterval(actualizarStatsConexion, 1000);
 };
 
-document.getElementById('btnPausa').onclick = () => {
-  if (!ws) return;
-  enPausa = !enPausa;
-  ws.send(JSON.stringify({ type: 'cambiar_disponibilidad', payload: { pausado: enPausa } }));
+// Pinta en pantalla el estado de pausa (botón, punto y texto) — también lo usa
+// la sincronización con el servidor tras reconectar.
+const ETIQUETAS_MOTIVO_PAUSA = { reunion: 'Reunión', bano: 'Baño', almuerzo: 'Almuerzo', otro: 'Otro' };
+function textoMotivoPausa(motivo, detalle) {
+  if (!motivo) return '';
+  const base = ETIQUETAS_MOTIVO_PAUSA[motivo] || motivo;
+  return motivo === 'otro' && detalle ? `${base}: ${detalle}` : base;
+}
+
+function aplicarEstadoPausaUI(pausado, motivo, detalle) {
+  enPausa = pausado;
   const btn = document.getElementById('btnPausa');
   const dot = document.getElementById('dotEstado');
   if (enPausa) {
     btn.textContent = '▶ Reanudar';
     btn.classList.add('pausado');
     dot.classList.add('pausado');
-    document.getElementById('estadoTexto').textContent = 'En pausa — no recibirás nuevas conversaciones';
+    const motivoTxt = textoMotivoPausa(motivo, detalle);
+    document.getElementById('estadoTexto').textContent =
+      `En pausa${motivoTxt ? ' (' + motivoTxt + ')' : ''} — no recibirás nuevas conversaciones`;
   } else {
     btn.textContent = '⏸ Pausar';
     btn.classList.remove('pausado');
     dot.classList.remove('pausado');
     document.getElementById('estadoTexto').textContent = 'En línea';
   }
+}
+
+document.getElementById('btnPausa').onclick = () => {
+  // Sin conexión viva no se puede cambiar: antes la pantalla cambiaba igual y
+  // el servidor no se enteraba.
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('No hay conexión con el servidor en este momento. Espera a que se reconecte e intenta de nuevo.');
+    return;
+  }
+  if (enPausa) {
+    // Reanudar: directo, sin preguntar nada.
+    ws.send(JSON.stringify({ type: 'cambiar_disponibilidad', payload: { pausado: false } }));
+    aplicarEstadoPausaUI(false);
+    return;
+  }
+  // Pausar: primero se elige el motivo.
+  abrirModalPausa();
+};
+
+// ---- Motivo de la pausa (Reunión, Baño, Almuerzo, Otro) ----
+let motivoPausaElegido = null;
+function abrirModalPausa() {
+  motivoPausaElegido = null;
+  document.querySelectorAll('.pausa-motivo').forEach(b => b.classList.remove('elegido'));
+  const otro = document.getElementById('pausaOtroTexto');
+  otro.value = '';
+  otro.style.display = 'none';
+  document.getElementById('btnConfirmarPausa').disabled = true;
+  document.getElementById('modalPausaOverlay').style.display = 'flex';
+}
+document.querySelectorAll('.pausa-motivo').forEach(b => {
+  b.onclick = () => {
+    motivoPausaElegido = b.dataset.motivo;
+    document.querySelectorAll('.pausa-motivo').forEach(x => x.classList.toggle('elegido', x === b));
+    const otro = document.getElementById('pausaOtroTexto');
+    otro.style.display = motivoPausaElegido === 'otro' ? 'block' : 'none';
+    if (motivoPausaElegido === 'otro') otro.focus();
+    document.getElementById('btnConfirmarPausa').disabled = false;
+  };
+});
+document.getElementById('btnCancelarPausa').onclick = () => {
+  document.getElementById('modalPausaOverlay').style.display = 'none';
+};
+document.getElementById('btnConfirmarPausa').onclick = () => {
+  if (!motivoPausaElegido) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('No hay conexión con el servidor en este momento. Espera a que se reconecte e intenta de nuevo.');
+    return;
+  }
+  const detalle = motivoPausaElegido === 'otro' ? document.getElementById('pausaOtroTexto').value.trim() : '';
+  ws.send(JSON.stringify({ type: 'cambiar_disponibilidad',
+                           payload: { pausado: true, motivo: motivoPausaElegido, detalle } }));
+  aplicarEstadoPausaUI(true, motivoPausaElegido, detalle);
+  document.getElementById('modalPausaOverlay').style.display = 'none';
 };
 
 document.getElementById('btnSalir').onclick = () => {
   cerradoManualmente = true;
   if (ws) ws.close();
+  if (intervaloStatsConexion) { clearInterval(intervaloStatsConexion); intervaloStatsConexion = null; }
+  statsSegundosConectado = 0;
+  statsSegundosPausado = 0;
+  statsAtendidasHoy = 0;
+  document.getElementById('statsConexion').textContent = '';
   document.getElementById('login').style.display = 'flex';
   document.getElementById('barraConectado').classList.remove('activa');
   document.getElementById('btnConectar').disabled = false;
-  document.getElementById('btnConectar').textContent = 'Conectar';
+  document.getElementById('btnConectar').textContent = 'Ingresar';
   document.getElementById('password').value = '';
   conversaciones = {};
   activaId = null;
@@ -436,15 +1672,31 @@ document.getElementById('btnSalir').onclick = () => {
   renderChat();
   document.getElementById('entrada').classList.remove('activa');
   document.getElementById('chatHeader').classList.remove('activa');
+  notaClienteActual = null;
+  renderNotaBanner();
 };
 
 function conectarWs() {
   const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
-  ws = new WebSocket(`${urlWs}/ws/asesor?token=${tokenGuardado}`);
+  // Si se reconecta estando en pausa (caída de red, deploy), se lo decimos al
+  // servidor en la propia conexión: así la pausa se mantiene y NO se le asignan
+  // conversaciones mientras la pantalla sigue diciendo "En pausa".
+  ws = new WebSocket(`${urlWs}/ws/asesor?token=${tokenGuardado}${enPausa ? '&pausado=1' : ''}`);
+  sincronizarPausaPendiente = true;
 
   ws.onopen = () => {
     intentosReconexion = 0;
     document.getElementById('estadoTexto').textContent = 'En línea';
+    // Por si quedó un "Enviando..." colgado de una conexión anterior que se
+    // cayó antes de que llegara la respuesta del SMS.
+    const btnSmsReset = document.getElementById('btnEnviarSms');
+    if (btnSmsReset) { btnSmsReset.disabled = false; btnSmsReset.textContent = '📲 SMS'; }
+    // Al conectar (o reconectar) el servidor manda de golpe todas las
+    // conversaciones ya asignadas — no queremos que eso suene como si
+    // fueran todas nuevas, así que el aviso sonoro se habilita recién un
+    // instante después, cuando ya pasó esa ráfaga inicial.
+    sonidoHabilitado = false;
+    setTimeout(() => { sonidoHabilitado = true; }, 1500);
   };
 
   ws.onclose = (e) => {
@@ -471,14 +1723,22 @@ function conectarWs() {
         conversaciones[p.conversacion_id] = {
           resumen_usuario: p.resumen_usuario || ('Usuario ' + p.conversacion_id),
           telefono: p.telefono || '',
+          dni: p.dni || '',
           entrada_cola: p.entrada_cola || null,
           asignado_en: p.asignado_en || null,
+          pausada: !!p.pausada,
+          bandera: p.bandera || null,
+          avisoInactividadActivo: p.aviso_inactividad_activo !== false,
           mensajes: (p.historial || []).map(h => (
             h.tipo_contenido === 'archivo'
-              ? { texto: '📎 Ver archivo enviado', tipo: 'usuario', url: h.texto, hora: h.enviado_en }
+              ? { texto: '📎 Ver archivo enviado', tipo: 'usuario', ruta: h.texto, hora: h.enviado_en,
+                  id: h.id || null, reacciones: h.reacciones || {} }
               : {
+                  id: h.id || null,
+                  reacciones: h.reacciones || {},
                   texto: h.texto,
                   tipo: h.emisor_tipo === 'usuario' ? 'usuario' : (h.emisor_tipo === 'asesor' ? 'asesor' : 'bot'),
+                  tipoContenido: h.tipo_contenido,
                   leido: h.leido,
                   hora: h.enviado_en,
                 }
@@ -486,19 +1746,51 @@ function conectarWs() {
           noLeidos: esNueva ? 1 : 0,
           ultimaActividad: new Date().toISOString(),
         };
+        if (esNueva && sonidoHabilitado) reproducirAvisoNuevaConversacion();
         renderLista();
         if (activaId === null) seleccionar(String(p.conversacion_id));
         else if (String(activaId) === String(p.conversacion_id)) renderChat();
         break;
       }
       case 'mensaje_usuario':
-        agregarMensaje(p.conversacion_id, p.texto, 'usuario');
+        agregarMensaje(p.conversacion_id, p.texto, 'usuario', { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
         if (String(activaId) === String(p.conversacion_id) && ws) {
           ws.send(JSON.stringify({ type: 'marcar_leido', payload: { conversacion_id: Number(p.conversacion_id) } }));
         }
         break;
       case 'archivo_usuario':
-        agregarArchivo(p.conversacion_id, p.url);
+        agregarArchivo(p.conversacion_id, p.ruta, { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
+        break;
+      case 'mensaje_propio_guardado':
+        asignarIdMensajePropio(p.conversacion_id, p.mensaje_id);
+        break;
+      case 'mensaje_editado':
+        aplicarMensajeEditado(p);
+        break;
+      case 'mensaje_eliminado':
+        aplicarMensajeEliminado(p);
+        break;
+      case 'mensaje_reaccion': {
+        const convR = conversaciones[p.conversacion_id];
+        const mR = convR && (convR.mensajes || []).find(x => x.id === p.mensaje_id);
+        if (mR) {
+          mR.reacciones = p.reacciones || {};
+          if (String(activaId) === String(p.conversacion_id)) {
+            // Al reaccionar no se mueve la lectura: se conserva el scroll.
+            const chatEl = document.getElementById('chat');
+            const scrollAntes = chatEl.scrollTop;
+            renderChat();
+            chatEl.scrollTop = scrollAntes;
+          }
+        }
+        break;
+      }
+      case 'bandera_cambiada':
+        if (conversaciones[p.conversacion_id]) {
+          conversaciones[p.conversacion_id].bandera = p.bandera;
+          renderLista();
+          if (String(activaId) === String(p.conversacion_id)) actualizarBotonBandera();
+        }
         break;
       case 'conversacion_cerrada':
         agregarMensaje(p.conversacion_id, '— Conversación cerrada —', 'bot');
@@ -511,8 +1803,27 @@ function conectarWs() {
         }
         break;
       }
+      case 'aviso_automatico_cliente':
+        agregarMensaje(p.conversacion_id, `🤖 Aviso automático enviado al cliente: "${p.texto}"`, 'bot');
+        break;
       case 'mensaje_supervisor_directo':
         agregarMensaje(p.conversacion_id, `👤 ${p.supervisor_nombre} (supervisor) le respondió al usuario: "${p.texto}"`, 'bot');
+        break;
+      case 'archivo_supervisor_directo': {
+        const id = p.conversacion_id;
+        if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+        conversaciones[id].mensajes.push({
+          texto: `👤 ${p.supervisor_nombre} (supervisor) le envió una imagen al usuario`,
+          tipo: 'bot', ruta: p.ruta, hora: new Date().toISOString(),
+        });
+        conversaciones[id].ultimaActividad = new Date().toISOString();
+        if (String(activaId) === String(id)) renderChat(); else conversaciones[id].noLeidos = (conversaciones[id].noLeidos || 0) + 1;
+        renderLista();
+        break;
+      }
+      case 'susurro_recibido':
+        // Solo lo ve el asesor — nunca llega al widget del paciente.
+        agregarMensaje(p.conversacion_id, `🤫 ${p.supervisor_nombre}: ${p.texto}`, 'susurro');
         break;
       case 'etiquetas_disponibles':
         etiquetasDisponibles = p.etiquetas || [];
@@ -522,6 +1833,119 @@ function conectarWs() {
         break;
       case 'mensajes_conversacion_pasada':
         renderMensajesHistorial(p.mensajes || []);
+        break;
+      case 'lista_asesores':
+        renderListaAsesoresTransferir(p.asesores || []);
+        break;
+      case 'conversacion_removida':
+        delete conversaciones[p.conversacion_id];
+        if (String(activaId) === String(p.conversacion_id)) {
+          activaId = null;
+          document.getElementById('entrada').classList.remove('activa');
+          document.getElementById('chatHeader').classList.remove('activa');
+          notaClienteActual = null;
+          renderNotaBanner();
+        }
+        renderLista();
+        renderChat();
+        break;
+      case 'error_transferencia':
+        alert(p.motivo || 'No se pudo transferir la conversación.');
+        break;
+      case 'conversacion_pausada': {
+        if (p.ok === false) break;
+        const conv = conversaciones[p.conversacion_id];
+        if (conv) conv.pausada = true;
+        if (String(activaId) === String(p.conversacion_id)) {
+          document.getElementById('btnPausarConv').textContent = '▶ Reanudar';
+          document.getElementById('btnPausarConv').classList.add('pausada-activa');
+        }
+        renderLista();
+        break;
+      }
+      case 'conversacion_reactivada': {
+        const conv = conversaciones[p.conversacion_id];
+        if (conv && conv.pausada) {
+          conv.pausada = false;
+          if (String(activaId) === String(p.conversacion_id)) {
+            document.getElementById('btnPausarConv').textContent = '⏸ Pausar';
+            document.getElementById('btnPausarConv').classList.remove('pausada-activa');
+          }
+          renderLista();
+        }
+        break;
+      }
+      case 'resultado_sms_saliente':
+        const btnSms = document.getElementById('btnEnviarSms');
+        if (p.ok) {
+          btnSms.textContent = '✅ Enviado';
+          setTimeout(() => { btnSms.textContent = '📲 SMS'; btnSms.disabled = false; }, 2000);
+        } else {
+          btnSms.textContent = '📲 SMS';
+          btnSms.disabled = false;
+          alert(p.motivo || 'No se pudo enviar el SMS.');
+        }
+        break;
+      case 'aviso_inactividad_cambiado': {
+        const c = conversaciones[p.conversacion_id];
+        if (c) {
+          c.avisoInactividadActivo = p.activo;
+          if (String(activaId) === String(p.conversacion_id)) actualizarBotonAvisoInactividad(c);
+        }
+        break;
+      }
+      case 'respuestas_rapidas_disponibles':
+        respuestasRapidas = p.respuestas || [];
+        renderRespuestasRapidas();
+        break;
+      case 'mis_estadisticas':
+        statsSegundosConectado = p.segundos_conectado_hoy || 0;
+        statsSegundosPausado = p.segundos_pausado_hoy || 0;
+        if (typeof p.atendidas_hoy === 'number') statsAtendidasHoy = p.atendidas_hoy;
+        // Tras conectar, la pantalla se alinea con la pausa REAL del servidor
+        // (la que usa para asignar conversaciones), por si difieren.
+        if (sincronizarPausaPendiente && typeof p.en_pausa === 'boolean') {
+          sincronizarPausaPendiente = false;
+          if (p.en_pausa !== enPausa) aplicarEstadoPausaUI(p.en_pausa, p.motivo_pausa, p.motivo_pausa_detalle);
+        }
+        // El servidor es la fuente de verdad del motivo (también tras reconectar).
+        if (enPausa && p.en_pausa) aplicarEstadoPausaUI(true, p.motivo_pausa, p.motivo_pausa_detalle);
+        statsDesde = Date.now();
+        actualizarStatsConexion();
+        break;
+      case 'resultado_sms_invitacion':
+        if (window.__resultadoSmsInvitacion) window.__resultadoSmsInvitacion(p);
+        break;
+      case 'texto_sms_invitacion':
+        if (window.__textoSmsInvitacion) window.__textoSmsInvitacion(p);
+        break;
+      case 'resultados_busqueda':
+        renderResultadosBusqueda(p.resultados || []);
+        break;
+      case 'resultados_busqueda_bot':
+        renderResultadosBusquedaBot(p.resultados || []);
+        break;
+      case 'ayuda_bot_historial':
+        abrirChatAyudaBot(p);
+        break;
+      case 'ayuda_bot_evento':
+        if (p.evento === 'mensaje_conversacion' && String(p.conversacion_id) === String(ayudaBotConversacionId)) {
+          const opcionesVivo = p.tipo_contenido === 'opciones' ? parsearOpcionesBot(p.contenido) : null;
+          if (opcionesVivo) {
+            const chatVivo = document.getElementById('ayudaBotMensajes');
+            chatVivo.appendChild(crearBurbujaOpciones(opcionesVivo, new Date().toISOString()));
+            chatVivo.scrollTop = chatVivo.scrollHeight;
+          } else if (p.texto || p.ruta) {
+            agregarMensajeAyudaBot(p.emisor_tipo, p.texto, null, p.ruta || null);
+          }
+        }
+        break;
+      case 'ayuda_bot_error':
+        if (String(p.conversacion_id) === String(ayudaBotConversacionId)) {
+          mostrarAvisoAyudaBot(p.motivo || 'No se pudo completar la acción.');
+        } else {
+          alert(p.motivo || 'No se pudo abrir la conversación.');
+        }
         break;
     }
   };
@@ -534,16 +1958,174 @@ function enviar() {
   const input = document.getElementById('texto');
   const texto = input.value.trim();
   if (!texto || activaId === null || !ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'mensaje_asesor', payload: { conversacion_id: Number(activaId), texto } }));
-  agregarMensaje(activaId, texto, 'asesor');
+  const respondidoAId = respondiendoA ? respondiendoA.id : null;
+  ws.send(JSON.stringify({ type: 'mensaje_asesor', payload: { conversacion_id: Number(activaId), texto, respondido_a_id: respondidoAId } }));
+  agregarMensaje(activaId, texto, 'asesor', { respondidoA: respondiendoA ? { emisor_tipo: respondiendoA.tipo, texto: respondiendoA.texto } : null });
   input.value = '';
+  cancelarRespuesta();
+}
+
+// ---- Respuestas rápidas: solo las de las campañas asignadas a este asesor
+// (ya vienen filtradas desde el servidor). Al elegir una, se carga el texto
+// en el input para que el asesor la revise/edite antes de enviarla -- no se
+// manda automáticamente. ----
+function renderRespuestasRapidas() {
+  const pop = document.getElementById('rrPopover');
+  if (!respuestasRapidas.length) {
+    pop.innerHTML = '<div class="rr-vacio">No tienes respuestas rápidas configuradas para tus campañas.</div>';
+    return;
+  }
+  let html = '';
+  let campanaActual = null;
+  respuestasRapidas.forEach(r => {
+    if (r.campana_nombre !== campanaActual) {
+      campanaActual = r.campana_nombre;
+      html += `<div class="rr-grupo-titulo">${escapeHtml(campanaActual || '')}</div>`;
+    }
+    html += `
+      <div class="rr-item" data-id="${r.id}">
+        <div class="rr-item-titulo">${escapeHtml(r.titulo)}</div>
+        <div class="rr-item-cuerpo">${escapeHtml(r.cuerpo)}</div>
+      </div>`;
+  });
+  pop.innerHTML = html;
+  pop.querySelectorAll('.rr-item').forEach(item => {
+    item.onclick = () => {
+      const r = respuestasRapidas.find(x => String(x.id) === item.dataset.id);
+      if (!r) return;
+      const input = document.getElementById('texto');
+      input.value = r.cuerpo;
+      input.focus();
+      pop.classList.remove('abierto');
+    };
+  });
+}
+
+document.getElementById('btnRespuestasRapidas').onclick = (e) => {
+  e.stopPropagation();
+  document.getElementById('rrPopover').classList.toggle('abierto');
+};
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#rrWrap')) document.getElementById('rrPopover').classList.remove('abierto');
+});
+
+// Le asigna a la ÚLTIMA burbuja propia sin id todavía el id real que acaba
+// de confirmar el servidor — necesario para poder editarla/responderla/
+// eliminarla después (se manda apenas se guarda, en el mismo orden de envío).
+function asignarIdMensajePropio(conversacionId, mensajeId) {
+  const conv = conversaciones[conversacionId];
+  if (!conv) return;
+  for (let i = conv.mensajes.length - 1; i >= 0; i--) {
+    if (conv.mensajes[i].tipo === 'asesor' && !conv.mensajes[i].id) {
+      conv.mensajes[i].id = mensajeId;
+      break;
+    }
+  }
+  if (String(activaId) === String(conversacionId)) renderChat();
+}
+
+function aplicarMensajeEditado(p) {
+  const conv = conversaciones[p.conversacion_id];
+  if (!conv) return;
+  const m = (conv.mensajes || []).find(x => x.id === p.mensaje_id);
+  if (m) { m.texto = p.texto; m.editadoEn = p.editado_en; }
+  if (String(activaId) === String(p.conversacion_id)) renderChat();
+}
+
+function aplicarMensajeEliminado(p) {
+  const conv = conversaciones[p.conversacion_id];
+  if (!conv) return;
+  const m = (conv.mensajes || []).find(x => x.id === p.mensaje_id);
+  if (m) { m.eliminadoEn = p.eliminado_en; m.eliminadoPor = p.eliminado_por; }
+  if (String(activaId) === String(p.conversacion_id)) renderChat();
+}
+
+// ---- Pegar una imagen (Ctrl+V) y enviarla directo, sin tener que guardarla
+// primero como archivo — igual que WhatsApp Web. ----
+
+document.getElementById('texto').addEventListener('paste', (e) => {
+  const items = (e.clipboardData || window.clipboardData)?.items;
+  if (!items) return;
+  const item = [...items].find(i => i.type && i.type.startsWith('image/'));
+  if (!item) return; // paste de texto normal, no tocar
+  e.preventDefault();
+  const archivo = item.getAsFile();
+  if (archivo) subirImagenAsesor(archivo);
+});
+
+async function subirImagenAsesor(archivo) {
+  if (activaId === null || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const idDestino = activaId;
+  const $btnAdjuntar = document.getElementById('btnAdjuntar');
+  $btnAdjuntar.disabled = true;
+  try {
+    const formData = new FormData();
+    formData.append('file', archivo, archivo.name || 'imagen.png');
+    const resp = await fetch(`${urlBaseGuardada}/upload`, {
+      method: 'POST', body: formData,
+      headers: { Authorization: `Bearer ${tokenGuardado}` },
+    });
+    if (!resp.ok) {
+      const detalle = await resp.text().catch(() => '');
+      throw new Error(`HTTP ${resp.status} ${detalle}`);
+    }
+    const data = await resp.json();
+    ws.send(JSON.stringify({
+      type: 'mensaje_asesor_archivo',
+      payload: { conversacion_id: Number(idDestino), ruta: data.ruta },
+    }));
+    agregarArchivoPropio(idDestino, data.ruta);
+    cancelarRespuesta();
+  } catch (e) {
+    console.error('Error al subir archivo:', e);
+    alert('No se pudo subir el archivo. Intenta de nuevo.\n\nDetalle: ' + e.message);
+  } finally {
+    $btnAdjuntar.disabled = false;
+  }
+}
+
+// ---- Botón de adjuntar (clic para elegir archivo) ----
+document.getElementById('btnAdjuntar').onclick = () => {
+  if (activaId === null) return;
+  document.getElementById('archivoInput').click();
+};
+document.getElementById('archivoInput').addEventListener('change', (e) => {
+  if (e.target.files.length > 0) subirImagenAsesor(e.target.files[0]);
+  e.target.value = '';
+});
+
+// ---- Arrastrar y soltar un archivo sobre el chat activo ----
+const $chatArrastrable = document.getElementById('chat');
+['dragover', 'dragenter'].forEach((evento) => {
+  $chatArrastrable.addEventListener(evento, (e) => {
+    if (activaId === null) return;
+    e.preventDefault();
+    $chatArrastrable.classList.add('arrastrando');
+  });
+});
+['dragleave', 'dragend'].forEach((evento) => {
+  $chatArrastrable.addEventListener(evento, () => $chatArrastrable.classList.remove('arrastrando'));
+});
+$chatArrastrable.addEventListener('drop', (e) => {
+  e.preventDefault();
+  $chatArrastrable.classList.remove('arrastrando');
+  if (activaId === null) return;
+  if (e.dataTransfer.files.length > 0) subirImagenAsesor(e.dataTransfer.files[0]);
+});
+
+function agregarArchivoPropio(id, ruta) {
+  if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+  conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'asesor', ruta, leido: false, hora: new Date().toISOString() });
+  conversaciones[id].ultimaActividad = new Date().toISOString();
+  if (String(activaId) === String(id)) renderChat();
+  renderLista();
 }
 
 document.getElementById('btnCerrar').onclick = () => {
   if (activaId === null) return;
   const select = document.getElementById('selectEtiqueta');
   select.innerHTML = etiquetasDisponibles
-    .map(e => `<option value="${e.id}">${e.nombre}</option>`)
+    .map(e => `<option value="${e.id}">${escapeHtml(e.nombre)}</option>`)
     .join('');
   if (etiquetasDisponibles.length === 0) {
     select.innerHTML = '<option value="">(sin etiquetas configuradas)</option>';
@@ -569,6 +2151,8 @@ document.getElementById('btnConfirmarCierre').onclick = () => {
   renderChat();
   document.getElementById('entrada').classList.remove('activa');
   document.getElementById('chatHeader').classList.remove('activa');
+  notaClienteActual = null;
+  renderNotaBanner();
 };
 
 // ---- Historial de conversaciones anteriores del usuario ----
@@ -592,6 +2176,132 @@ document.getElementById('btnHistorialUsuario').onclick = () => {
 document.getElementById('btnCerrarModalHistorial').onclick = () => {
   document.getElementById('modalHistorialOverlay').classList.remove('activa');
 };
+
+// ---- SMS saliente: avisarle al cliente que le escriban de vuelta aunque
+// haya cerrado el chat (reemplazo de los mensajes salientes de WhatsApp) ----
+
+document.getElementById('btnEnviarSms').onclick = () => {
+  if (activaId === null || !ws || ws.readyState !== WebSocket.OPEN) {
+    alert('No hay conexión con el servidor en este momento. Espera a que se reconecte e intenta de nuevo.');
+    return;
+  }
+  if (!confirm('¿Enviar un SMS al cliente con un enlace directo a esta conversación?')) return;
+  const btn = document.getElementById('btnEnviarSms');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  try {
+    ws.send(JSON.stringify({ type: 'enviar_sms_saliente', payload: { conversacion_id: Number(activaId) } }));
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '📲 SMS';
+    alert('No se pudo enviar el SMS — se perdió la conexión. Intenta de nuevo.');
+  }
+};
+
+// ---- Bandeja "Pausados": separar conversaciones a la espera de que el
+// cliente escriba, sin llenar la bandeja principal. Vuelve sola a Principal
+// en cuanto el cliente manda algo (ver caso 'conversacion_reactivada'). ----
+
+document.getElementById('tabPrincipal').onclick = () => {
+  pestanaActual = 'principal';
+  document.getElementById('tabPrincipal').classList.add('activa');
+  document.getElementById('tabPausados').classList.remove('activa');
+  renderLista();
+};
+
+document.getElementById('tabPausados').onclick = () => {
+  pestanaActual = 'pausados';
+  document.getElementById('tabPausados').classList.add('activa');
+  document.getElementById('tabPrincipal').classList.remove('activa');
+  renderLista();
+};
+
+document.getElementById('btnPausarConv').onclick = () => {
+  if (activaId === null || !ws) return;
+  const c = conversaciones[activaId];
+  if (!c) return;
+  const tipo = c.pausada ? 'reanudar_conversacion' : 'pausar_conversacion';
+  ws.send(JSON.stringify({ type: tipo, payload: { conversacion_id: Number(activaId) } }));
+};
+
+// ---- Bandera de color: marca interna para identificar el proceso de una
+// conversación (rojo/azul/amarillo/verde/blanco) — solo aplica mientras
+// sigue asignada; el servidor la limpia solo al cerrar la conversación. ----
+function actualizarBotonBandera() {
+  const dot = document.getElementById('banderaDotActual');
+  const c = activaId !== null ? conversaciones[activaId] : null;
+  const bandera = c ? (c.bandera || '') : '';
+  dot.className = 'bandera-dot ' + (bandera || 'blanco');
+}
+
+document.getElementById('btnBandera').onclick = (e) => {
+  e.stopPropagation();
+  document.getElementById('banderaMenu').classList.toggle('abierto');
+};
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.bandera-selector')) {
+    document.getElementById('banderaMenu').classList.remove('abierto');
+  }
+});
+document.querySelectorAll('#banderaMenu .bandera-opcion').forEach(btn => {
+  btn.onclick = () => {
+    document.getElementById('banderaMenu').classList.remove('abierto');
+    if (activaId === null || !ws) return;
+    ws.send(JSON.stringify({
+      type: 'cambiar_bandera',
+      payload: { conversacion_id: Number(activaId), bandera: btn.dataset.bandera || null },
+    }));
+  };
+});
+
+// ---- Transferir conversación a otro asesor ----
+
+document.getElementById('btnTransferir').onclick = () => {
+  if (activaId === null || !ws) return;
+  document.getElementById('listaAsesoresTransferir').innerHTML = '';
+  document.getElementById('transferirVacio').style.display = 'none';
+  ws.send(JSON.stringify({ type: 'listar_asesores', payload: {} }));
+  document.getElementById('modalTransferirOverlay').classList.add('activa');
+};
+
+document.getElementById('btnCancelarTransferir').onclick = () => {
+  document.getElementById('modalTransferirOverlay').classList.remove('activa');
+};
+
+function renderListaAsesoresTransferir(asesores) {
+  const cont = document.getElementById('listaAsesoresTransferir');
+  cont.innerHTML = '';
+  document.getElementById('transferirVacio').style.display = asesores.length === 0 ? 'block' : 'none';
+  asesores.forEach(a => {
+    const disponible = a.conectado && !a.en_pausa && a.conversaciones_activas < a.cupo_maximo;
+    const item = document.createElement('div');
+    item.className = 'asesor-transferir-item' + (disponible ? '' : ' deshabilitado');
+    const dotClase = !a.conectado ? 'off' : (a.en_pausa ? 'pausado' : 'on');
+    const estadoTexto = !a.conectado ? 'Desconectado' : (a.en_pausa ? 'En pausa' : `${a.conversaciones_activas}/${a.cupo_maximo} conversaciones`);
+    const campanasHtml = (a.campanas || []).length
+      ? `<div class="campanas">${a.campanas.map(c => `<span class="campana-chip">${escapeHtml(c)}</span>`).join('')}</div>`
+      : '';
+    item.innerHTML = `
+      <span class="dot ${dotClase}"></span>
+      <div class="info">
+        <div>${escapeHtml(a.nombre_display)}</div>
+        <div class="carga">${estadoTexto}</div>
+        ${campanasHtml}
+      </div>
+    `;
+    if (disponible) {
+      item.onclick = () => {
+        if (activaId === null || !ws) return;
+        ws.send(JSON.stringify({
+          type: 'transferir_conversacion',
+          payload: { conversacion_id: Number(activaId), asesor_destino_id: a.asesor_id },
+        }));
+        document.getElementById('modalTransferirOverlay').classList.remove('activa');
+      };
+    }
+    cont.appendChild(item);
+  });
+}
 
 function formatearFechaDia(iso) {
   const d = new Date(iso);
@@ -626,10 +2336,12 @@ function renderHistorialAgrupado(conversacionesPasadas) {
     const item = document.createElement('div');
     item.className = 'historial-item';
     item.innerHTML = `
-      <div class="campana">${c.campana || 'Sin campaña'} ${c.etiqueta ? '· ' + c.etiqueta : ''}</div>
+      <div class="campana">${escapeHtml(c.campana || 'Sin campaña')} ${c.etiqueta ? '· ' + escapeHtml(c.etiqueta) : ''}</div>
       <div class="meta">${formatearHoraCorta(c.iniciado_en)} — ${c.estado}</div>
     `;
     item.onclick = () => {
+      document.getElementById('btnDescargarPdfHistorial').href =
+        `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(c.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
       ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: c.conversacion_id } }));
     };
     cont.appendChild(item);
@@ -642,18 +2354,425 @@ function renderMensajesHistorial(mensajes) {
   const chat = document.getElementById('historialMensajesChat');
   chat.innerHTML = '';
   mensajes.forEach(m => {
+    if (m.tipo_contenido === 'opciones') {
+      const opciones = parsearOpcionesBot(m.contenido);
+      if (opciones) {
+        chat.appendChild(crearBurbujaOpciones(opciones, m.enviado_en));
+        return;
+      }
+    }
     const div = document.createElement('div');
     const tipo = m.emisor_tipo === 'usuario' ? 'usuario' : (m.emisor_tipo === 'asesor' ? 'asesor' : 'bot');
     div.className = 'msg ' + tipo;
-    div.textContent = m.tipo_contenido === 'archivo' ? ('📎 ' + m.contenido) : m.contenido;
+    if (m.tipo_contenido === 'archivo' && esImagen(m.contenido)) {
+      const url = urlArchivo(m.contenido);
+      const img = document.createElement('img');
+      img.className = 'msg-imagen';
+      img.src = url;
+      img.loading = 'lazy';
+      img.onclick = () => abrirLightbox(url);
+      div.appendChild(img);
+    } else if (m.tipo_contenido === 'archivo' && esAudio(m.contenido)) {
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = urlArchivo(m.contenido);
+      audio.style.cssText = 'max-width:230px;width:100%;';
+      div.appendChild(audio);
+    } else if (m.tipo_contenido === 'archivo') {
+      const a = document.createElement('a');
+      a.href = urlArchivo(m.contenido);
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = '📎 Ver archivo enviado';
+      a.style.color = 'inherit';
+      div.appendChild(a);
+    } else {
+      div.textContent = m.contenido;
+    }
     chat.appendChild(div);
   });
 }
 
 document.getElementById('btnVolverHistorial').onclick = () => {
+  if (historialOrigenBusqueda) {
+    // Se llegó desde el buscador: "volver" regresa a los resultados.
+    historialOrigenBusqueda = false;
+    document.getElementById('modalHistorialOverlay').classList.remove('activa');
+    document.getElementById('modalBuscarOverlay').classList.add('activa');
+    return;
+  }
   document.getElementById('historialListaView').style.display = 'block';
   document.getElementById('historialMensajesView').classList.remove('activa');
 };
+
+// ---- Emojis ---------------------------------------------------------------
+// (EMOJIS_REACCION se usa arriba, en el menú de cada mensaje; al ser una
+// constante de este script se define antes de que se dibuje cualquier chat.)
+const EMOJIS_REACCION = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const EMOJIS_COMUNES = ['😀','😃','😄','😁','😆','😅','😂','🤣','😊','🙂','😉','😍','🥰','😘','😋','😎',
+  '🤗','🤔','😐','😮','😯','😢','😭','😔','😞','😟','😕','🙁','😣','😖','😩','😤',
+  '😡','🙏','👍','👎','👌','✌️','🤝','👏','🙌','💪','👋','🤞','❤️','💙','💚','💛',
+  '🧡','💜','🖤','💔','💯','✅','❌','⚠️','❗','❓','⭐','✨','🎉','🎂','🎁','🔔',
+  '📞','📱','📧','📄','📎','📅','⏰','🕐','🏥','💊','🩺','🌡️','😷','🤒','🤕','👨‍⚕️',
+  '👩‍⚕️','🚑','🩹','💉','🏠','🚗','☀️','🌙','👍🏻','👍🏽','🙋','🤷','🙇','😴','🤩','🥳'];
+
+(function iniciarSelectorEmojis() {
+  const pop = document.getElementById('emojiPopover');
+  const btn = document.getElementById('btnEmoji');
+  EMOJIS_COMUNES.forEach(em => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = em;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const input = document.getElementById('texto');
+      const ini = input.selectionStart ?? input.value.length;
+      const fin = input.selectionEnd ?? input.value.length;
+      input.value = input.value.slice(0, ini) + em + input.value.slice(fin);
+      const pos = ini + em.length;
+      input.focus();
+      input.setSelectionRange(pos, pos);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    pop.appendChild(b);
+  });
+  btn.onclick = (e) => { e.stopPropagation(); pop.classList.toggle('abierto'); };
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#emojiWrap')) pop.classList.remove('abierto');
+  });
+})();
+
+
+// ---- SMS de invitación: a un número NUEVO, sin conversación iniciada ----
+(function iniciarSmsInvitacion() {
+  const overlay = document.getElementById('modalSmsInvitacionOverlay');
+  const input = document.getElementById('smsInvitacionCelular');
+  const estado = document.getElementById('smsInvitacionEstado');
+  const btnEnviar = document.getElementById('btnEnviarSmsInvitacion');
+  const mostrar = (txt, ok) => { estado.textContent = txt; estado.style.color = ok ? '#197A54' : '#C0392B'; };
+  const texto = document.getElementById('smsInvitacionTexto');
+  const contador = document.getElementById('smsInvitacionContador');
+  const MAX_SMS = 160;
+  function actualizarContador() {
+    const n = texto.value.length;
+    contador.textContent = n + ' / ' + MAX_SMS;
+    contador.style.color = n > MAX_SMS ? '#C0392B' : (n > MAX_SMS - 15 ? '#B7791F' : '');
+    btnEnviar.disabled = n === 0 || n > MAX_SMS;
+  }
+  texto.addEventListener('input', actualizarContador);
+  window.__textoSmsInvitacion = (p) => { texto.value = p.texto || ''; actualizarContador(); };
+
+  document.getElementById('btnSmsInvitacion').onclick = () => {
+    input.value = '';
+    mostrar('', true);
+    btnEnviar.disabled = false;
+    btnEnviar.textContent = 'Enviar SMS';
+    texto.value = '';
+    actualizarContador();
+    overlay.style.display = 'flex';
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'texto_sms_invitacion', payload: {} }));
+    setTimeout(() => input.focus(), 50);
+  };
+  document.getElementById('btnCancelarSmsInvitacion').onclick = () => { overlay.style.display = 'none'; };
+
+  function enviarInvitacion() {
+    const celular = input.value.replace(/\D/g, '');
+    if (!/^(51)?9\d{8}$/.test(celular)) { mostrar('Escribe un celular válido de 9 dígitos que empiece con 9.', false); return; }
+    if (!ws || ws.readyState !== WebSocket.OPEN) { mostrar('Sin conexión con el servidor. Intenta de nuevo en un momento.', false); return; }
+    const msg = texto.value.trim();
+    if (!msg) { mostrar('El mensaje no puede estar vacío.', false); return; }
+    if (msg.length > MAX_SMS) { mostrar('El mensaje supera los ' + MAX_SMS + ' caracteres (' + msg.length + ').', false); return; }
+    if (!msg.includes('https://sanitasperu.com/?ac=1')) { mostrar('El mensaje debe incluir el enlace https://sanitasperu.com/?ac=1', false); return; }
+    if (!confirm('¿Enviar el SMS de invitación al ' + celular + '?')) return;
+    btnEnviar.disabled = true;
+    btnEnviar.textContent = 'Enviando...';
+    mostrar('', true);
+    ws.send(JSON.stringify({ type: 'enviar_sms_invitacion', payload: { celular, texto: msg } }));
+  }
+  btnEnviar.onclick = enviarInvitacion;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarInvitacion(); });
+
+  // El resultado llega por el WebSocket (ver el manejador de mensajes).
+  window.__resultadoSmsInvitacion = (p) => {
+    btnEnviar.textContent = 'Enviar SMS';
+    actualizarContador();
+    if (p.ok) { mostrar('✅ SMS enviado. Puedes invitar a otro número.', true); input.value = ''; input.focus(); }
+    else { mostrar(p.motivo || 'No se pudo enviar el SMS.', false); }
+  };
+})();
+
+// ---- Buscar: celular, DNI o nombre, de cualquier estado -------------------
+let historialOrigenBusqueda = false;
+const ETIQUETAS_ESTADO = { bot: 'En bot', en_cola: 'En cola', asignada: 'Asignada', cerrada: 'Cerrada' };
+
+function formatearFechaHoraCompleta(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' }) + ' · '
+       + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+document.getElementById('btnBuscar').onclick = () => {
+  document.getElementById('buscarInput').value = '';
+  document.getElementById('buscarResultados').innerHTML = '';
+  document.getElementById('buscarVacio').style.display = 'block';
+  document.getElementById('buscarSinResultados').style.display = 'none';
+  document.getElementById('modalBuscarOverlay').classList.add('activa');
+  setTimeout(() => document.getElementById('buscarInput').focus(), 50);
+};
+document.getElementById('btnCerrarModalBuscar').onclick = () => {
+  document.getElementById('modalBuscarOverlay').classList.remove('activa');
+};
+function ejecutarBusqueda() {
+  const query = document.getElementById('buscarInput').value.trim();
+  if (query.length < 3 || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'buscar_conversaciones', payload: { query } }));
+}
+document.getElementById('btnEjecutarBusqueda').onclick = ejecutarBusqueda;
+document.getElementById('buscarInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') ejecutarBusqueda(); });
+
+function renderResultadosBusqueda(resultados) {
+  const cont = document.getElementById('buscarResultados');
+  cont.innerHTML = '';
+  document.getElementById('buscarVacio').style.display = 'none';
+  document.getElementById('buscarSinResultados').style.display = resultados.length === 0 ? 'block' : 'none';
+  resultados.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'resultado-item';
+    const detalleEstado = r.estado === 'asignada' && r.asesor_nombre ? ` · ${escapeHtml(r.asesor_nombre)}`
+                         : r.estado === 'cerrada' && r.etiqueta ? ` · ${escapeHtml(r.etiqueta)}` : '';
+    div.innerHTML = `
+      <div class="nombre">${escapeHtml(r.usuario_nombre)}</div>
+      <div class="datos">${escapeHtml([r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      <div class="fila-estado">
+        <span class="estado-pill ${escapeHtml(r.estado)}">${escapeHtml(ETIQUETAS_ESTADO[r.estado] || r.estado)}${detalleEstado}</span>
+        <span style="font-size:11.5px;color:var(--texto-suave);">${formatearFechaHoraCompleta(r.cerrado_en || r.asignado_en || r.iniciado_en)}</span>
+      </div>`;
+    div.onclick = () => abrirResultadoBusqueda(r);
+    cont.appendChild(div);
+  });
+}
+
+function abrirResultadoBusqueda(r) {
+  // Si es una conversación que este mismo asesor tiene abierta, se va directo a ella.
+  if (r.estado === 'asignada' && conversaciones[r.conversacion_id]) {
+    document.getElementById('modalBuscarOverlay').classList.remove('activa');
+    pestanaActual = conversaciones[r.conversacion_id].pausada ? 'pausados' : 'principal';
+    document.getElementById('tabPrincipal').classList.toggle('activa', pestanaActual === 'principal');
+    document.getElementById('tabPausados').classList.toggle('activa', pestanaActual === 'pausados');
+    renderLista();
+    seleccionar(String(r.conversacion_id));
+    renderLista();
+    return;
+  }
+  // Cualquier otra: vista de solo lectura del historial de mensajes.
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  historialOrigenBusqueda = true;
+  document.getElementById('modalBuscarOverlay').classList.remove('activa');
+  document.getElementById('historialListaView').style.display = 'none';
+  document.getElementById('historialMensajesChat').innerHTML = '';
+  document.getElementById('btnDescargarPdfHistorial').href =
+    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(r.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+  ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: Number(r.conversacion_id) } }));
+  document.getElementById('modalHistorialOverlay').classList.add('activa');
+}
+
+// El botón "Cerrar" del modal de historial también debe limpiar la marca de origen.
+document.getElementById('btnCerrarModalHistorial').addEventListener('click', () => { historialOrigenBusqueda = false; });
+
+// ---- Ayudar en el bot -----------------------------------------------------
+let ayudaBotConversacionId = null;
+
+document.getElementById('btnAyudarBot').onclick = () => {
+  document.getElementById('buscarBotInput').value = '';
+  document.getElementById('buscarBotResultados').innerHTML = '';
+  document.getElementById('buscarBotVacio').style.display = 'block';
+  document.getElementById('buscarBotSinResultados').style.display = 'none';
+  document.getElementById('modalAyudarBotOverlay').classList.add('activa');
+  setTimeout(() => document.getElementById('buscarBotInput').focus(), 50);
+};
+document.getElementById('btnCerrarModalAyudarBot').onclick = () => {
+  document.getElementById('modalAyudarBotOverlay').classList.remove('activa');
+};
+function ejecutarBusquedaBot() {
+  const telefono = document.getElementById('buscarBotInput').value.trim();
+  if (telefono.length < 3 || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'buscar_conversaciones_bot', payload: { telefono } }));
+}
+document.getElementById('btnEjecutarBusquedaBot').onclick = ejecutarBusquedaBot;
+document.getElementById('buscarBotInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') ejecutarBusquedaBot(); });
+
+function renderResultadosBusquedaBot(resultados) {
+  const cont = document.getElementById('buscarBotResultados');
+  cont.innerHTML = '';
+  document.getElementById('buscarBotVacio').style.display = 'none';
+  document.getElementById('buscarBotSinResultados').style.display = resultados.length === 0 ? 'block' : 'none';
+  resultados.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'resultado-item';
+    div.innerHTML = `
+      <div class="nombre">${escapeHtml(r.usuario_nombre)}</div>
+      <div class="datos">${escapeHtml([r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      <div class="fila-estado">
+        <span class="estado-pill ${escapeHtml(r.estado)}">${escapeHtml(ETIQUETAS_ESTADO[r.estado] || r.estado)}</span>
+        <span style="font-size:11.5px;color:var(--texto-suave);">${formatearFechaHoraCompleta(r.iniciado_en)}</span>
+      </div>`;
+    div.onclick = () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: 'ayuda_bot_abrir', payload: { conversacion_id: Number(r.conversacion_id) } }));
+    };
+    cont.appendChild(div);
+  });
+}
+
+function mostrarAvisoAyudaBot(texto) {
+  const el = document.getElementById('ayudaBotAviso');
+  el.textContent = texto;
+  el.classList.add('activa');
+}
+
+function agregarMensajeAyudaBot(emisorTipo, texto, horaIso, ruta) {
+  const chat = document.getElementById('ayudaBotMensajes');
+  const div = document.createElement('div');
+  const clase = emisorTipo === 'usuario' ? 'usuario' : (emisorTipo === 'asesor' || emisorTipo === 'supervisor' ? 'asesor' : 'bot');
+  div.className = 'msg ' + clase;
+  if (ruta && esImagen(ruta)) {
+    const url = urlArchivo(ruta);
+    const img = document.createElement('img');
+    img.className = 'msg-imagen';
+    img.src = url;
+    img.loading = 'lazy';
+    img.onclick = () => abrirLightbox(url);
+    div.appendChild(img);
+  } else if (ruta) {
+    const a = document.createElement('a');
+    a.href = urlArchivo(ruta);
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = '📎 Ver archivo enviado';
+    a.style.color = 'inherit';
+    div.appendChild(a);
+  } else {
+    div.textContent = texto || '';
+  }
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function abrirChatAyudaBot(p) {
+  ayudaBotConversacionId = p.conversacion_id;
+  document.getElementById('modalAyudarBotOverlay').classList.remove('activa');
+  document.getElementById('ayudaBotNombre').textContent = p.usuario_nombre || '';
+  document.getElementById('ayudaBotDatos').textContent =
+    [p.telefono, p.dni ? 'DNI ' + p.dni : null, ETIQUETAS_ESTADO[p.estado] || p.estado].filter(Boolean).join(' · ');
+  const aviso = document.getElementById('ayudaBotAviso');
+  aviso.classList.remove('activa');
+  aviso.textContent = '';
+  const chat = document.getElementById('ayudaBotMensajes');
+  chat.innerHTML = '';
+  (p.historial || []).forEach(m => {
+    if (m.tipo_contenido === 'opciones') {
+      const opciones = parsearOpcionesBot(m.contenido);
+      if (opciones) {
+        chat.appendChild(crearBurbujaOpciones(opciones, m.enviado_en));
+        return;
+      }
+    }
+    if (m.eliminado_en) return;
+    if (m.tipo_contenido === 'archivo') agregarMensajeAyudaBot(m.emisor_tipo, '📎 Archivo', m.enviado_en, m.contenido);
+    else agregarMensajeAyudaBot(m.emisor_tipo, m.contenido, m.enviado_en, null);
+  });
+  chat.scrollTop = chat.scrollHeight;
+  document.getElementById('ayudaBotTexto').value = '';
+  document.getElementById('modalAyudaBotChatOverlay').classList.add('activa');
+  setTimeout(() => document.getElementById('ayudaBotTexto').focus(), 50);
+}
+
+function cerrarChatAyudaBot() {
+  if (ayudaBotConversacionId !== null && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'ayuda_bot_cerrar', payload: { conversacion_id: Number(ayudaBotConversacionId) } }));
+  }
+  ayudaBotConversacionId = null;
+  document.getElementById('modalAyudaBotChatOverlay').classList.remove('activa');
+}
+document.getElementById('btnCerrarAyudaBotChat').onclick = cerrarChatAyudaBot;
+
+function enviarAyudaBot() {
+  const input = document.getElementById('ayudaBotTexto');
+  const texto = input.value.trim();
+  if (!texto || ayudaBotConversacionId === null) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    mostrarAvisoAyudaBot('Sin conexión con el servidor — tu mensaje NO se envió. Espera a que se reconecte e inténtalo de nuevo.');
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'ayuda_bot_enviar', payload: { conversacion_id: Number(ayudaBotConversacionId), texto } }));
+  input.value = '';  // el mensaje aparece cuando el servidor lo confirma (evento de vuelta)
+}
+document.getElementById('btnAyudaBotEnviar').onclick = enviarAyudaBot;
+document.getElementById('ayudaBotTexto').addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarAyudaBot(); });
+</script>
+<script id="sofi-js">
+/* Sofi Desk — comportamiento del cascarón (no toca la lógica de cada consola) */
+(function () {
+  var b = document.body; b.classList.add('sofi');
+  var $ = function (id) { return document.getElementById(id); };
+  var login = $('login');
+  function iniciales(n) { var p = (n || '').trim().split(/\s+/).filter(Boolean); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
+  function sync() {
+    var conectado = login && login.style.display === 'none';
+    b.classList.toggle('sofi-conectado', conectado);
+    if (conectado) {
+      var n = ($('nombreAsesorTexto') && $('nombreAsesorTexto').textContent.trim()) || ($('usuario') && $('usuario').value.trim()) || 'Usuario';
+      $('navNombre').textContent = n; $('navAvatar').textContent = iniciales(n);
+    }
+  }
+  if (login) { new MutationObserver(sync).observe(login, { attributes: true, attributeFilter: ['style'] }); sync(); }
+  var nom = $('nombreAsesorTexto');
+  if (nom) new MutationObserver(sync).observe(nom, { childList: true, characterData: true, subtree: true });
+
+  // Enter en usuario/contraseña = Ingresar
+  ['usuario', 'password'].forEach(function (id) {
+    var el = $(id); if (el) el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { var bt = $('btnConectar'); if (bt && !bt.disabled) bt.click(); } });
+  });
+  // mostrar/ocultar contraseña
+  var ver = $('btnVerClave');
+  if (ver) ver.addEventListener('click', function () { var p = $('password'); p.type = p.type === 'password' ? 'text' : 'password'; ver.setAttribute('aria-label', p.type === 'password' ? 'Mostrar contraseña' : 'Ocultar contraseña'); });
+
+  // acciones de la barra lateral = botones existentes (siguen en el DOM)
+  document.querySelectorAll('.sofi-nav [data-click]').forEach(function (a) {
+    a.addEventListener('click', function (e) { e.preventDefault(); var t = $(a.getAttribute('data-click')); if (t) t.click(); });
+  });
+  var salir = $('navSalir');
+  if (salir) salir.addEventListener('click', function (e) { e.preventDefault(); var t = $('btnSalir'); if (t) t.click(); });
+
+  // insignias espejo
+  function espejo(origen, destino, fn) {
+    var o = $(origen), d = $(destino); if (!o || !d) return;
+    var f = function () { var v = fn(o); d.textContent = v; d.style.display = v ? 'flex' : 'none'; };
+    new MutationObserver(f).observe(o, { childList: true, characterData: true, subtree: true, attributes: true }); f();
+  }
+  espejo('tabPrincipal', 'insigAsesor', function (o) { var m = /\((\d+)\)/.exec(o.textContent); return m && m[1] !== '0' ? m[1] : ''; });
+  var cola = document.querySelector('.sofi-nav [data-click="btnCola"]');
+  if (cola && $('badgeCola')) {
+    var ins = document.createElement('span'); ins.className = 'insignia'; ins.id = 'insigCola'; ins.style.display = 'none'; cola.appendChild(ins);
+    espejo('badgeCola', 'insigCola', function (o) { return o.style.display === 'none' ? '' : o.textContent.trim(); });
+  }
+
+  // Asesor: columna "Datos del afiliado"
+  var ch = $('chatHeader');
+  if (ch && $('datosAfiliado')) {
+    var map = { chatNombre: 'dNombre', chatTelefono: 'dCelular', chatDni: 'dDni', chatCodigo: 'dCodigo', tiempoEspera: 'dEspera', tiempoAtencion: 'dAtencion' };
+    Object.keys(map).forEach(function (k) {
+      var o = $(k), d = $(map[k]); if (!o || !d) return;
+      var f = function () { var v = o.textContent.replace(/^DNI:\s*/, '').trim(); d.textContent = v || '—'; };
+      new MutationObserver(f).observe(o, { childList: true, characterData: true, subtree: true }); f();
+    });
+    var g = function () { b.classList.toggle('sofi-con-chat', ch.classList.contains('activa')); };
+    new MutationObserver(g).observe(ch, { attributes: true, attributeFilter: ['class'] }); g();
+  }
+})();
+
 </script>
 </body>
 </html>

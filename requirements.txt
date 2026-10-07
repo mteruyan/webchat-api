@@ -7,3 +7,4 @@ google-cloud-storage==2.18.2
 bcrypt==4.2.0
 pyjwt==2.9.0
 requests==2.32.3
+reportlab==4.2.5

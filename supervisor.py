@@ -24,15 +24,25 @@ def _inicio_de_hoy() -> datetime:
 
 def _conversaciones_activas_por_asesor(cur, asesor_ids=None):
     """Devuelve {asesor_id: [{"conversacion_id", "usuario_nombre", "telefono",
-    "entrada_cola", "asignado_en"}, ...]} — para que el tablero de supervisor
-    pueda ofrecer un botón de escuchar por conversación, sin que nadie tenga
-    que escribir un conversacion_id a mano, y mostrar tiempos de espera/atención."""
+    "entrada_cola", "asignado_en", "ultimo_mensaje_texto", "ultimo_mensaje_tipo",
+    "ultimo_mensaje_en"}, ...]} — para que el tablero de supervisor pueda ofrecer
+    un botón de escuchar por conversación, sin que nadie tenga que escribir un
+    conversacion_id a mano, mostrar tiempos de espera/atención, y adelantar
+    (como en el inbox del asesor) la hora y el texto del último mensaje."""
     if asesor_ids is not None and not asesor_ids:
         return {}
     query = """
-        SELECT c.asesor_id, c.id, u.nombre, u.telefono, c.entrada_cola, c.asignado_en
+        SELECT c.asesor_id, c.id, u.nombre, u.telefono, u.dni, c.entrada_cola, c.asignado_en,
+               c.pausada_en, ult.contenido, ult.tipo_contenido, ult.enviado_en, c.bandera
         FROM conversaciones c
         JOIN usuarios_webchat u ON u.id = c.usuario_id
+        LEFT JOIN LATERAL (
+            SELECT contenido, tipo_contenido, enviado_en
+            FROM mensajes m
+            WHERE m.conversacion_id = c.id
+            ORDER BY m.enviado_en DESC
+            LIMIT 1
+        ) ult ON TRUE
         WHERE c.estado = 'asignada'
     """
     params = ()
@@ -41,13 +51,20 @@ def _conversaciones_activas_por_asesor(cur, asesor_ids=None):
         params = (asesor_ids,)
     cur.execute(query, params)
     resultado = {}
-    for asesor_id, conversacion_id, nombre, telefono, entrada_cola, asignado_en in cur.fetchall():
+    for (asesor_id, conversacion_id, nombre, telefono, dni, entrada_cola, asignado_en,
+         pausada_en, ultimo_contenido, ultimo_tipo, ultimo_en, bandera) in cur.fetchall():
         resultado.setdefault(asesor_id, []).append({
             "conversacion_id": conversacion_id,
             "usuario_nombre": nombre or f"Usuario {conversacion_id}",
             "telefono": telefono,
+            "dni": dni,
             "entrada_cola": entrada_cola.isoformat() if entrada_cola else None,
             "asignado_en": asignado_en.isoformat() if asignado_en else None,
+            "pausada": pausada_en is not None,
+            "bandera": bandera,
+            "ultimo_mensaje_texto": ultimo_contenido,
+            "ultimo_mensaje_tipo": ultimo_tipo,
+            "ultimo_mensaje_en": ultimo_en.isoformat() if ultimo_en else None,
         })
     return resultado
 
@@ -107,11 +124,63 @@ def _estadisticas_dia_por_asesor(cur, asesor_ids=None):
     return resultado
 
 
+def _motivos_pausa_abiertos(cur, asesor_ids):
+    """{asesor_id: (motivo, detalle)} de la pausa en curso de cada asesor.
+    Si la migración del motivo aún no se corrió, devuelve {} sin romper el tablero."""
+    if not asesor_ids:
+        return {}
+    try:
+        cur.execute("SAVEPOINT sp_motivos")
+        cur.execute(
+            """SELECT asesor_id, motivo, motivo_detalle FROM asesor_pausas
+               WHERE fin IS NULL AND asesor_id = ANY(%s)""",
+            (asesor_ids,),
+        )
+        return {a: (m, d) for a, m, d in cur.fetchall()}
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_motivos")
+        return {}
+
+
+def _completar_motivo_pausa(d: dict, motivos: dict):
+    m, det = motivos.get(d["asesor_id"], (None, None))
+    d["motivo_pausa"] = m if d.get("en_pausa") else None
+    d["motivo_pausa_detalle"] = det if d.get("en_pausa") else None
+
+
 def _completar_stats(d: dict, stats: dict):
     e = stats.get(d["asesor_id"], {})
     d["segundos_conectado_hoy"] = e.get("segundos_conectado", 0)
     d["segundos_pausado_hoy"] = e.get("segundos_pausado", 0)
     d["atendidas_hoy"] = e.get("atendidas_hoy", 0)
+
+
+def _conversaciones_en_cola(cur):
+    """Conversaciones derivadas a un asesor que TODAVÍA no se les asignó nadie
+    (estado='en_cola') — para el panel de supervisor "Sin asignar", que suele
+    pasar cuando ningún asesor de esa campaña está conectado en ese momento."""
+    cur.execute(
+        """
+        SELECT c.id, u.nombre, u.telefono, u.dni, camp.nombre, camp.codigo, c.entrada_cola
+        FROM conversaciones c
+        JOIN usuarios_webchat u ON u.id = c.usuario_id
+        LEFT JOIN campanas camp ON camp.id = c.campana_id
+        WHERE c.estado = 'en_cola'
+        ORDER BY c.entrada_cola ASC
+        """
+    )
+    resultado = []
+    for conv_id, nombre, telefono, dni, campana_nombre, campana_codigo, entrada_cola in cur.fetchall():
+        resultado.append({
+            "conversacion_id": conv_id,
+            "usuario_nombre": nombre or f"Usuario {conv_id}",
+            "telefono": telefono,
+            "dni": dni,
+            "campana_nombre": campana_nombre,
+            "campana_codigo": campana_codigo,
+            "entrada_cola": entrada_cola.isoformat() if entrada_cola else None,
+        })
+    return resultado
 
 
 def _snapshot(cur):
@@ -137,9 +206,11 @@ def _snapshot(cur):
     ids = [f["asesor_id"] for f in filas]
     conv_map = _conversaciones_activas_por_asesor(cur, ids)
     stats_map = _estadisticas_dia_por_asesor(cur, ids)
+    motivos = _motivos_pausa_abiertos(cur, ids)
     for f in filas:
         f["conversaciones"] = conv_map.get(f["asesor_id"], [])
         _completar_stats(f, stats_map)
+        _completar_motivo_pausa(f, motivos)
     return filas
 
 
@@ -170,6 +241,7 @@ def _snapshot_uno(cur, asesor_id: int):
     stats_map = _estadisticas_dia_por_asesor(cur, [asesor_id])
     data["conversaciones"] = conv_map.get(asesor_id, [])
     _completar_stats(data, stats_map)
+    _completar_motivo_pausa(data, _motivos_pausa_abiertos(cur, [asesor_id]))
     return data
 
 
@@ -179,9 +251,10 @@ async def enviar_estado_global(supervisor_id: int, manager):
     try:
         with conn.cursor() as cur:
             data = _snapshot(cur)
+            en_cola = _conversaciones_en_cola(cur)
     finally:
         release_connection(conn)
-    await manager.enviar_a_supervisor(supervisor_id, {"type": "estado_global", "payload": {"asesores": data}})
+    await manager.enviar_a_supervisor(supervisor_id, {"type": "estado_global", "payload": {"asesores": data, "en_cola": en_cola}})
 
 
 async def notificar_cambio_asesor(asesor_id: int, manager):
@@ -196,6 +269,70 @@ async def notificar_cambio_asesor(asesor_id: int, manager):
         release_connection(conn)
     if data:
         await manager.enviar_a_todos_supervisores({"type": "asesor_estado_cambio", "payload": data})
+
+
+async def enviar_mis_estadisticas(asesor_id: int, manager):
+    """Tiempo conectado/en pausa de HOY del propio asesor -- para que su
+    barra superior muestre lo mismo que el supervisor ya ve de él (ver
+    _estadisticas_dia_por_asesor). Se manda al conectar y cada vez que
+    cambia su disponibilidad (pausar/reanudar) o cierra una conversación.
+    Incluye las "atendidas hoy" (conversaciones cerradas hoy, igual que en el
+    tablero de supervisor) y el estado real de pausa guardado en la base, para
+    que la pantalla nunca quede mostrando algo distinto a lo que el servidor
+    usa al asignar conversaciones."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            stats = _estadisticas_dia_por_asesor(cur, [asesor_id]).get(asesor_id, {})
+            cur.execute("SELECT en_pausa FROM asesores WHERE id = %s", (asesor_id,))
+            fila = cur.fetchone()
+            en_pausa = bool(fila[0]) if fila else False
+            motivo, detalle = _motivos_pausa_abiertos(cur, [asesor_id]).get(asesor_id, (None, None))
+    finally:
+        release_connection(conn)
+    await manager.enviar_a_asesor(asesor_id, {
+        "type": "mis_estadisticas",
+        "payload": {
+            "segundos_conectado_hoy": stats.get("segundos_conectado", 0),
+            "segundos_pausado_hoy": stats.get("segundos_pausado", 0),
+            "atendidas_hoy": stats.get("atendidas_hoy", 0),
+            "en_pausa": en_pausa,
+            "motivo_pausa": motivo if en_pausa else None,
+            "motivo_pausa_detalle": detalle if en_pausa else None,
+        },
+    })
+
+
+async def enviar_lista_asesores(destinatario_id: int, manager, a_asesor: bool = False, excluir_id: int = None):
+    """Lista liviana de asesores (id, nombre, conectado, en_pausa, carga,
+    campañas) para el selector de "Transferir a..." — tanto desde la consola
+    de asesor como desde la de supervisor. No incluye el detalle de
+    conversaciones de cada uno (eso ya lo tiene el tablero de supervisor vía
+    estado_global)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            filas = _snapshot(cur)
+    finally:
+        release_connection(conn)
+    asesores = [
+        {
+            "asesor_id": f["asesor_id"],
+            "nombre_display": f["nombre_display"],
+            "conectado": f["conectado"],
+            "en_pausa": f["en_pausa"],
+            "conversaciones_activas": f["conversaciones_activas"],
+            "cupo_maximo": f["cupo_maximo"],
+            "campanas": f["campanas"],
+        }
+        for f in filas
+        if excluir_id is None or f["asesor_id"] != excluir_id
+    ]
+    evento = {"type": "lista_asesores", "payload": {"asesores": asesores}}
+    if a_asesor:
+        await manager.enviar_a_asesor(destinatario_id, evento)
+    else:
+        await manager.enviar_a_supervisor(destinatario_id, evento)
 
 
 # ---------------------------------------------------------------------
@@ -272,6 +409,138 @@ def eliminar_etiqueta(etiqueta_id: int):
 
 
 # ---------------------------------------------------------------------
+# Respuestas rápidas — mantenimiento SOLO desde supervisor (título, cuerpo,
+# campaña a la que pertenece); los asesores las usan para responder preguntas
+# frecuentes, pero solo ven las de las campañas que tienen asignadas.
+# ---------------------------------------------------------------------
+
+def _obtener_respuestas_rapidas(cur, solo_activas: bool = False, campana_ids: list | None = None):
+    """campana_ids=None trae de todas las campañas (vista de supervisor);
+    una lista (incluso vacía) filtra a solo esas campañas (vista de asesor,
+    según lo que tenga asignado en asesor_campanas)."""
+    if campana_ids is not None and not campana_ids:
+        return []
+    query = """
+        SELECT r.id, r.titulo, r.cuerpo, r.campana_id, c.nombre, r.activo
+        FROM respuestas_rapidas r
+        JOIN campanas c ON c.id = r.campana_id
+        WHERE TRUE
+    """
+    params = []
+    if solo_activas:
+        query += " AND r.activo = TRUE"
+    if campana_ids is not None:
+        query += " AND r.campana_id = ANY(%s)"
+        params.append(campana_ids)
+    query += " ORDER BY c.nombre, r.titulo"
+    cur.execute(query, params)
+    return [{"id": i, "titulo": t, "cuerpo": cu, "campana_id": cid, "campana_nombre": cn, "activo": a}
+            for i, t, cu, cid, cn, a in cur.fetchall()]
+
+
+def _campanas_de_asesor(cur, asesor_id: int) -> list:
+    cur.execute("SELECT campana_id FROM asesor_campanas WHERE asesor_id = %s", (asesor_id,))
+    return [row[0] for row in cur.fetchall()]
+
+
+async def enviar_respuestas_rapidas(destinatario_id: int, manager, a_asesor: bool = False):
+    """a_asesor=True: solo las activas de las campañas de ESE asesor (para
+    usar al responder). a_asesor=False (supervisor): todas, de todas las
+    campañas, incluidas las desactivadas, para poder mantenerlas."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if a_asesor:
+                campana_ids = _campanas_de_asesor(cur, destinatario_id)
+                respuestas = _obtener_respuestas_rapidas(cur, solo_activas=True, campana_ids=campana_ids)
+                payload = {"respuestas": respuestas}
+            else:
+                respuestas = _obtener_respuestas_rapidas(cur, solo_activas=False)
+                # El supervisor necesita el catálogo de campañas para el
+                # selector del formulario "Nueva respuesta rápida" -- se lo
+                # mandamos junto para no depender de que antes haya abierto
+                # el panel de "Asesores" (que es lo único que hoy lo carga).
+                payload = {"respuestas": respuestas, "campanas": obtener_campanas()}
+    finally:
+        release_connection(conn)
+    evento = {"type": "respuestas_rapidas_disponibles", "payload": payload}
+    if a_asesor:
+        await manager.enviar_a_asesor(destinatario_id, evento)
+    else:
+        await manager.enviar_a_supervisor(destinatario_id, evento)
+
+
+async def notificar_respuestas_rapidas_a_todos(manager):
+    """Tras crear/editar/eliminar una respuesta rápida: refresca a todos los
+    supervisores (todas, de todas las campañas) y a cada asesor CONECTADO
+    (solo las activas de sus propias campañas)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            todas = _obtener_respuestas_rapidas(cur, solo_activas=False)
+            campanas_por_asesor = {
+                asesor_id: _campanas_de_asesor(cur, asesor_id)
+                for asesor_id in list(manager.asesor_connections.keys())
+            }
+    finally:
+        release_connection(conn)
+    await manager.enviar_a_todos_supervisores(
+        {"type": "respuestas_rapidas_disponibles", "payload": {"respuestas": todas}}
+    )
+    activas = [r for r in todas if r["activo"]]
+    for asesor_id, campana_ids in campanas_por_asesor.items():
+        filtradas = [r for r in activas if r["campana_id"] in campana_ids]
+        await manager.enviar_a_asesor(
+            asesor_id, {"type": "respuestas_rapidas_disponibles", "payload": {"respuestas": filtradas}}
+        )
+
+
+def crear_respuesta_rapida(titulo: str, cuerpo: str, campana_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO respuestas_rapidas (titulo, cuerpo, campana_id) VALUES (%s, %s, %s)",
+                (titulo, cuerpo, campana_id),
+            )
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+
+def editar_respuesta_rapida(respuesta_id: int, titulo: str = None, cuerpo: str = None,
+                             campana_id: int = None, activo: bool = None):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if titulo is not None:
+                cur.execute("UPDATE respuestas_rapidas SET titulo = %s WHERE id = %s", (titulo, respuesta_id))
+            if cuerpo is not None:
+                cur.execute("UPDATE respuestas_rapidas SET cuerpo = %s WHERE id = %s", (cuerpo, respuesta_id))
+            if campana_id is not None:
+                cur.execute("UPDATE respuestas_rapidas SET campana_id = %s WHERE id = %s", (campana_id, respuesta_id))
+            if activo is not None:
+                cur.execute("UPDATE respuestas_rapidas SET activo = %s WHERE id = %s", (activo, respuesta_id))
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+
+def eliminar_respuesta_rapida(respuesta_id: int):
+    """Borra de verdad -- a diferencia de las etiquetas de cierre, nada queda
+    referenciando el id de una respuesta rápida (el texto ya enviado a un
+    cliente queda guardado como un mensaje normal, independiente), así que no
+    hace falta solo desactivarla."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM respuestas_rapidas WHERE id = %s", (respuesta_id,))
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+
+# ---------------------------------------------------------------------
 # Configuración global (clave/valor) — hoy solo el mensaje de cierre,
 # pero sirve para cualquier otro ajuste simple que se agregue después.
 # ---------------------------------------------------------------------
@@ -304,15 +573,100 @@ def guardar_configuracion(clave: str, valor: str):
 async def enviar_configuracion(supervisor_id: int, manager):
     cierre = obtener_configuracion("mensaje_cierre_conversacion")
     bienvenida = obtener_configuracion("mensaje_bienvenida_asesor")
+    inactividad_minutos = obtener_configuracion("inactividad_minutos") or "5"
     await manager.enviar_a_supervisor(supervisor_id, {
         "type": "configuracion",
-        "payload": {"mensaje_cierre_conversacion": cierre, "mensaje_bienvenida_asesor": bienvenida},
+        "payload": {
+            "mensaje_cierre_conversacion": cierre,
+            "mensaje_bienvenida_asesor": bienvenida,
+            "inactividad_minutos": inactividad_minutos,
+        },
     })
 
 
 # ---------------------------------------------------------------------
 # Mantenimiento de asesores — crear, editar, resetear clave
 # ---------------------------------------------------------------------
+
+def listar_horarios():
+    """Horario de atención de cada campaña (usado por validar_horario_consultas),
+    editable desde el panel de supervisor en vez de por SQL a mano. Siempre
+    devuelve los 7 días de la semana por campaña (0=lunes...6=domingo, igual
+    que Python) — un día sin fila en horarios_atencion se muestra como
+    "no atiende ese día"."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, codigo, nombre, mensaje_fuera_horario FROM campanas WHERE activo = TRUE ORDER BY nombre"
+            )
+            campanas = cur.fetchall()
+            cur.execute("SELECT campana_id, dia_semana, hora_inicio, hora_fin, activo FROM horarios_atencion")
+            por_campana = {}
+            for campana_id, dia, hora_inicio, hora_fin, activo in cur.fetchall():
+                por_campana.setdefault(campana_id, {})[dia] = {
+                    "hora_inicio": hora_inicio.strftime("%H:%M") if hora_inicio else None,
+                    "hora_fin": hora_fin.strftime("%H:%M") if hora_fin else None,
+                    "activo": activo,
+                }
+    finally:
+        release_connection(conn)
+
+    resultado = []
+    for campana_id, codigo, nombre, mensaje_fuera_horario in campanas:
+        dias = []
+        for dia_semana in range(7):
+            fila = por_campana.get(campana_id, {}).get(dia_semana)
+            dias.append({
+                "dia_semana": dia_semana,
+                "hora_inicio": fila["hora_inicio"] if fila else None,
+                "hora_fin": fila["hora_fin"] if fila else None,
+                "activo": bool(fila and fila["activo"]),
+            })
+        resultado.append({
+            "campana_id": campana_id,
+            "codigo": codigo,
+            "nombre": nombre,
+            "mensaje_fuera_horario": mensaje_fuera_horario or "",
+            "dias": dias,
+        })
+    return resultado
+
+
+def guardar_horarios(campana_codigo: str, mensaje_fuera_horario: str, dias: list) -> dict:
+    """Reemplaza por completo el horario de una campaña. `dias` es una lista
+    de hasta 7 {"dia_semana", "hora_inicio", "hora_fin", "activo"} — los días
+    con activo=False (o ausentes) simplemente no atienden ese día."""
+    if not campana_codigo:
+        return {"ok": False, "motivo": "Falta indicar la campaña."}
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM campanas WHERE codigo = %s", (campana_codigo,))
+            row = cur.fetchone()
+            if row is None:
+                return {"ok": False, "motivo": "La campaña no existe."}
+            campana_id = row[0]
+
+            cur.execute(
+                "UPDATE campanas SET mensaje_fuera_horario = %s WHERE id = %s",
+                (mensaje_fuera_horario or None, campana_id),
+            )
+            cur.execute("DELETE FROM horarios_atencion WHERE campana_id = %s", (campana_id,))
+            for dia in (dias or []):
+                if not dia.get("activo") or not dia.get("hora_inicio") or not dia.get("hora_fin"):
+                    continue
+                cur.execute(
+                    """INSERT INTO horarios_atencion (campana_id, dia_semana, hora_inicio, hora_fin, activo)
+                       VALUES (%s, %s, %s, %s, TRUE)""",
+                    (campana_id, dia["dia_semana"], dia["hora_inicio"], dia["hora_fin"]),
+                )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        release_connection(conn)
+
 
 def obtener_campanas():
     conn = get_connection()
@@ -419,6 +773,7 @@ async def notificar_estado_global_a_todos(manager):
     try:
         with conn.cursor() as cur:
             data = _snapshot(cur)
+            en_cola = _conversaciones_en_cola(cur)
     finally:
         release_connection(conn)
-    await manager.enviar_a_todos_supervisores({"type": "estado_global", "payload": {"asesores": data}})
+    await manager.enviar_a_todos_supervisores({"type": "estado_global", "payload": {"asesores": data, "en_cola": en_cola}})

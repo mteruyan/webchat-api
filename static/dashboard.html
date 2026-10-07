@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard de Conversaciones — Sanitas</title>
+<style>
+  :root {
+    --azul: #0A4C8C; --azul-oscuro: #073A6B; --verde: #2FB88B;
+    --rojo: #E0483E; --naranja: #E0973E; --gris: #8C9BAC;
+    --fondo: #F7F9FB; --texto: #1A2B3C; --texto-suave: #5B6B7C; --borde: #E1E8EF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0; background: var(--fondo); min-height: 100vh; color: var(--texto);
+  }
+  #login { display: flex; gap: 8px; padding: 14px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; flex-wrap: wrap; }
+  #login input { padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  #urlBase { flex: 1.4; min-width: 220px; }
+  #usuario, #password { flex: 1; min-width: 140px; }
+  button { padding: 9px 16px; cursor: pointer; border: none; border-radius: 8px; background: var(--azul); color: white; font-size: 13.5px; font-weight: 600; font-family: inherit; }
+  button:hover { background: var(--azul-oscuro); }
+  button:disabled { background: #B7C4D1; cursor: not-allowed; }
+  button.chico { padding: 5px 10px; font-size: 12px; }
+  button.gris { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  button.gris:hover { background: var(--fondo); color: var(--texto); }
+
+  #barraConectado { display: none; padding: 10px 16px; background: white; border-bottom: 1px solid var(--borde); align-items: center; gap: 10px; flex-wrap: wrap; }
+  #barraConectado.activa { display: flex; }
+  #barraConectado .estado { font-size: 12.5px; color: var(--texto-suave); }
+  #barraConectado .separador { flex: 1; min-width: 8px; }
+
+  #filtros { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #filtros label { font-size: 12px; color: var(--texto-suave); font-weight: 600; }
+  #filtros input[type="date"] { padding: 7px 9px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13px; font-family: inherit; }
+  .atajo { background: white; color: var(--texto-suave); border: 1px solid var(--borde); padding: 6px 11px; font-size: 12px; }
+  .atajo:hover { background: var(--fondo); color: var(--texto); }
+  .atajo.activo { background: var(--azul); color: white; border-color: var(--azul); }
+
+  #contenido { max-width: 1080px; margin: 0 auto; padding: 20px 16px 60px; }
+  #vacio { text-align: center; color: var(--texto-suave); padding: 80px 20px; font-size: 14px; }
+  #cargando { text-align: center; color: var(--texto-suave); padding: 40px 20px; font-size: 13.5px; display: none; }
+  #cargando.activo { display: block; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .kpi { background: white; border: 1px solid var(--borde); border-radius: 12px; padding: 16px 18px; }
+  .kpi .numero { font-size: 26px; font-weight: 700; color: var(--azul); line-height: 1.2; }
+  .kpi .etiqueta { font-size: 12px; color: var(--texto-suave); margin-top: 4px; font-weight: 600; }
+
+  .panel { background: white; border: 1px solid var(--borde); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 14px; color: var(--texto); }
+  .panel h2 .sub { font-weight: 400; color: var(--texto-suave); font-size: 12px; }
+  .panel .vacio-panel { color: var(--texto-suave); font-size: 13px; padding: 10px 0; }
+
+  /* Barras horizontales (asesor / etiqueta / campaña) */
+  .fila-barra { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+  .fila-barra .nombre { width: 190px; flex-shrink: 0; font-size: 13px; color: var(--texto); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fila-barra .pista { flex: 1; background: var(--fondo); border-radius: 5px; height: 20px; position: relative; overflow: hidden; }
+  .fila-barra .barra { height: 100%; border-radius: 5px; background: var(--azul); transition: width .3s; }
+  .fila-barra .cantidad { width: 42px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: var(--texto); }
+
+  /* Barras verticales por día */
+  .chart-dia { display: flex; align-items: flex-end; gap: 3px; height: 160px; overflow-x: auto; padding-bottom: 2px; }
+  .barra-dia { display: flex; flex-direction: column; align-items: center; min-width: 22px; flex: 1; height: 100%; justify-content: flex-end; }
+  .barra-dia .valor { font-size: 10px; color: var(--texto-suave); margin-bottom: 3px; }
+  .barra-dia .col { width: 100%; background: var(--azul); border-radius: 3px 3px 0 0; min-height: 2px; }
+  .barra-dia .etiq { font-size: 9.5px; color: var(--texto-suave); margin-top: 4px; writing-mode: vertical-rl; transform: rotate(180deg); height: 34px; }
+
+  .badge-etiqueta { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+
+  table.tabla-tiempos { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.tabla-tiempos th { text-align: left; color: var(--texto-suave); font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; padding: 6px 10px; border-bottom: 1px solid var(--borde); }
+  table.tabla-tiempos td { padding: 8px 10px; border-bottom: 1px solid var(--fondo); }
+  table.tabla-tiempos td.num, table.tabla-tiempos th.num { text-align: right; }
+  table.tabla-tiempos tr:hover td { background: var(--fondo); }
+  .pill-tiempo { display: inline-block; padding: 2px 9px; border-radius: 999px; font-weight: 700; font-size: 12.5px; }
+  .pill-verde { background: #E4F7EF; color: #1D8A66; }
+  .pill-naranja { background: #FCEEDD; color: #B5701B; }
+  .pill-rojo { background: #FBE7E5; color: #C23A30; }
+</style>
+<link rel="icon" type="image/png" href="/static/imagenes/sofi-cara-chica.png">
+<style id="sofi-css">
+/* ===== Sofi Desk — capa de look & feel compartida (login, asesor, supervisor, editor, dashboard) =====
+   Se inyecta inline en cada página (build_sofi.py) porque la CSP solo permite 'self' + inline.
+   La fuente se sirve por /static/imagenes/plus-jakarta-sans.woff2 (ruta ya permitida en Cloud Armor). */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/static/imagenes/plus-jakarta-sans.woff2') format('woff2');
+  font-weight: 400 800; font-style: normal; font-display: swap;
+}
+:root {
+  --azul: #0A4C8C; --azul-oscuro: #083A6E; --marino: #0A2C52;
+  --verde: #1E8A55; --verde-fondo: #E3F4EA; --verde-texto: #17663F;
+  --rojo: #D0392F; --naranja: #B8650A;
+  --fondo: #F4F7FB; --texto: #10233A; --texto-suave: #4A5B70; --borde: #E1E8F0;
+  --borde-fuerte: #C9D4E1; --celeste: #D7E6F5; --celeste-claro: #EAF1F9;
+  --radio: 12px; --sombra: 0 12px 40px rgba(16,35,58,.08);
+}
+html { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+body, button, input, select, textarea { font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif !important; }
+body { background: var(--fondo); color: var(--texto); }
+
+/* ---------- Botones ---------- */
+button { border-radius: var(--radio); font-weight: 700; padding: 0 16px; min-height: 40px; letter-spacing: 0; transition: background .15s, border-color .15s, color .15s; }
+button.chico, a.chico { min-height: 34px; padding: 0 12px; font-size: 12.5px; border-radius: 10px; }
+a.chico { padding: 0 12px; min-height: 34px; }
+button.gris, a.gris { background: #fff; color: var(--texto); border: 1.5px solid var(--borde-fuerte); font-weight: 600; }
+button.gris:hover, a.gris:hover { background: var(--fondo); color: var(--texto); border-color: #9FB6CE; }
+button:disabled { background: #B7C4D1; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(10,76,140,.35); outline-offset: 1px; }
+input, select, textarea { border-radius: var(--radio) !important; border: 1.5px solid var(--borde-fuerte); color: var(--texto); }
+input:focus, select:focus, textarea:focus { border-color: var(--azul) !important; outline: none; }
+
+/* ---------- Modales (todos los overlays existentes) ---------- */
+[id$="Overlay"] { background: rgba(16,35,58,.5) !important; backdrop-filter: blur(2px); }
+[id$="Overlay"] > div, .modal-buscar { border-radius: 20px !important; box-shadow: 0 20px 60px rgba(16,35,58,.25); }
+[id$="Overlay"] h3, .modal-buscar h3 { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+
+/* ---------- Chips / pills ---------- */
+.estado-pill, .campana-chip { border-radius: 999px; }
+
+/* ===================================================
+   LOGIN dividido (marca a la izquierda, formulario a la derecha)
+   =================================================== */
+#login.sofi-login { position: fixed; inset: 0; z-index: 5000; padding: 0; gap: 0; border: 0; background: var(--fondo); align-items: stretch; flex-wrap: wrap; overflow: auto; }
+.sofi-login .login-marca { flex: 1 1 520px; min-width: 0; background: var(--azul); color: #fff; padding: 56px 64px; display: flex; flex-direction: column; justify-content: space-between; gap: 40px; }
+.sofi-login .marca-logo { display: flex; align-items: center; gap: 14px; }
+.sofi-login .marca-logo .ico { width: 48px; height: 48px; border-radius: 14px; background: #fff; display: flex; align-items: center; justify-content: center; }
+.sofi-login .marca-logo b { display: block; font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-login .marca-logo span { font-size: 13px; color: #CFE0F2; }
+.sofi-login h1 { margin: 0; font-size: 42px; line-height: 1.12; font-weight: 800; letter-spacing: -.025em; max-width: 520px; }
+.sofi-login .marca-sub { margin: 18px 0 0; font-size: 17px; line-height: 1.6; color: #DCE8F5; max-width: 520px; }
+.sofi-login .marca-roles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
+.sofi-login .marca-roles a { background: rgba(255,255,255,.10); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px; color: #fff; text-decoration: none; transition: background .15s; }
+.sofi-login .marca-roles a:hover { background: rgba(255,255,255,.18); }
+.sofi-login .marca-roles a.actual { background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.55); }
+.sofi-login .marca-roles b { font-size: 15px; }
+.sofi-login .marca-roles span { font-size: 12.5px; line-height: 1.45; color: #DCE8F5; }
+.sofi-login .login-form { flex: 1 1 440px; min-width: 0; padding: 40px 24px; display: flex; align-items: center; justify-content: center; }
+.sofi-login .login-card { width: 100%; max-width: 400px; background: #fff; border-radius: 20px; padding: 40px; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 20px; }
+.sofi-login .login-card h2 { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-login .login-card p { margin: 6px 0 0; font-size: 14px; color: var(--texto-suave); }
+.sofi-login .campo { display: flex; flex-direction: column; gap: 8px; }
+.sofi-login .campo label { font-size: 14px; font-weight: 600; }
+.sofi-login input { width: 100%; height: 48px; padding: 0 14px; font-size: 15px; flex: none !important; }
+.sofi-login .campo-clave { position: relative; }
+.sofi-login .campo-clave input { padding-right: 52px; }
+.sofi-login .ver-clave { position: absolute; right: 4px; top: 2px; width: 44px; height: 44px; min-height: 0; padding: 0; background: transparent; color: var(--texto-suave); border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+.sofi-login .ver-clave:hover { background: var(--fondo); }
+.sofi-login #btnConectar { height: 50px; font-size: 15px; width: 100%; }
+.sofi-login details.avanzado { font-size: 12.5px; color: var(--texto-suave); }
+.sofi-login details.avanzado summary { cursor: pointer; }
+.sofi-login details.avanzado input { margin-top: 8px; height: 40px; font-size: 13px; }
+.sofi-login .login-pie { font-size: 12px; color: var(--texto-suave); text-align: center; }
+@media (max-width: 760px) { .sofi-login .login-marca { padding: 28px 24px; } .sofi-login h1 { font-size: 28px; } .sofi-login .marca-roles { display: none; } .sofi-login .login-card { padding: 28px 22px; } }
+
+/* ===================================================
+   SHELL: barra lateral + cabecera (visibles al conectar)
+   =================================================== */
+body.sofi { display: grid !important; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100vh; margin: 0; }
+body.sofi:not(.sofi-conectado) { display: block !important; }
+.sofi-nav { display: none; grid-column: 1; grid-row: 1 / span 2; background: var(--marino); color: #fff; padding: 24px 16px; flex-direction: column; gap: 26px; overflow-y: auto; }
+body.sofi-conectado .sofi-nav { display: flex; }
+.sofi-nav .nav-logo { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
+.sofi-nav .nav-logo .ico { width: 36px; height: 36px; border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: center; }
+.sofi-nav .nav-logo b { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-nav .nav-links { display: flex; flex-direction: column; gap: 4px; }
+.sofi-nav .nav-links a { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 10px; color: #B9CDE2; text-decoration: none; font-size: 14px; font-weight: 500; }
+.sofi-nav .nav-links a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.sofi-nav .nav-links a.actual { background: rgba(255,255,255,.14); color: #fff; font-weight: 600; }
+.sofi-nav .nav-links a .insignia { margin-left: auto; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #fff; color: var(--marino); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.sofi-nav .nav-seccion { padding: 0 12px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #7F9BBB; margin-bottom: -14px; }
+.sofi-nav .nav-usuario { margin-top: auto; padding: 14px; border-radius: 14px; background: rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 12px; }
+.sofi-nav .nav-usuario .fila { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sofi-nav .nav-usuario .avatar-nav { width: 36px; height: 36px; border-radius: 50%; background: var(--celeste); color: var(--marino); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.sofi-nav .nav-usuario b { font-size: 14px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sofi-nav .nav-usuario small { font-size: 12px; color: #B9CDE2; }
+.sofi-nav .nav-usuario a { font-size: 13px; color: #B9CDE2; cursor: pointer; text-decoration: none; }
+.sofi-nav .nav-usuario a:hover { color: #fff; }
+
+/* Cabecera blanca (reutiliza la barra existente de cada página) */
+body.sofi #barraConectado, body.sofi .sofi-top { grid-column: 2; grid-row: 1; background: #fff !important; border-bottom: 1px solid var(--borde) !important; padding: 12px 24px !important; gap: 10px !important; flex-wrap: wrap; align-items: center; }
+.sofi-titulo { display: flex; flex-direction: column; gap: 2px; margin-right: 12px; }
+.sofi-titulo h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+.sofi-titulo span { font-size: 13px; color: var(--texto-suave); }
+body.sofi #barraConectado .estado { flex: 1; font-size: 13px; }
+body.sofi #barraConectado .nombre-asesor { font-size: 13px; font-weight: 700; padding: 0 12px; height: 36px; display: inline-flex; align-items: center; border-radius: 18px; background: var(--fondo); }
+body.sofi #barraConectado .dot { width: 9px; height: 9px; background: var(--verde); }
+body.sofi #barraConectado .stats-conexion { background: var(--fondo); border-radius: 18px; padding: 0 12px; height: 36px; align-items: center; font-weight: 600; color: var(--texto-suave); }
+body.sofi #barraConectado .btn-salir { display: none; } /* "Cerrar sesión" vive en la barra lateral; el botón sigue en el DOM para el JS */
+body.sofi #btnPausa { border-radius: var(--radio); min-height: 40px; background: #fff; border: 1.5px solid var(--borde-fuerte); color: var(--texto); font-weight: 600; }
+body.sofi #btnPausa.pausado { background: #FDF3E7; color: var(--naranja); border-color: #F0D9B5; }
+body.sofi #main { grid-column: 2; grid-row: 2; min-height: 0; min-width: 0; }
+@media (max-width: 900px) { body.sofi { grid-template-columns: 1fr; } .sofi-nav { display: none !important; } body.sofi #barraConectado, body.sofi .sofi-top, body.sofi #main { grid-column: 1; } }
+
+/* ---------- Asesor: bandeja / chat / datos del afiliado ---------- */
+body.sofi #lista { width: 320px; background: #fff; border-right: 1px solid var(--borde); }
+body.sofi #lista .lista-header { padding: 16px 16px 8px; font-size: 13px; color: var(--texto); text-transform: none; letter-spacing: 0; font-weight: 800; }
+body.sofi .tabs-lista { gap: 6px; padding: 0 14px 12px; }
+body.sofi .tab-lista { border-radius: 10px; padding: 9px 6px; font-size: 13px; background: var(--fondo); border: 1.5px solid transparent; }
+body.sofi .tab-lista.activa { background: var(--celeste-claro); border-color: var(--azul); color: var(--azul); font-weight: 700; }
+body.sofi .conv-item { padding: 14px 16px; gap: 12px; border-bottom: 1px solid var(--borde); align-items: flex-start; }
+body.sofi .conv-item.activa { background: var(--celeste-claro); border-left: 4px solid var(--azul); padding-left: 12px; }
+body.sofi .avatar { width: 40px; height: 40px; background: var(--celeste); color: var(--marino); font-size: 14px; }
+body.sofi .conv-item.activa .avatar { background: var(--azul); color: #fff; }
+body.sofi .conv-item .nombre { font-size: 14px; font-weight: 700; }
+body.sofi .conv-item .badge { background: var(--azul); border-radius: 11px; min-width: 22px; text-align: center; }
+body.sofi #panel { background: var(--fondo); }
+body.sofi #panel .chat-header { padding: 14px 24px; flex-wrap: wrap; gap: 10px 12px; }
+body.sofi #panel .chat-header .avatar { width: 44px; height: 44px; background: var(--azul); color: #fff; font-size: 15px; }
+body.sofi #panel .chat-header .nombre { font-size: 16px; font-weight: 800; }
+body.sofi #chat { padding: 24px; }
+body.sofi .msg { border-radius: 4px 16px 16px 16px; padding: 12px 14px; font-size: 14px; line-height: 1.5; box-shadow: none; }
+body.sofi .usuario { background: #fff; border: 1px solid var(--borde); }
+body.sofi .asesor { background: var(--azul); color: #fff; border-radius: 16px 4px 16px 16px; }
+body.sofi .bot { background: #E6EDF5; border: 0; color: var(--texto-suave); border-radius: 10px; padding: 5px 12px; font-size: 12px; }
+body.sofi #entrada { padding: 14px 24px; gap: 10px; align-items: center; }
+body.sofi #texto { height: 46px; border-radius: var(--radio); border: 1.5px solid var(--borde-fuerte); padding: 0 14px; }
+body.sofi #btnAdjuntar, body.sofi #btnEmoji, body.sofi #btnRespuestasRapidas { background: var(--fondo); color: var(--texto-suave); border-radius: var(--radio); width: 44px; height: 44px; }
+body.sofi #btnEnviar { height: 46px; min-width: 46px; border-radius: var(--radio); }
+body.sofi #btnCerrar { height: 46px; background: var(--azul); color: #fff; border: 0; }
+body.sofi #btnCerrar:hover { background: var(--azul-oscuro); }
+
+/* Columna derecha “Datos del afiliado” */
+#datosAfiliado { display: none; width: 280px; flex-shrink: 0; background: #fff; border-left: 1px solid var(--borde); padding: 22px; flex-direction: column; gap: 18px; overflow-y: auto; }
+body.sofi-con-chat #datosAfiliado { display: flex; }
+#datosAfiliado h2 { margin: 0; font-size: 15px; font-weight: 800; }
+#datosAfiliado dl { margin: 0; display: grid; gap: 14px; }
+#datosAfiliado dt { font-size: 12px; color: var(--texto-suave); }
+#datosAfiliado dd { margin: 3px 0 0; font-size: 14px; font-weight: 600; word-break: break-word; }
+#datosAfiliado .bloque-tiempos { background: var(--fondo); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #2E4560; }
+@media (max-width: 1280px) { #datosAfiliado { display: none !important; } }
+
+/* ---------- Tablas / paneles genéricos (dashboard, supervisor, editor) ---------- */
+body.sofi table { border-collapse: collapse; }
+body.sofi th { font-weight: 700; color: var(--texto-suave); }
+.sofi-card, body.sofi .panel, body.sofi .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 16px; }
+
+/* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
+body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnAyudarBot,
+body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
+body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi { display: none !important; }
+body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
+body.sofi-conectado #barraConectado:not(.activa) { }
+body.sofi { word-spacing: .06em; }
+body.sofi #barraConectado .stats-conexion:empty { display: none; }
+body.sofi #barraConectado .sofi-titulo { margin-right: auto; }
+body.sofi button, body.sofi input, body.sofi select, body.sofi textarea { word-spacing: .06em; }
+body.sofi #barraConectado #btnSalir { display: none !important; }
+
+/* ===================================================
+   CALIDEZ: la cara de Sofi como sello + acentos turquesa
+   =================================================== */
+:root { --turquesa: #1AA6B7; --turquesa-oscuro: #12899A; --coral: #F26B5B; --coral-claro: #FDEBE7; --ambar: #F5A524; }
+body { background: linear-gradient(180deg, #EEF5FC 0%, #F4F7FB 220px); background-attachment: fixed; }
+.sello, .sofi-sello { border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.9), 0 4px 12px rgba(10,44,82,.25); }
+
+/* Login */
+#login.sofi-login .login-marca { background: radial-gradient(120% 90% at 0% 0%, #0C6BB5 0%, #0A4C8C 45%, #0A3A70 100%); position: relative; overflow: hidden; }
+#login.sofi-login .login-marca::before { content: ''; position: absolute; width: 520px; height: 520px; right: -160px; top: 18%; border-radius: 50%; background: radial-gradient(circle, rgba(26,166,183,.55), rgba(26,166,183,0) 68%); pointer-events: none; }
+#login.sofi-login .login-marca::after { content: ''; position: absolute; width: 360px; height: 360px; left: -120px; bottom: -140px; border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,.14), rgba(255,255,255,0) 70%); pointer-events: none; }
+.sofi-login .login-marca > * { position: relative; z-index: 1; }
+.sofi-login .marca-logo .sello { width: 52px; height: 52px; }
+.sofi-login .login-card { border-top: 4px solid var(--turquesa); }
+.sofi-login #btnConectar { background: linear-gradient(135deg, #0A4C8C, #0C6BB5); box-shadow: 0 8px 20px rgba(10,76,140,.28); }
+.sofi-login #btnConectar:hover { background: linear-gradient(135deg, #083A6E, #0A5CA0); }
+/* Barra lateral */
+.sofi-nav { background: linear-gradient(180deg, #0B3463 0%, #0A2C52 55%, #08233F 100%); }
+.sofi-nav .nav-logo .sello { width: 40px; height: 40px; }
+.sofi-nav .nav-links a.actual { background: rgba(26,166,183,.22); box-shadow: inset 3px 0 0 var(--turquesa); }
+.sofi-nav .nav-links a .insignia { background: var(--turquesa); color: #fff; }
+.sofi-nav .nav-usuario { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.08); }
+.sofi-nav .nav-usuario .avatar-nav { background: linear-gradient(135deg, #1AA6B7, #7FD3DE); color: #06324a; }
+
+/* Cabecera */
+body.sofi #barraConectado, body.sofi .sofi-top { border-bottom: 0 !important; box-shadow: 0 1px 0 var(--borde), 0 3px 0 -1px rgba(26,166,183,.35); }
+.sofi-sello { width: 44px; height: 44px; box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(26,166,183,.45); margin-right: 4px; }
+.sofi-titulo h1 { color: var(--marino); }
+
+/* Acentos */
+#btnEnviar, #btnCerrar { background: linear-gradient(135deg, #0A4C8C, #0C63A8); }
+#btnEnviar:hover, #btnCerrar:hover { background: linear-gradient(135deg, #083A6E, #0A5594); }
+button:disabled { background: #B7C4D1 !important; }
+body.sofi .tab-lista.activa { border-color: var(--turquesa); color: var(--turquesa-oscuro); background: #E6F6F8; }
+body.sofi .conv-item.activa { background: #EAF6F8; border-left-color: var(--turquesa); }
+body.sofi .conv-item .badge { background: var(--turquesa); }
+body.sofi .asesor { background: linear-gradient(135deg, #0A4C8C, #0C63A8); }
+body.sofi #datosAfiliado { background: linear-gradient(180deg, #fff 0%, #F7FBFD 100%); }
+
+/* Estados vacíos: icono (no la cara) en el tercer color */
+#vacio, #panelVacio, .vacio-lista, #listaVacia { position: relative; }
+#vacio::before, #panelVacio::before, #listaVacia::before { content: ''; display: block; width: 84px; height: 84px; margin: 0 auto 14px; border-radius: 50%;
+  background: center/44px no-repeat url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F26B5B' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z'/><path d='M8.5 12h.01M12 12h.01M15.5 12h.01'/></svg>"), #FDEBE7; }
+#listaVacia::before { width: 64px; height: 64px; background-size: 34px; }
+
+/* Tercer color (coral): icono de cabecera y pequeños acentos */
+.sofi-icono { width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, #F26B5B, #F5A524); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-right: 4px; box-shadow: 0 6px 14px rgba(242,107,91,.32); }
+.sofi-nav .nav-seccion { color: #F5A58F; }
+.sofi-nav .nav-links a .insignia { background: var(--coral); }
+body.sofi .conv-item .badge { background: var(--coral); }
+#datosAfiliado h2::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--coral); margin-right: 8px; }
+
+/* Botones de acción de la conversación: todos del mismo tamaño */
+#btnDescargarPdf, #btnEnviarSms, #btnPausarConv, #btnAvisoInactividad, #btnTransferir, #btnHistorialUsuario,
+#btnAvisoInactividadEscucha, #btnDejarEscuchar, #btnControl, #btnCerrarConversacion, #btnCerrar {
+  box-sizing: border-box; width: 104px; min-width: 104px; max-width: 104px; height: 38px; min-height: 38px; padding: 0 8px !important;
+  display: inline-flex !important; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12.5px !important; font-weight: 700; border-radius: 10px; text-decoration: none; line-height: 1; flex: none; }
+#btnControl, #btnCerrarConversacion { background: var(--rojo); color: #fff; border: 0; }
+#btnControl:hover, #btnCerrarConversacion:hover { background: #B02F26; }
+.acciones-conv { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+.acciones-asesor { max-width: 344px; }              /* 3 + 3, ordenados */
+@media (min-width: 1700px) { .acciones-asesor { max-width: none; } }
+.acciones-supervisor { max-width: 456px; }          /* 4 + 3 */
+@media (min-width: 1560px) { .acciones-supervisor { max-width: none; } }
+
+</style>
+</head>
+<body>
+  <div id="login" class="sofi-login">
+    <section class="login-marca">
+      <div class="marca-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="52" height="52"><div><b>Sofi Desk</b><span>Sanitas Perú</span></div></div>
+      <div><h1>Cada conversación de Sofi, en buenas manos.</h1>
+      <p class="marca-sub">Atiende a los afiliados, supervisa al equipo en vivo y mantén al día las respuestas del asistente, todo desde un solo lugar.</p></div>
+      <div class="marca-roles"><a href="/asesor" class=""><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><b>Asesor</b><span>Atiende las conversaciones asignadas a tus campañas.</span></a><a href="/supervisor" class=""><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><b>Supervisor</b><span>Monitorea al equipo, escucha y apoya en vivo.</span></a><a href="/editor" class=""><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><b>Editor</b><span>Actualiza textos, menús e imágenes del bot.</span></a></div>
+    </section>
+    <section class="login-form"><div class="login-card">
+      <div><h2>Ingresa a tu cuenta</h2><p>Consola de estadísticas · Sanitas Perú</p></div>
+      <div class="campo"><label for="usuario">Usuario</label><input id="usuario" type="text" placeholder="ej. vcapia" autocomplete="username" /></div>
+      <div class="campo"><label for="password">Contraseña</label><div class="campo-clave"><input id="password" type="password" placeholder="Tu contraseña" autocomplete="current-password" />
+        <button type="button" class="ver-clave" id="btnVerClave" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      <button id="btnConectar">Ingresar</button>
+      <details class="avanzado"><summary>Opciones avanzadas</summary><input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" /></details>
+      <div class="login-pie">¿Problemas para ingresar? Contacta a tu supervisor.</div>
+    </div></section>
+  </div>
+  <nav class="sofi-nav" aria-label="Menú principal">
+    <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
+    <div class="nav-seccion">Ir a</div>
+    <div class="nav-links"><a href="/asesor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><span>Asesor</span></a><a href="/supervisor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Supervisor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a></div>
+    <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Dashboard</small></div></div>
+      <a href="#" id="navSalir">Cerrar sesión</a></div>
+  </nav>
+  <div id="barraConectado">
+    <div class="sofi-icono" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg></div><div class="sofi-titulo"><h1>Dashboard</h1><span>Estadísticas de conversaciones · Webchat Sofi</span></div>
+    <span class="estado" id="estadoTexto"></span>
+    <div class="separador"></div>
+    <div id="filtros">
+      <button class="atajo" id="btnHoy">Hoy</button>
+      <button class="atajo" id="btnSemana">Esta semana</button>
+      <button class="atajo activo" id="btnMes">Este mes</button>
+      <label>Desde</label>
+      <input type="date" id="fechaDesde" />
+      <label>Hasta</label>
+      <input type="date" id="fechaHasta" />
+      <button class="chico" id="btnActualizar">Actualizar</button>
+    </div>
+    <button class="gris chico" id="btnSalir">Cerrar sesión</button>
+  </div>
+  <div class="sofi-contenido">
+  <div id="contenido">
+    <div id="vacio">Conéctate para ver las estadísticas de conversaciones.</div>
+    <div id="cargando">Cargando estadísticas…</div>
+    <div id="panelesWrap" style="display:none;"></div>
+  </div>
+
+</div>
+<script>
+if (!document.getElementById('urlBase').value) {
+  document.getElementById('urlBase').value = window.location.origin;
+}
+
+let urlBaseGuardada = null;
+let tokenGuardado = null;
+
+// ---- Colores para etiquetas de cierre conocidas (ATENDIDO/ERROR/FUERA DE
+// HORARIO/PRUEBAS) — si aparece una etiqueta distinta (creada desde el
+// editor) usa un color gris neutro, así nunca se rompe con etiquetas nuevas.
+function colorEtiqueta(nombre) {
+  const n = (nombre || '').toUpperCase();
+  if (n.includes('ATEND')) return '#2FB88B';
+  if (n.includes('ERROR')) return '#E0483E';
+  if (n.includes('HORARIO')) return '#E0973E';
+  if (n.includes('PRUEBA')) return '#8C9BAC';
+  if (n === 'SIN CERRAR') return '#C7D0DA';
+  return '#4E7FB5';
+}
+
+function formatoFecha(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function primerDiaDelMes() {
+  const hoy = new Date();
+  return new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+}
+
+function marcarAtajo(id) {
+  document.querySelectorAll('.atajo').forEach(b => b.classList.remove('activo'));
+  if (id) document.getElementById(id).classList.add('activo');
+}
+
+document.getElementById('btnHoy').onclick = () => {
+  const hoy = new Date();
+  document.getElementById('fechaDesde').value = formatoFecha(hoy);
+  document.getElementById('fechaHasta').value = formatoFecha(hoy);
+  marcarAtajo('btnHoy');
+  cargarEstadisticas();
+};
+document.getElementById('btnSemana').onclick = () => {
+  const hoy = new Date();
+  const inicio = new Date(hoy);
+  inicio.setDate(hoy.getDate() - hoy.getDay());
+  document.getElementById('fechaDesde').value = formatoFecha(inicio);
+  document.getElementById('fechaHasta').value = formatoFecha(hoy);
+  marcarAtajo('btnSemana');
+  cargarEstadisticas();
+};
+document.getElementById('btnMes').onclick = () => {
+  document.getElementById('fechaDesde').value = formatoFecha(primerDiaDelMes());
+  document.getElementById('fechaHasta').value = formatoFecha(new Date());
+  marcarAtajo('btnMes');
+  cargarEstadisticas();
+};
+document.getElementById('btnActualizar').onclick = () => { marcarAtajo(null); cargarEstadisticas(); };
+document.getElementById('fechaDesde').onchange = () => marcarAtajo(null);
+document.getElementById('fechaHasta').onchange = () => marcarAtajo(null);
+
+document.getElementById('btnConectar').onclick = async () => {
+  const urlBase = document.getElementById('urlBase').value.trim().replace(/\/$/, '');
+  const usuario = document.getElementById('usuario').value.trim();
+  const password = document.getElementById('password').value;
+  if (!urlBase || !usuario || !password) return;
+
+  const btn = document.getElementById('btnConectar');
+  btn.disabled = true; btn.textContent = 'Ingresando...';
+
+  let data;
+  try {
+    const resp = await fetch(`${urlBase}/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario, password }),
+    });
+    if (!resp.ok) { alert('Usuario o contraseña incorrectos'); btn.disabled = false; btn.textContent = 'Ingresar'; return; }
+    data = await resp.json();
+    if (data.rol !== 'editor' && data.rol !== 'supervisor') {
+      alert('Este usuario no tiene permiso para ver el dashboard');
+      btn.disabled = false; btn.textContent = 'Ingresar';
+      return;
+    }
+  } catch (e) {
+    alert('No se pudo contactar al servidor'); btn.disabled = false; btn.textContent = 'Ingresar'; return;
+  }
+
+  urlBaseGuardada = urlBase;
+  tokenGuardado = data.token;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('barraConectado').classList.add('activa');
+  document.getElementById('estadoTexto').textContent = `Conectado como ${data.nombre_display}`;
+  document.getElementById('vacio').style.display = 'none';
+
+  // Por defecto: mes actual.
+  document.getElementById('fechaDesde').value = formatoFecha(primerDiaDelMes());
+  document.getElementById('fechaHasta').value = formatoFecha(new Date());
+  cargarEstadisticas();
+};
+
+document.getElementById('btnSalir').onclick = () => {
+  urlBaseGuardada = null;
+  tokenGuardado = null;
+  document.getElementById('login').style.display = 'flex';
+  document.getElementById('barraConectado').classList.remove('activa');
+  document.getElementById('btnConectar').disabled = false;
+  document.getElementById('btnConectar').textContent = 'Ingresar';
+  document.getElementById('password').value = '';
+  document.getElementById('panelesWrap').style.display = 'none';
+  document.getElementById('panelesWrap').innerHTML = '';
+  document.getElementById('vacio').style.display = 'block';
+};
+
+async function cargarEstadisticas() {
+  const desde = document.getElementById('fechaDesde').value;
+  const hasta = document.getElementById('fechaHasta').value;
+  if (!desde || !hasta) return;
+
+  document.getElementById('cargando').classList.add('activo');
+  document.getElementById('panelesWrap').style.display = 'none';
+
+  let data;
+  try {
+    const resp = await fetch(
+      `${urlBaseGuardada}/dashboard/estadisticas?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`,
+      { headers: { 'Authorization': `Bearer ${tokenGuardado}` } },
+    );
+    if (!resp.ok) {
+      const detalle = await resp.text().catch(() => '');
+      throw new Error(`HTTP ${resp.status} ${detalle}`);
+    }
+    data = await resp.json();
+  } catch (e) {
+    console.error('Error al cargar estadísticas:', e);
+    alert('No se pudieron cargar las estadísticas.\n\nDetalle: ' + e.message);
+    document.getElementById('cargando').classList.remove('activo');
+    return;
+  }
+
+  renderDashboard(data, desde, hasta);
+  document.getElementById('cargando').classList.remove('activo');
+  document.getElementById('panelesWrap').style.display = 'block';
+}
+
+function escapaHtml(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function renderBarrasHorizontales(items, campoNombre, colorFn) {
+  if (!items.length) return '<div class="vacio-panel">Sin datos en este período.</div>';
+  const max = Math.max(...items.map(i => i.cantidad), 1);
+  return items.map(i => {
+    const color = colorFn ? colorFn(i[campoNombre]) : 'var(--azul)';
+    const pct = Math.max((i.cantidad / max) * 100, 2);
+    const puntito = colorFn ? `<span class="badge-etiqueta" style="background:${color}"></span>` : '';
+    return `
+      <div class="fila-barra">
+        <div class="nombre">${puntito}${escapaHtml(i[campoNombre])}</div>
+        <div class="pista"><div class="barra" style="width:${pct}%;background:${color}"></div></div>
+        <div class="cantidad">${i.cantidad}</div>
+      </div>`;
+  }).join('');
+}
+
+const COLORES_GRUPO = {
+  'En curso': '#4E7FB5', 'Abandonó': '#E0973E', 'El bot cerró': '#2FB88B', 'Cerrada': '#8C9BAC',
+};
+function colorGrupo(nombre) { return COLORES_GRUPO[nombre] || '#8C9BAC'; }
+
+// Barras agrupadas por "grupo" (Abandonó / El bot cerró / En curso...), con
+// subtotal y porcentaje sobre el total del bloque.
+function renderDetalle(items) {
+  if (!items || !items.length) return '<div class="vacio-panel">Sin datos en este período.</div>';
+  const total = items.reduce((a, i) => a + i.cantidad, 0) || 1;
+  const max = Math.max(...items.map(i => i.cantidad), 1);
+  const grupos = {};
+  items.forEach(i => { (grupos[i.grupo] = grupos[i.grupo] || []).push(i); });
+  const orden = Object.keys(grupos).sort((a, b) =>
+    grupos[b].reduce((x, i) => x + i.cantidad, 0) - grupos[a].reduce((x, i) => x + i.cantidad, 0));
+  return orden.map(g => {
+    const sub = grupos[g].reduce((x, i) => x + i.cantidad, 0);
+    const filas = grupos[g].map(i => {
+      const pct = Math.max((i.cantidad / max) * 100, 2);
+      return `
+        <div class="fila-barra">
+          <div class="nombre">${escapaHtml(i.categoria)}</div>
+          <div class="pista"><div class="barra" style="width:${pct}%;background:${colorGrupo(g)}"></div></div>
+          <div class="cantidad">${i.cantidad} <span style="color:var(--texto-suave);font-size:11px">(${Math.round(i.cantidad * 100 / total)}%)</span></div>
+        </div>`;
+    }).join('');
+    return `<div style="margin:10px 0 4px;font-size:12px;font-weight:600;color:var(--texto-suave);">${escapaHtml(g)} · ${sub}</div>${filas}`;
+  }).join('');
+}
+
+// Tabla: origen/página -> conversaciones, cuántas no escribieron nada y cuántas llegaron a un asesor.
+function renderTablaOrigen(items, campo, titulo) {
+  if (!items || !items.length) return '<div class="vacio-panel">Sin datos todavía (se empiezan a registrar desde que se activa este cambio).</div>';
+  const pct = (a, b) => b ? Math.round(a * 100 / b) + '%' : '-';
+  const filas = items.map(i => `
+    <tr>
+      <td>${escapaHtml(i[campo])}</td>
+      <td style="text-align:right">${i.total}</td>
+      <td style="text-align:right">${i.sin_escribir} <span style="color:var(--texto-suave)">(${pct(i.sin_escribir, i.total)})</span></td>
+      <td style="text-align:right">${i.con_asesor} <span style="color:var(--texto-suave)">(${pct(i.con_asesor, i.total)})</span></td>
+    </tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="text-align:right;color:var(--texto-suave);font-size:12px">
+      <th style="text-align:left;font-weight:600">${titulo}</th><th>Conversaciones</th><th>No escribieron nada</th><th>Llegaron a un asesor</th>
+    </tr></thead><tbody>${filas}</tbody></table>`;
+}
+
+function renderEmbudo(items) {
+  if (!items || !items.length || !items[0].cantidad) return '<div class="vacio-panel">Sin datos en este período.</div>';
+  const base = items[0].cantidad;
+  return items.map((i, idx) => {
+    const pct = Math.max((i.cantidad / base) * 100, 2);
+    const previo = idx > 0 ? items[idx - 1].cantidad : null;
+    const caida = previo ? ` · <span style="color:#C0392B">−${previo - i.cantidad} vs paso anterior</span>` : '';
+    const nota = i.nota ? ` · <span style="color:var(--texto-suave)">${escapaHtml(i.nota)}</span>` : '';
+    return `
+      <div class="fila-barra">
+        <div class="nombre">${escapaHtml(i.paso)}</div>
+        <div class="pista"><div class="barra" style="width:${pct}%"></div></div>
+        <div class="cantidad">${i.cantidad} <span style="color:var(--texto-suave);font-size:11px">(${Math.round(i.cantidad * 100 / base)}%)${caida}${nota}</span></div>
+      </div>`;
+  }).join('');
+}
+
+function formatoDuracion(segundos) {
+  if (segundos < 60) return `${Math.round(segundos)} s`;
+  const min = Math.floor(segundos / 60);
+  const seg = Math.round(segundos % 60);
+  if (min < 60) return `${min} min ${seg}s`;
+  const horas = Math.floor(min / 60);
+  return `${horas} h ${min % 60} min`;
+}
+
+function pillTiempo(segundos) {
+  const clase = segundos <= 120 ? 'pill-verde' : (segundos <= 300 ? 'pill-naranja' : 'pill-rojo');
+  return `<span class="pill-tiempo ${clase}">${formatoDuracion(segundos)}</span>`;
+}
+
+function renderTablaTiempos(items) {
+  if (!items.length) return '<div class="vacio-panel">Sin suficientes mensajes para calcular tiempos de respuesta en este período.</div>';
+  const filas = items.map(i => `
+    <tr>
+      <td>${escapaHtml(i.asesor)}</td>
+      <td>${escapaHtml(i.campana)}</td>
+      <td class="num">${pillTiempo(i.promedio_segundos)}</td>
+      <td class="num">${i.cantidad}</td>
+    </tr>`).join('');
+  return `
+    <table class="tabla-tiempos">
+      <thead><tr><th>Asesor</th><th>Campaña</th><th class="num">Promedio</th><th class="num">Respuestas medidas</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>`;
+}
+
+function renderChartDias(porDia) {
+  if (!porDia.length) return '<div class="vacio-panel">Sin datos en este período.</div>';
+  const max = Math.max(...porDia.map(d => d.cantidad), 1);
+  const barras = porDia.map(d => {
+    const alturaPct = Math.max((d.cantidad / max) * 100, 3);
+    const [, mes, dia] = d.fecha.split('-');
+    return `
+      <div class="barra-dia" title="${d.fecha}: ${d.cantidad}">
+        <div class="valor">${d.cantidad}</div>
+        <div class="col" style="height:${alturaPct}%"></div>
+        <div class="etiq">${dia}/${mes}</div>
+      </div>`;
+  }).join('');
+  return `<div class="chart-dia">${barras}</div>`;
+}
+
+function renderDashboard(data, desde, hasta) {
+  const pctAtendidas = data.total > 0 ? Math.round((data.total_atendidas / data.total) * 100) : 0;
+  const promedioDiario = data.por_dia.length
+    ? (data.total / data.por_dia.length).toFixed(1)
+    : '0';
+
+  document.getElementById('panelesWrap').innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="numero">${data.total}</div><div class="etiqueta">Conversaciones (${desde} a ${hasta})</div></div>
+      <div class="kpi"><div class="numero">${data.total_atendidas}</div><div class="etiqueta">Atendidas por un asesor</div></div>
+      <div class="kpi"><div class="numero">${pctAtendidas}%</div><div class="etiqueta">% atendidas</div></div>
+      <div class="kpi"><div class="numero">${promedioDiario}</div><div class="etiqueta">Promedio diario</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Conversaciones por día</h2>
+      ${renderChartDias(data.por_dia)}
+    </div>
+
+    <div class="panel">
+      <h2>Conversaciones por asesor <span class="sub">solo las asignadas a alguien</span></h2>
+      ${renderBarrasHorizontales(data.por_asesor, 'asesor')}
+    </div>
+
+    <div class="panel">
+      <h2>Tiempo promedio de respuesta por asesor y campaña <span class="sub">solo cuenta el tiempo desde que la conversación ya estaba asignada, sin incluir la espera en cola</span></h2>
+      ${renderTablaTiempos(data.tiempos_respuesta)}
+    </div>
+
+    <div class="panel">
+      <h2>Clasificación por cierre de conversación</h2>
+      ${renderBarrasHorizontales(data.por_etiqueta, 'etiqueta', colorEtiqueta)}
+    </div>
+
+    <div class="panel">
+      <h2>Detalle de «Sin cerrar» <span class="sub">conversaciones sin etiqueta de cierre: dónde quedaron o por qué cerró el bot</span></h2>
+      ${renderDetalle(data.sin_cerrar_detalle)}
+    </div>
+
+    <div class="panel">
+      <h2>Conversaciones por opción del menú <span class="sub">Estado de pedido, Coord. de receta, etc.</span></h2>
+      ${renderBarrasHorizontales(data.por_campana, 'campana')}
+    </div>
+
+    <div class="panel">
+      <h2>Detalle de «Sin opción» <span class="sub">conversaciones que no pasaron a un asesor</span></h2>
+      ${renderDetalle(data.sin_opcion_detalle)}
+    </div>
+
+    <div class="panel">
+      <h2>Origen de las conversaciones <span class="sub">de dónde abrió el chat cada persona</span></h2>
+      ${renderTablaOrigen(data.por_origen, 'origen', 'Origen')}
+    </div>
+
+    <div class="panel">
+      <h2>Página del sitio donde abrieron el chat <span class="sub">las 15 con más conversaciones</span></h2>
+      ${renderTablaOrigen(data.por_pagina, 'pagina', 'Página')}
+    </div>
+
+    <div class="panel">
+      <h2>Embudo del chat <span class="sub">aproximado: cuántos llegan a cada paso según dónde quedó parada la conversación</span></h2>
+      ${renderEmbudo(data.embudo)}
+    </div>
+  `;
+}
+</script>
+<script id="sofi-js">
+/* Sofi Desk — comportamiento del cascarón (no toca la lógica de cada consola) */
+(function () {
+  var b = document.body; b.classList.add('sofi');
+  var $ = function (id) { return document.getElementById(id); };
+  var login = $('login');
+  function iniciales(n) { var p = (n || '').trim().split(/\s+/).filter(Boolean); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
+  function sync() {
+    var conectado = login && login.style.display === 'none';
+    b.classList.toggle('sofi-conectado', conectado);
+    if (conectado) {
+      var n = ($('nombreAsesorTexto') && $('nombreAsesorTexto').textContent.trim()) || ($('usuario') && $('usuario').value.trim()) || 'Usuario';
+      $('navNombre').textContent = n; $('navAvatar').textContent = iniciales(n);
+    }
+  }
+  if (login) { new MutationObserver(sync).observe(login, { attributes: true, attributeFilter: ['style'] }); sync(); }
+  var nom = $('nombreAsesorTexto');
+  if (nom) new MutationObserver(sync).observe(nom, { childList: true, characterData: true, subtree: true });
+
+  // Enter en usuario/contraseña = Ingresar
+  ['usuario', 'password'].forEach(function (id) {
+    var el = $(id); if (el) el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { var bt = $('btnConectar'); if (bt && !bt.disabled) bt.click(); } });
+  });
+  // mostrar/ocultar contraseña
+  var ver = $('btnVerClave');
+  if (ver) ver.addEventListener('click', function () { var p = $('password'); p.type = p.type === 'password' ? 'text' : 'password'; ver.setAttribute('aria-label', p.type === 'password' ? 'Mostrar contraseña' : 'Ocultar contraseña'); });
+
+  // acciones de la barra lateral = botones existentes (siguen en el DOM)
+  document.querySelectorAll('.sofi-nav [data-click]').forEach(function (a) {
+    a.addEventListener('click', function (e) { e.preventDefault(); var t = $(a.getAttribute('data-click')); if (t) t.click(); });
+  });
+  var salir = $('navSalir');
+  if (salir) salir.addEventListener('click', function (e) { e.preventDefault(); var t = $('btnSalir'); if (t) t.click(); });
+
+  // insignias espejo
+  function espejo(origen, destino, fn) {
+    var o = $(origen), d = $(destino); if (!o || !d) return;
+    var f = function () { var v = fn(o); d.textContent = v; d.style.display = v ? 'flex' : 'none'; };
+    new MutationObserver(f).observe(o, { childList: true, characterData: true, subtree: true, attributes: true }); f();
+  }
+  espejo('tabPrincipal', 'insigAsesor', function (o) { var m = /\((\d+)\)/.exec(o.textContent); return m && m[1] !== '0' ? m[1] : ''; });
+  var cola = document.querySelector('.sofi-nav [data-click="btnCola"]');
+  if (cola && $('badgeCola')) {
+    var ins = document.createElement('span'); ins.className = 'insignia'; ins.id = 'insigCola'; ins.style.display = 'none'; cola.appendChild(ins);
+    espejo('badgeCola', 'insigCola', function (o) { return o.style.display === 'none' ? '' : o.textContent.trim(); });
+  }
+
+  // Asesor: columna "Datos del afiliado"
+  var ch = $('chatHeader');
+  if (ch && $('datosAfiliado')) {
+    var map = { chatNombre: 'dNombre', chatTelefono: 'dCelular', chatDni: 'dDni', chatCodigo: 'dCodigo', tiempoEspera: 'dEspera', tiempoAtencion: 'dAtencion' };
+    Object.keys(map).forEach(function (k) {
+      var o = $(k), d = $(map[k]); if (!o || !d) return;
+      var f = function () { var v = o.textContent.replace(/^DNI:\s*/, '').trim(); d.textContent = v || '—'; };
+      new MutationObserver(f).observe(o, { childList: true, characterData: true, subtree: true }); f();
+    });
+    var g = function () { b.classList.toggle('sofi-con-chat', ch.classList.contains('activa')); };
+    new MutationObserver(g).observe(ch, { attributes: true, attributeFilter: ['class'] }); g();
+  }
+})();
+
+</script>
+</body>
+</html>

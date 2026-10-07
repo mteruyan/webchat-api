@@ -19,6 +19,46 @@ from datetime import datetime, timezone, timedelta
 
 TOKEN_TTL_HORAS = 12
 
+# Hash bcrypt válido de una contraseña que nadie usa — se compara contra este
+# cuando el usuario de /login NO existe, para que la respuesta tarde
+# aproximadamente lo mismo (el costo de bcrypt) que cuando SÍ existe pero la
+# contraseña es incorrecta. Sin esto, alguien podría medir el tiempo de
+# respuesta para adivinar qué nombres de usuario son válidos.
+HASH_DUMMY = bcrypt.hashpw(b"contrasena-que-nadie-usa", bcrypt.gensalt()).decode()
+
+# ---------------------------------------------------------------------------
+# Bloqueo temporal tras varios intentos fallidos de /login (fuerza bruta).
+# En memoria del proceso: es una primera barrera simple; para un control más
+# robusto (por IP, entre instancias) se recomienda Cloud Armor por delante de
+# Cloud Run — ver informe de seguridad.
+# ---------------------------------------------------------------------------
+MAX_INTENTOS_LOGIN = 5
+BLOQUEO_MINUTOS = 15
+_intentos_login: dict[str, dict] = {}  # usuario (lowercase) -> {"fallos": int, "bloqueado_hasta": datetime | None}
+
+
+def segundos_bloqueo_restante(usuario: str) -> int:
+    """0 si el usuario puede intentar iniciar sesión; si no, los segundos que
+    le quedan de bloqueo."""
+    entrada = _intentos_login.get(usuario.lower())
+    if not entrada or not entrada.get("bloqueado_hasta"):
+        return 0
+    restante = (entrada["bloqueado_hasta"] - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(restante))
+
+
+def registrar_intento_fallido(usuario: str) -> None:
+    clave = usuario.lower()
+    entrada = _intentos_login.setdefault(clave, {"fallos": 0, "bloqueado_hasta": None})
+    entrada["fallos"] += 1
+    if entrada["fallos"] >= MAX_INTENTOS_LOGIN:
+        entrada["bloqueado_hasta"] = datetime.now(timezone.utc) + timedelta(minutes=BLOQUEO_MINUTOS)
+        entrada["fallos"] = 0
+
+
+def registrar_login_exitoso(usuario: str) -> None:
+    _intentos_login.pop(usuario.lower(), None)
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -36,6 +76,23 @@ def crear_token(asesor_id: int) -> str:
     payload = {
         "asesor_id": asesor_id,
         "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_TTL_HORAS),
+    }
+    return jwt.encode(payload, os.environ["SECRET_KEY"], algorithm="HS256")
+
+
+# Vida corta, para los links de /archivo-receta y /conversacion-pdf. Esos
+# links van en una URL (query string) para que funcionen como <a href> o
+# <img src> directos — y una URL queda escrita en los logs de acceso de
+# Cloud Run. Antes llevaban el mismo JWT de 12 horas de toda la sesión; ahora
+# llevan uno de solo unos minutos, así que si alguien lee esa URL en un log,
+# la ventana en la que el token todavía sirve es mínima.
+TOKEN_ARCHIVO_TTL_MINUTOS = 5
+
+
+def crear_token_archivo(asesor_id: int) -> str:
+    payload = {
+        "asesor_id": asesor_id,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_ARCHIVO_TTL_MINUTOS),
     }
     return jwt.encode(payload, os.environ["SECRET_KEY"], algorithm="HS256")
 

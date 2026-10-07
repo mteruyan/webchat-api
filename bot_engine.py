@@ -26,12 +26,18 @@ import json
 from datetime import datetime, timezone, timedelta
 
 from db import get_connection, release_connection
+import supervisor
 from api_handlers import (
     validar_horario_consultas, consulta_doi, listar_distritos, update_doi_distrito,
     seleccionar_direccion, registrar_direccion, crear_doi_nuevo, procesar_receta, trae_escoge,
     consulta_ruc, buscar_actividad_sctr, graba_bd_leads_sctr, lead_pases,
     api_sctr_nuevo, api_sctr_continuidad, api_eps_nuevo,
     detalle_planilla_sctr, generar_excel_sctr, borrar_trabajador_sctr,
+    enviar_sms_otp, validar_sms_otp,
+    consulta_doi_potestativo, consulta_doi_potestativo_carta,
+    consulta_carta_rechazada, update_cg_rechazados, alta_usuario_programa,
+    afiliacion_iniciar, afiliacion_consulta_ruc, afiliacion_registrar_titular,
+    afiliacion_registrar_dependiente, lead_consultas,
 )
 
 LIMA_TZ = timezone(timedelta(hours=-5))
@@ -63,6 +69,18 @@ API_HANDLERS = {
     "detalle_planilla_sctr": detalle_planilla_sctr,
     "generar_excel_sctr": generar_excel_sctr,
     "borrar_trabajador_sctr": borrar_trabajador_sctr,
+    "enviar_sms_otp": enviar_sms_otp,
+    "validar_sms_otp": validar_sms_otp,
+    "consulta_doi_potestativo": consulta_doi_potestativo,
+    "consulta_doi_potestativo_carta": consulta_doi_potestativo_carta,
+    "consulta_carta_rechazada": consulta_carta_rechazada,
+    "update_cg_rechazados": update_cg_rechazados,
+    "alta_usuario_programa": alta_usuario_programa,
+    "afiliacion_iniciar": afiliacion_iniciar,
+    "afiliacion_consulta_ruc": afiliacion_consulta_ruc,
+    "afiliacion_registrar_titular": afiliacion_registrar_titular,
+    "afiliacion_registrar_dependiente": afiliacion_registrar_dependiente,
+    "lead_consultas": lead_consultas,
 }
 
 
@@ -242,7 +260,7 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
 
         if tipo == "mensaje":
             texto = sustituir_variables(nodo["texto"], variables)
-            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": nodo["imagen_url"]}})
+            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
             nodo_actual = nodo["siguiente_codigo"]
 
@@ -253,14 +271,26 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             else:
                 opciones_a_mostrar = nodo["opciones"]
             eventos.append({"type": "mensaje_bot", "payload": {
-                "texto": texto, "opciones": opciones_a_mostrar, "imagen_url": nodo["imagen_url"]}})
+                "texto": texto, "opciones": opciones_a_mostrar, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
+            # El texto del menú también se guarda (antes solo se guardaban las
+            # opciones): así, si el widget se reconecta, el historial puede
+            # volver a mostrar la pregunta junto con sus botones.
+            if texto:
+                _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
             _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(opciones_a_mostrar))
             _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
             break  # espera el click del usuario
 
         elif tipo == "captura_dato":
             texto = sustituir_variables(nodo["texto"], variables)
-            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": nodo["imagen_url"]}})
+            # "codigo_nodo" se manda siempre (no solo para el OTP) -- lo usa el
+            # widget para reconocer en qué captura_dato puntual está parado y
+            # decidir si debe mostrar acciones extra, como los botones de
+            # "Reenviar código"/"Llamarme" durante webchat_valida_pide_codigo
+            # (ver main.py: _reenviar_codigo_otp / _solicitar_llamada_otp).
+            eventos.append({"type": "mensaje_bot", "payload": {
+                "texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables),
+                "codigo_nodo": nodo["codigo"]}})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
             _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
             break  # espera el texto/adjunto del usuario
@@ -291,12 +321,25 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
                 variables.pop(var, None)
             nodo_actual = nodo["siguiente_codigo"]
 
+        elif tipo == "asignar_variables":
+            # Nodo "silencioso" (no manda mensaje al widget): copia/deriva
+            # valores hacia variables_sesion. Usado, por ejemplo, para reusar
+            # el celular/correo que el paciente ya tiene registrado en vez de
+            # volver a pedirlo. accion_config: {"asignaciones":[{"variable":"X","valor":"{{...}}"}]}
+            for asignacion in (nodo["accion_config"] or {}).get("asignaciones", []):
+                valor_crudo = asignacion.get("valor")
+                if isinstance(valor_crudo, str):
+                    variables[asignacion["variable"]] = sustituir_variables(valor_crudo, variables)
+                else:
+                    variables[asignacion["variable"]] = valor_crudo
+            nodo_actual = nodo["siguiente_codigo"]
+
         elif tipo == "subflujo":
             nodo_actual = nodo["subflujo_codigo"]
 
         elif tipo == "derivar_asesor":
             texto = sustituir_variables(nodo["texto"], variables)
-            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": nodo["imagen_url"]}})
+            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
             cur.execute(
                 """UPDATE conversaciones
@@ -309,7 +352,7 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
 
         elif tipo == "cierre":
             texto = sustituir_variables(nodo["texto"], variables)
-            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": nodo["imagen_url"]}})
+            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
             eventos.append({"type": "conversacion_cerrada", "payload": {"motivo": "bot"}})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
             cur.execute(
@@ -349,7 +392,7 @@ def iniciar_conversacion(conversacion_id: int, nodo_inicial: str, variables_inic
 
 def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
                              opcion_id: str = None, archivo_url: str = None,
-                             valores: dict = None) -> list:
+                             archivo_ruta: str = None, valores: dict = None) -> list:
     """Punto de entrada cuando llega mensaje_usuario, click_opcion o formulario_completado desde el widget."""
     conn = get_connection()
     try:
@@ -369,19 +412,47 @@ def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
                 valor = archivo_url if tipo_campo in ("imagen", "ubicacion") else texto
 
                 # Números (celular u otro): deja solo dígitos — borra espacios,
-                # guiones, paréntesis, "+", etc. antes de guardar.
-                if tipo_campo in ("numero", "telefono", "telefono_pe") and valor:
+                # guiones, paréntesis, "+", etc. antes de guardar. Exige mínimo
+                # 6 dígitos porque está pensado para celulares/teléfonos.
+                if tipo_campo in ("numero", "telefono") and valor:
                     valor = "".join(c for c in valor if c.isdigit())
                     if len(valor) < 6:
                         return [{"type": "mensaje_bot", "payload": {
                             "texto": "Ese número no parece válido. Escríbelo solo con dígitos, "
                                      "sin letras (ejemplo: 987654321)."}}]
 
-                # Normaliza celulares peruanos al formato que usaba WhatsApp
-                # (código de país + 9 dígitos) sin importar cómo lo escriba
-                # la persona: "987654321", "+51 987 654 321", etc.
-                if tipo_campo == "telefono_pe" and valor and len(valor) == 9:
-                    valor = "51" + valor
+                # Celular peruano (ej. webchat_pide_celular): a diferencia de
+                # "numero"/"telefono" de arriba, acá NO se limpian espacios,
+                # letras, guiones ni símbolos -- se rechaza directo si no
+                # viene como puros dígitos, mínimo 9 (lo normal es 9, pero se
+                # acepta más por si alguien ya escribe con código de país).
+                # Evita que pasen números mal escritos que después fallen en
+                # Danaconnect o sofi-apis.
+                if tipo_campo == "telefono_pe" and valor:
+                    valor_recortado = valor.strip()
+                    # El mensaje del bot dice "con o sin +51": se acepta un "+"
+                    # al inicio (se descarta); cualquier otro símbolo se sigue rechazando.
+                    if valor_recortado.startswith("+"):
+                        valor_recortado = valor_recortado[1:]
+                    if not re.match(r"^\d{9,}$", valor_recortado):
+                        return [{"type": "mensaje_bot", "payload": {
+                            "texto": "Ese celular no parece válido. Escribe solo números, "
+                                     "mínimo 9 dígitos, sin espacios, letras, guiones ni otros "
+                                     "símbolos (ejemplo: 987654321)."}}]
+                    # Si viene sin código de país (9 dígitos exactos), se le agrega "51"
+                    # -- igual que hacía el flujo de WhatsApp. Si ya trae más dígitos,
+                    # se asume que ya incluye el código y se deja tal cual.
+                    valor = "51" + valor_recortado if len(valor_recortado) == 9 else valor_recortado
+
+                # Número corto (ej. el número de un registro de una lista,
+                # como "3" o "12" — NO un celular): también deja solo dígitos,
+                # pero solo exige que no esté vacío, sin mínimo de 6.
+                if tipo_campo == "numero_corto" and valor:
+                    valor = "".join(c for c in valor if c.isdigit())
+                    if len(valor) < 1:
+                        return [{"type": "mensaje_bot", "payload": {
+                            "texto": "Ese no es un número válido. Escribe solo el número "
+                                     "correspondiente (ejemplo: 3)."}}]
 
                 # Correo: valida formato básico con una expresión regular
                 # antes de aceptarlo — si no calza, pide que lo reescriba.
@@ -392,7 +463,52 @@ def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
                                      "(ejemplo: nombre@correo.com)."}}]
                     valor = valor.strip()
 
-                _guardar_mensaje(cur, conversacion_id, "usuario", "texto", texto or archivo_url or "")
+                # Nombres/apellidos: solo letras (con tildes/ñ), espacios,
+                # apóstrofes y guiones — nada de dígitos ni otros símbolos.
+                if tipo_campo in ("nombre", "apellido") and valor:
+                    valor = valor.strip()
+                    if not re.match(r"^[A-Za-zÁÉÍÓÚÑÜáéíóúñü'´\-\s]+$", valor):
+                        return [{"type": "mensaje_bot", "payload": {
+                            "texto": "Ese dato solo puede tener letras (sin números ni símbolos). "
+                                     "Por favor, escríbelo de nuevo."}}]
+
+                # Código de verificación SMS: solo dígitos, exactamente 6 —
+                # si no calza, se pide de nuevo antes de siquiera comparar
+                # contra el código enviado (eso lo hace el nodo accion_api
+                # validar_sms_otp más adelante en el flujo).
+                if tipo_campo == "codigo_sms" and valor:
+                    valor = "".join(c for c in valor if c.isdigit())
+                    if len(valor) != 6:
+                        return [{"type": "mensaje_bot", "payload": {
+                            "texto": "Ese código debe tener 6 dígitos. Ingresa el código que te llegó por SMS."}}]
+
+                # Distrito: solo letras — nada de números. La validación de que
+                # el distrito EXISTA en la base de datos ocurre más adelante
+                # (nodo médico de resolución de distrito), que vuelve a pedirlo
+                # si no encuentra coincidencias.
+                if tipo_campo == "distrito" and valor:
+                    valor = valor.strip()
+                    if not re.match(r"^[A-Za-zÁÉÍÓÚÑÜáéíóúñü'´\-\s]+$", valor):
+                        return [{"type": "mensaje_bot", "payload": {
+                            "texto": "El distrito solo puede tener letras (sin números). "
+                                     "Por favor, escríbelo de nuevo."}}]
+
+                # Los archivos (imagen/ubicación) se guardan como tipo_contenido
+                # 'archivo', NUNCA como 'texto' — si no, la ruta cruda del storage
+                # queda guardada como si fuera un mensaje de texto normal y se
+                # filtra al cliente cuando el widget reconstruye el historial
+                # (el enmascarado de "📎 Archivo enviado" solo aplica a tipo 'archivo').
+                #
+                # Lo que se PERSISTE es la ruta cruda del objeto (archivo_ruta),
+                # NUNCA la URL firmada (archivo_url) — una firmada guardada para
+                # siempre queda inútil en cuanto expira (1 hora). archivo_url
+                # sigue siendo el valor de la VARIABLE de sesión, porque el
+                # próximo paso (accion_api → procesar_receta) sí necesita
+                # descargar el archivo YA, con una firmada que todavía sirva.
+                es_archivo = bool(archivo_url) and tipo_campo in ("imagen", "ubicacion")
+                tipo_contenido_guardar = "archivo" if es_archivo else "texto"
+                contenido_a_guardar = (archivo_ruta or archivo_url) if es_archivo else (texto or "")
+                _guardar_mensaje(cur, conversacion_id, "usuario", tipo_contenido_guardar, contenido_a_guardar)
                 variables[variable_nombre] = valor
 
                 # Columnas seguras que un captura_dato puede pedir persistir en
@@ -416,8 +532,11 @@ def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
                                or o.get("label") == texto), None)
                 _guardar_mensaje(cur, conversacion_id, "usuario", "boton_click", texto or opcion_id or "")
                 if opcion is None:
-                    return [{"type": "mensaje_bot", "payload": {
-                        "texto": "No entendí esa opción, por favor elige una de la lista."}}]
+                    texto_opcion_invalida = (
+                        supervisor.obtener_configuracion("mensaje_opcion_invalida")
+                        or "No entendí esa opción, por favor elige una de la lista."
+                    )
+                    return [{"type": "mensaje_bot", "payload": {"texto": texto_opcion_invalida}}]
                 guardar = opcion.get("guardar_variable")
                 if guardar:
                     for g in (guardar if isinstance(guardar, list) else [guardar]):
@@ -425,7 +544,26 @@ def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
                 nodo_siguiente = opcion["next_codigo"]
 
             elif nodo["tipo"] == "formulario":
-                valores = valores or {}
+                campos_formulario = nodo["campos"] or []
+                # "valores" solo llega poblado cuando el widget manda
+                # "formulario_completado" (el submit real del <form>). Si en
+                # cambio llega texto suelto, un clic, etc. (por ejemplo porque
+                # el formulario desapareció de pantalla tras una reconexión y
+                # la persona escribió en la caja de texto normal), NO hay que
+                # tratarlo como un envío válido — antes esto avanzaba el flujo
+                # con todos los campos vacíos, sin validar nada.
+                if valores is None:
+                    return [{"type": "mostrar_formulario", "payload": {
+                        "texto": "Por favor completa el formulario de arriba para continuar.",
+                        "campos": campos_formulario}}]
+
+                faltantes = [c.get("label") or c.get("variable") for c in campos_formulario
+                             if c.get("obligatorio") and not str(valores.get(c.get("variable"), "")).strip()]
+                if faltantes:
+                    return [{"type": "mostrar_formulario", "payload": {
+                        "texto": "Faltan completar campos obligatorios: " + ", ".join(faltantes),
+                        "campos": campos_formulario}}]
+
                 _guardar_mensaje(cur, conversacion_id, "usuario", "formulario", json.dumps(valores))
                 variables.update(valores)
                 nodo_siguiente = nodo["siguiente_codigo"]
