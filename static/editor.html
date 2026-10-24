@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Editor de Contenido — Sanitas</title>
 <style>
   :root {
@@ -311,6 +312,10 @@ body.sofi .conv-item .badge { background: var(--coral); }
 .acciones-supervisor { max-width: 456px; }          /* 4 + 3 */
 @media (min-width: 1560px) { .acciones-supervisor { max-width: none; } }
 
+.sofi-banner-login { position: absolute; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 11px 52px 11px 18px; background: #FFF1CC; color: #4D3800; border-bottom: 2px solid #F5A524; font-size: 14px; font-weight: 600; line-height: 1.4; text-align: center; box-shadow: 0 2px 8px rgba(10,30,50,.12); }
+.sofi-banner-login span { white-space: pre-line; }
+.sofi-banner-login button { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: 0; min-height: 0; padding: 4px 8px; font-size: 16px; line-height: 1; color: #4D3800; cursor: pointer; border-radius: 6px; }
+.sofi-banner-login button:hover { background: rgba(0,0,0,.08); }
 </style>
 </head>
 <body>
@@ -326,6 +331,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
       <div class="campo"><label for="usuario">Usuario</label><input id="usuario" type="text" placeholder="ej. vcapia" autocomplete="username" /></div>
       <div class="campo"><label for="password">Contraseña</label><div class="campo-clave"><input id="password" type="password" placeholder="Tu contraseña" autocomplete="current-password" />
         <button type="button" class="ver-clave" id="btnVerClave" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#5b6b7b;margin:2px 0 10px;cursor:pointer"><input type="checkbox" id="activar2fa" style="width:16px;height:16px;min-width:16px;padding:0;margin:0;flex:none" /> Configurar verificación en dos pasos</label>
       <button id="btnConectar">Ingresar</button>
       <details class="avanzado"><summary>Opciones avanzadas</summary><input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" /></details>
       <div class="login-pie">¿Problemas para ingresar? Contacta a tu supervisor.</div>
@@ -393,10 +399,14 @@ document.getElementById('btnConectar').onclick = async () => {
   try {
     const resp = await fetch(`${urlBase}/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usuario, password }),
+      body: JSON.stringify({ usuario, password, activar_2fa: !!(document.getElementById('activar2fa') || {}).checked }),
     });
     if (!resp.ok) { alert('Usuario o contraseña incorrectos'); btn.disabled = false; btn.textContent = 'Ingresar'; return; }
     data = await resp.json();
+    if (data.requiere_2fa || data.requiere_enrolar) {
+      data = await sofi2fa(data, urlBase);
+      if (!data) { btn.disabled = false; btn.textContent = 'Ingresar'; return; }
+    }
     if (data.rol !== 'editor' && data.rol !== 'supervisor') {
       alert('Este usuario no tiene permiso para editar contenido');
       btn.disabled = false; btn.textContent = 'Ingresar';
@@ -931,6 +941,18 @@ async function guardarNodo(codigo, cambios, boton) {
   var b = document.body; b.classList.add('sofi');
   var $ = function (id) { return document.getElementById(id); };
   var login = $('login');
+  // Aviso en la parte superior del login (texto editable desde /editor -> "banner_login"; vacío = sin aviso)
+  if (login) {
+    fetch('/consola/aviso', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var texto = d && (d.texto || '').trim(); if (!texto) return;
+      try { if (sessionStorage.getItem('sofi_banner_cerrado') === texto) return; } catch (e) {}
+      var bar = document.createElement('div'); bar.className = 'sofi-banner-login'; bar.setAttribute('role', 'status');
+      var t = document.createElement('span'); t.textContent = texto;
+      var x = document.createElement('button'); x.type = 'button'; x.setAttribute('aria-label', 'Cerrar aviso'); x.title = 'Cerrar'; x.textContent = '✕';
+      x.onclick = function () { bar.remove(); try { sessionStorage.setItem('sofi_banner_cerrado', texto); } catch (e) {} };
+      bar.appendChild(t); bar.appendChild(x); login.insertBefore(bar, login.firstChild);
+    }).catch(function () {});
+  }
   function iniciales(n) { var p = (n || '').trim().split(/\s+/).filter(Boolean); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
   function sync() {
     var conectado = login && login.style.display === 'none';
@@ -986,6 +1008,259 @@ async function guardarNodo(codigo, cambios, boton) {
   }
 })();
 
+</script>
+<script id="sofi-2fa">
+/* Verificación en dos pasos (TOTP): ventana que pide el código de la app autenticadora o,
+   si hace falta, guía la configuración (QR + códigos de respaldo). Devuelve los datos de
+   sesión ({token, ...}) o null si la persona cancela. */
+window.sofi2fa = function (data, urlBase) {
+  return new Promise(function (resolve) {
+    var AZUL = '#0A2540', TEAL = '#0A7E8C';
+    var fondo = document.createElement('div');
+    fondo.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,30,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+    var caja = document.createElement('div');
+    caja.style.cssText = 'background:#fff;color:' + AZUL + ';border-radius:16px;padding:24px;width:380px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)';
+    fondo.appendChild(caja);
+    document.body.appendChild(fondo);
+
+    var BTN = 'width:100%;padding:11px;border:0;border-radius:10px;background:' + AZUL + ';color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit';
+    var LINK = 'background:none;border:0;color:#5b6b7b;font-size:12.5px;cursor:pointer;margin-top:12px;text-decoration:underline;font-family:inherit';
+    var INPUT = 'width:100%;box-sizing:border-box;padding:12px;border:1.5px solid #d5dde5;border-radius:10px;font-size:22px;letter-spacing:.3em;text-align:center;font-family:ui-monospace,Menlo,monospace;margin:10px 0';
+
+    function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+    function cerrar(valor) { document.body.removeChild(fondo); resolve(valor); }
+    function msg(t) { var m = caja.querySelector('.err'); if (m) m.textContent = t || ''; }
+    async function llamar(ruta, cuerpo) {
+      var r = await fetch(urlBase + ruta, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+      var j = {}; try { j = await r.json(); } catch (e) {}
+      return { ok: r.ok, status: r.status, j: j };
+    }
+    function cabecera(titulo, texto) {
+      return '<div style="font-size:30px;line-height:1">🔐</div><h3 style="margin:8px 0 4px;font-size:18px">' + titulo + '</h3>' +
+             '<p style="margin:0;font-size:13.5px;line-height:1.5;color:#4a5b6c">' + texto + '</p>';
+    }
+    var ERR = '<div class="err" style="color:#C0392B;font-size:13px;min-height:18px;margin-top:6px" role="alert"></div>';
+
+    function pantallaCodigo() {
+      caja.innerHTML = cabecera('Verificación en dos pasos', 'Ingresa el código de 6 dígitos que muestra tu aplicación autenticadora.') +
+        '<input class="cod" style="' + INPUT + '" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="000000" />' + ERR +
+        '<button class="ok" style="' + BTN + '">Verificar</button>' +
+        '<div style="text-align:center"><button class="resp" style="' + LINK + '">Usar un código de respaldo</button> ' +
+        '<button class="no" style="' + LINK + '">Cancelar</button></div>' +
+        '<p style="margin:12px 0 0;font-size:11.5px;color:#7a8896;line-height:1.4">¿Perdiste tu celular? Pide a tu supervisor que quite la verificación de tu cuenta.</p>';
+      var cod = caja.querySelector('.cod'); cod.focus();
+      var enviando = false;
+      async function enviar() {
+        if (enviando) return;
+        var v = cod.value.trim(); if (!v) return;
+        enviando = true; msg('');
+        try {
+          var r = await llamar('/auth/2fa/verificar', { pre_token: data.pre_token, codigo: v });
+          if (r.ok) return cerrar(r.j);
+          msg(r.status === 429 ? (r.j.detail || 'Demasiados intentos. Espera unos minutos.') : r.status === 401 && /venci/.test(r.j.detail || '') ? 'La sesión venció. Ingresa de nuevo.' : 'Código incorrecto o ya usado.');
+          if (r.status === 401 && /venci/.test(r.j.detail || '')) setTimeout(function () { cerrar(null); }, 1500);
+        } catch (e) { msg('No se pudo contactar al servidor.'); }
+        enviando = false; cod.select();
+      }
+      caja.querySelector('.ok').onclick = enviar;
+      cod.onkeydown = function (e) { if (e.key === 'Enter') enviar(); };
+      caja.querySelector('.resp').onclick = function () { cod.placeholder = 'xxxx-xxxxxx'; cod.style.fontSize = '17px'; cod.value = ''; cod.focus(); msg(''); };
+      caja.querySelector('.no').onclick = function () { cerrar(null); };
+    }
+
+    async function pantallaEnrolar() {
+      caja.innerHTML = cabecera('Configura tu verificación en dos pasos', data.obligatorio
+        ? 'Tu cuenta requiere este paso de seguridad para poder ingresar.' : 'Protege tu cuenta con un código que cambia cada 30 segundos.') +
+        '<p style="font-size:13px;color:#4a5b6c">Preparando…</p>' + ERR;
+      var r;
+      try { r = await llamar('/auth/2fa/iniciar', { pre_token: data.pre_token }); } catch (e) { r = { ok: false, j: {} }; }
+      if (!r.ok) { caja.innerHTML = cabecera('No se pudo continuar', esc(r.j.detail || 'Ingresa de nuevo.')) + '<button class="no" style="' + BTN + ';margin-top:14px">Cerrar</button>'; caja.querySelector('.no').onclick = function () { cerrar(null); }; return; }
+      caja.innerHTML = cabecera('Configura tu verificación en dos pasos', data.obligatorio
+        ? 'Tu cuenta requiere este paso de seguridad para poder ingresar.' : 'Protege tu cuenta con un código que cambia cada 30 segundos.') +
+        '<ol style="margin:12px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:#33475b">' +
+        '<li>Instala <b>Google Authenticator</b>, <b>Microsoft Authenticator</b> o similar.</li>' +
+        '<li>Escanea este código QR (o escribe la clave).</li><li>Ingresa el código de 6 dígitos que aparece.</li></ol>' +
+        '<div style="text-align:center;margin:12px 0 4px"><img alt="Código QR" src="' + r.j.qr + '" style="width:178px;height:178px;border:1px solid #e3e9ef;border-radius:10px"></div>' +
+        '<div style="text-align:center;font-size:11.5px;color:#5b6b7b">Clave manual:<br><span style="font-family:ui-monospace,Menlo,monospace;font-size:13px;color:' + AZUL + ';word-break:break-all;user-select:all">' + esc(r.j.secreto.replace(/(.{4})/g, '$1 ').trim()) + '</span></div>' +
+        '<input class="cod" style="' + INPUT + '" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />' + ERR +
+        '<button class="ok" style="' + BTN + '">Activar y entrar</button>' +
+        '<div style="text-align:center"><button class="no" style="' + LINK + '">Cancelar</button></div>';
+      var cod = caja.querySelector('.cod'); cod.focus();
+      var enviando = false;
+      async function activar() {
+        if (enviando) return;
+        var v = cod.value.trim(); if (v.length < 6) { msg('Escribe los 6 dígitos.'); return; }
+        enviando = true; msg('');
+        try {
+          var a = await llamar('/auth/2fa/activar', { pre_token: data.pre_token, codigo: v });
+          if (a.ok) return pantallaRespaldo(a.j);
+          msg(a.status === 429 ? (a.j.detail || 'Demasiados intentos.') : (a.j.detail || 'Código incorrecto.'));
+        } catch (e) { msg('No se pudo contactar al servidor.'); }
+        enviando = false; cod.select();
+      }
+      caja.querySelector('.ok').onclick = activar;
+      cod.onkeydown = function (e) { if (e.key === 'Enter') activar(); };
+      caja.querySelector('.no').onclick = function () { cerrar(null); };
+    }
+
+    function pantallaRespaldo(sesion) {
+      var codigos = sesion.codigos_respaldo || [];
+      caja.innerHTML = cabecera('Verificación activada', 'Guarda estos <b>códigos de respaldo</b> en un lugar seguro. Cada uno sirve una sola vez si pierdes el acceso a tu celular. <b>No se volverán a mostrar.</b>') +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:14px 0;padding:12px;background:#f3f6f9;border-radius:10px;font-family:ui-monospace,Menlo,monospace;font-size:14px;text-align:center;user-select:all">' +
+        codigos.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div>' +
+        '<button class="copiar" style="' + BTN + ';background:#fff;color:' + AZUL + ';border:1.5px solid #d5dde5;margin-bottom:8px">Copiar códigos</button>' +
+        '<button class="ok" style="' + BTN + '">Ya los guardé, continuar</button>';
+      caja.querySelector('.copiar').onclick = function () {
+        var t = codigos.join('\n'); var b = this;
+        (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = '¡Copiados!'; }, function () { b.textContent = 'Selecciónalos y copia (Ctrl+C)'; });
+      };
+      caja.querySelector('.ok').onclick = function () { delete sesion.codigos_respaldo; cerrar(sesion); };
+    }
+
+    if (data.requiere_enrolar) pantallaEnrolar(); else pantallaCodigo();
+  });
+};
+</script>
+<!-- sofi-movil: vista de celular compartida por asesor / supervisor / editor / dashboard (solo actúa en pantallas <= 900px) -->
+<style id="sofi-movil-css">
+#sofiBurger, .mov-volver, #sofiScrim { display: none; }
+@media (max-width: 900px) {
+  html, body { overflow-x: hidden; max-width: 100vw; }
+  /* --- Cascarón: una sola columna (antes el contenido caía en una 2.ª columna fantasma) --- */
+  body.sofi, body.sofi.nav-compacta { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; }
+  body.sofi #barraConectado, body.sofi .sofi-top, body.sofi #main, body.sofi .sofi-contenido { grid-column: 1 !important; }
+  body.sofi .sofi-contenido { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  body.sofi:not(.sofi-conectado) { height: auto; min-height: 100dvh; }
+
+  /* --- Barra superior: una fila que se desliza de lado, con el botón ☰ --- */
+  body.sofi #barraConectado, body.sofi .sofi-top { padding: 8px 10px !important; gap: 8px !important; flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  body.sofi #barraConectado::-webkit-scrollbar, body.sofi .sofi-top::-webkit-scrollbar { display: none; }
+  body.sofi #barraConectado > *, body.sofi .sofi-top > * { flex: 0 0 auto; white-space: nowrap; }
+  body.sofi #barraConectado .sofi-icono, body.sofi .sofi-top .sofi-icono, body.sofi .sofi-titulo span, body.sofi #barraConectado .stats-conexion, #barraConectado .separador { display: none !important; }
+  body.sofi .sofi-titulo h1 { font-size: 16px; }
+  body.sofi #barraConectado .estado { flex: 0 0 auto; font-size: 12px; }
+  body.sofi #barraConectado .nombre-asesor { display: none; }
+  /* Los atajos que el escritorio deja en la barra lateral, aquí vuelven a la barra */
+  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnAyudarBot,
+  body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
+  body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi,
+  body.sofi #barraConectado #btnReporte { display: inline-flex !important; align-items: center; }
+  body.sofi #barraConectado button, body.sofi #barraConectado .chico { min-height: 38px; padding: 0 12px; font-size: 13px; }
+  body.sofi-conectado #sofiBurger { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; border-radius: 12px; font-size: 20px; line-height: 1; padding: 0; color: var(--marino, #0B2A4A); cursor: pointer; }
+
+  body.mov-filtros #barraConectado { flex-wrap: wrap !important; overflow: visible; }
+  body.mov-filtros #barraConectado > * { white-space: normal; }
+  body.mov-filtros #sofiBurger { margin-right: auto; }
+
+  /* --- Menú lateral como cajón --- */
+  body.sofi-conectado .sofi-nav { display: flex !important; position: fixed; z-index: 400; top: 0; left: 0; bottom: 0; width: min(280px, 84vw); transform: translateX(-104%); transition: transform .22s ease, box-shadow .22s ease; grid-column: auto; padding: 22px 16px; align-items: stretch; }
+  body.sofi-conectado.menu-abierto .sofi-nav { transform: none; box-shadow: 8px 0 30px rgba(0,0,0,.25); }
+  body.sofi-conectado .sofi-nav .nav-toggle { display: none !important; }
+  body.sofi.nav-compacta .sofi-nav .nav-logo b, body.sofi.nav-compacta .sofi-nav .nav-links a > span:not(.insignia), body.sofi.nav-compacta .sofi-nav .nav-usuario .fila > div:last-child { display: revert; }
+  #sofiScrim { position: fixed; inset: 0; z-index: 390; background: rgba(8,20,36,.5); }
+  body.menu-abierto #sofiScrim { display: block; }
+  body.menu-abierto { overflow: hidden; }
+
+  /* --- Asesor / supervisor: lista ↔ conversación (una pantalla a la vez) --- */
+  body.sofi #main { display: flex; }
+  body.sofi #lista, body.sofi #tableroCol { width: 100% !important; flex: 1 1 auto; border-right: 0 !important; min-width: 0; }
+  body.sofi #panel { display: none; width: 100%; flex: 1 1 auto; min-width: 0; }
+  body.movil-chat #lista, body.movil-chat #tableroCol { display: none !important; }
+  body.movil-chat #panel { display: flex !important; }
+  body.movil-chat #datosAfiliado { display: none !important; }
+  .mov-volver { align-items: center; justify-content: center; flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; font-size: 22px; line-height: 1; padding: 0; color: var(--azul, #0A4C8C); cursor: pointer; }
+  body.movil-chat .mov-volver { display: inline-flex; }
+
+  body.sofi #panel .chat-header, body.sofi #panel .panel-header { padding: 8px 10px; gap: 6px 8px; flex-wrap: wrap; }
+  body.sofi #panel .chat-header .nombre { font-size: 15px; }
+  .acciones-conv, .acciones-asesor, .acciones-supervisor { flex: 1 1 100%; max-width: none !important; display: flex !important; flex-wrap: nowrap !important; overflow-x: auto; gap: 6px; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .acciones-conv::-webkit-scrollbar { display: none; }
+  .acciones-conv > * { flex: 0 0 auto; white-space: nowrap; min-height: 36px; display: inline-flex; align-items: center; }
+  #panel .acciones-top { flex: 1 1 100%; flex-wrap: wrap; }
+  body.sofi #chat, body.sofi #chatEscucha { padding: 12px 10px; }
+  body.sofi .msg { max-width: 88%; font-size: 14.5px; }
+  body.sofi .msg.usuario, body.sofi .msg.asesor { padding-right: 34px; }
+  .msg-acciones { top: 4px !important; right: 4px !important; left: auto !important; width: 26px !important; height: 26px !important; opacity: .8 !important; }
+  .msg-menu { right: 4px !important; left: auto !important; top: 32px !important; }
+  body.sofi #entrada { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); gap: 6px; flex-wrap: wrap; }
+  body.sofi #entrada #texto { flex: 1 1 100%; min-height: 44px; height: auto; font-size: 16px; }
+  body.sofi #entrada #btnEnviar { margin-left: auto; min-height: 42px; padding: 0 18px; }
+  body.sofi #entrada #btnEmoji, body.sofi #entrada #btnAdjuntar, body.sofi #entrada #btnRespuestasRapidas { width: 42px; height: 42px; }
+  body.sofi #entrada #btnCerrar { height: 42px; padding: 0 12px; }
+  body.sofi #acciones { flex-wrap: wrap; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  body.sofi #acciones #accionTexto { flex: 1 1 100%; min-height: 44px; }
+  body.sofi #acciones #btnDirecto { margin-left: auto; }
+  body.sofi .conv-item { padding: 12px; }
+  body.sofi .asesor-card { margin: 8px; }
+
+  /* --- General --- */
+  input, select, textarea { font-size: 16px !important; }
+  div[id^="modal"], #modalOverlay > div { max-width: calc(100vw - 20px) !important; max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
+  body.sofi .sofi-contenido table, body.sofi #contenido table { display: block; overflow-x: auto; max-width: 100%; }
+
+  /* --- Pantalla de ingreso: el formulario primero, sin el texto de marca --- */
+  .sofi-login .login-marca { padding: 16px 20px; gap: 0; }
+  .sofi-login .login-marca h1, .sofi-login .login-marca .marca-sub, .sofi-login .marca-roles { display: none !important; }
+  .sofi-login .login-card { padding: 22px 18px; }
+}
+</style>
+<script id="sofi-movil-js">
+(function () {
+  var b = document.body, mq = window.matchMedia('(max-width: 900px)');
+  var barra = document.getElementById('barraConectado') || document.querySelector('.sofi-top');
+  var nav = document.querySelector('.sofi-nav');
+  if (document.getElementById('filtros')) b.classList.add('mov-filtros');  // dashboard: los filtros de fecha necesitan varias filas
+
+  // Botón ☰ + fondo oscuro del cajón
+  if (barra && nav) {
+    var burger = document.createElement('button');
+    burger.id = 'sofiBurger'; burger.type = 'button'; burger.textContent = '☰';
+    burger.setAttribute('aria-label', 'Abrir menú');
+    barra.insertBefore(burger, barra.firstChild);
+    var scrim = document.createElement('div'); scrim.id = 'sofiScrim'; b.appendChild(scrim);
+    var cerrar = function () { b.classList.remove('menu-abierto'); };
+    burger.onclick = function () { b.classList.toggle('menu-abierto'); };
+    scrim.onclick = cerrar;
+    nav.addEventListener('click', function (e) { if (e.target.closest('a, button')) setTimeout(cerrar, 50); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') cerrar(); });
+  }
+
+  // En celular la barra lateral siempre va completa (se recuerda el modo "solo íconos" para la PC)
+  function ajustarNavCompacta() {
+    if (mq.matches) b.classList.remove('nav-compacta');
+    else { try { if (localStorage.getItem('sofi_nav_compacta') === '1') b.classList.add('nav-compacta'); } catch (e) {} b.classList.remove('menu-abierto'); }
+  }
+  ajustarNavCompacta();
+  (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(ajustarNavCompacta);
+
+  // Lista ↔ conversación (asesor: #lista; supervisor: #tableroCol)
+  var lista = document.getElementById('lista') || document.getElementById('tableroCol');
+  var panel = document.getElementById('panel');
+  if (lista && panel) {
+    var cab = document.getElementById('chatHeader') || document.getElementById('panelHeader');
+    if (cab) {
+      var volver = document.createElement('button');
+      volver.type = 'button'; volver.className = 'mov-volver'; volver.textContent = '‹'; volver.setAttribute('aria-label', 'Volver a la lista');
+      volver.onclick = function () { b.classList.remove('movil-chat'); };
+      cab.insertBefore(volver, cab.firstChild);
+    }
+    // Abrir: tocar una conversación (asesor: .conv-item; supervisor: .conv-mini)
+    lista.addEventListener('click', function (e) {
+      if (mq.matches && e.target.closest('.conv-item, .conv-mini')) b.classList.add('movil-chat');
+    }, true);
+    // Volver solo al cerrar / dejar de escuchar
+    ['btnCerrar', 'btnCerrarConversacion', 'btnDejarEscuchar'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('click', function () { setTimeout(function () { b.classList.remove('movil-chat'); }, 400); });
+    });
+    // Asesor: si la conversación se cierra por otro lado, el encabezado se apaga -> volver a la lista
+    var ch = document.getElementById('chatHeader');
+    if (ch && window.MutationObserver) {
+      new MutationObserver(function () { if (!ch.classList.contains('activa')) b.classList.remove('movil-chat'); })
+        .observe(ch, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
+})();
 </script>
 </body>
 </html>

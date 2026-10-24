@@ -49,34 +49,72 @@
   document.body.appendChild(host);
   const root = host.attachShadow({ mode: "open" });
 
+  // Detección de celular y factor de corrección (--k) para páginas sin meta viewport.
+  let ajustarMovil = function () {
+    const w = window.innerWidth, sw = (window.screen && window.screen.width) || w;
+    const tactil = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    const movil = w <= 480 || (tactil && Math.min(sw, (window.screen && window.screen.height) || sw) <= 820);
+    host.classList.toggle("movil", !!movil);
+    let k = 1;
+    if (movil && sw > 0 && w > sw * 1.2) k = Math.min(w / sw, 3.5);
+    host.style.setProperty("--k", String(k));
+  };
+  // Tamaño del texto (solo celular): 3 niveles -- normal, +1 pt y +1.5 pt (máximo).
+  const FS_NIVELES_PX = [0, 1.33, 2];
+  const CLAVE_FUENTE = "sanitas_webchat_fuente";
+  let fsNivel = 0;
+  try { const g = parseInt(localStorage.getItem(CLAVE_FUENTE), 10); if (g >= 0 && g < FS_NIVELES_PX.length) fsNivel = g; } catch (e) { /* sin almacenamiento */ }
+  function aplicarFuente() {
+    host.style.setProperty("--fs", (host.classList.contains("movil") ? FS_NIVELES_PX[fsNivel] : 0) + "px");
+    root.querySelectorAll(".tam-op").forEach((b) => b.classList.toggle("activo", Number(b.dataset.nivel) === fsNivel));
+  }
+  const _ajustarMovilBase = ajustarMovil;
+  ajustarMovil = function () { _ajustarMovilBase(); aplicarFuente(); };
+  ajustarMovil();
+  window.addEventListener("resize", ajustarMovil);
+  window.addEventListener("orientationchange", ajustarMovil);
+  // Algunos sitios cambian el ancho de la página después de cargar (imágenes, menús,
+  // scripts): se vuelve a medir unos segundos después y cuando la ventana visible cambia.
+  [300, 1000, 2500, 5000].forEach(function (ms) { setTimeout(ajustarMovil, ms); });
+  window.addEventListener("load", ajustarMovil);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", ajustarMovil);
+  // Diagnóstico: abrir la página con ?sofidebug=1 muestra las medidas en pantalla.
+  if (/[?&]sofidebug=1/.test(location.search)) {
+    const dbg = document.createElement("div");
+    dbg.style.cssText = "position:fixed;left:0;top:0;z-index:2147483647;background:#000;color:#0f0;font:11px monospace;padding:4px;white-space:pre;pointer-events:none;transform-origin:top left;";
+    document.body.appendChild(dbg);
+    const pintar = function () {
+      const b = host.shadowRoot && host.shadowRoot.querySelector(".burbuja");
+      const r = b ? b.getBoundingClientRect() : { width: 0 };
+      const vv = window.visualViewport || {};
+      const k = parseFloat(host.style.getPropertyValue("--k")) || 1;
+      dbg.style.transform = "scale(" + k + ")";
+      dbg.textContent = "inner=" + window.innerWidth + " client=" + document.documentElement.clientWidth +
+        " screen=" + (window.screen && window.screen.width) + "\nvv=" + Math.round(vv.width || 0) + " scale=" + (vv.scale || "-") +
+        " k=" + k.toFixed(2) + " movil=" + host.classList.contains("movil") + "\nburbuja=" + Math.round(r.width) + "px css";
+    };
+    setInterval(pintar, 500);
+  }
+
   const style = document.createElement("style");
   style.textContent = `
     :host, * { box-sizing: border-box; }
     .burbuja {
-      /* Antes era un círculo de 78px -- se agrandó para que la imagen de
-         Sofi (con el globo "Escribe a Sofi, tu asistente virtual") se vea
-         grande y legible. Dejó de ser un círculo a propósito: con
-         border-radius:50% el recorte circular siempre se come las esquinas
-         del cuadrado sin importar el tamaño (es geometría, no resolución),
-         y ahí vive justo el globo de texto -- por eso ahora es un cuadrado
-         con esquinas suavizadas, para respetar el 100% de la imagen.
-         Se triplicó de 170px a 510px, y se quitaron el fondo y la sombra
-         (background/box-shadow) para que el cuadrado que contiene la
-         imagen sea invisible -- solo se percibe la ilustración de Sofi,
-         no el contenedor. bottom/right en 0 para que arranque pegada
-         justo al borde inferior derecho del navegador (al lado de la
-         barra de tareas), sin el margen de 24px que antes dejaba un
-         espacio vacío ahí. */
-      position: fixed; bottom: 0; right: 0; width: 420px; height: 420px;
-      border-radius: 20px; background: transparent; color: white; border: none;
-      padding: 0; cursor: pointer; box-shadow: none;
+      /* Imagen circular de Sofi ("Chatea con Sofi, tu asistente virtual"): el
+         propio botón es un círculo del mismo tamaño que la imagen, con una
+         sombra suave para despegarlo de la página, separado 20px de los bordes
+         de la ventana. En celular se reduce un poco (ver @media al final). */
+      position: fixed; bottom: 20px; right: 20px; width: 190px; height: 190px;
+      border-radius: 50%; background: transparent; color: white; border: none;
+      padding: 0; cursor: pointer; box-shadow: 0 8px 24px rgba(10,30,50,.28);
       display: flex; align-items: center; justify-content: center;
-      z-index: 999999; transition: transform .15s ease; overflow: visible;
+      z-index: 999999; transition: transform .15s ease, box-shadow .15s ease; overflow: visible;
     }
-    .burbuja img { width: 100%; height: 100%; display: block; border-radius: 20px; object-fit: contain; }
-    .burbuja:hover { transform: scale(1.04); }
+    .burbuja img { width: 100%; height: 100%; display: block; border-radius: 50%; object-fit: cover; }
+    .burbuja.oculta { display: none; }
+    .burbuja:hover { transform: scale(1.05); box-shadow: 0 12px 30px rgba(10,30,50,.34); }
     .burbuja .badge {
-      position: absolute; top: -8px; right: -8px; background: #E0483E;
+      position: absolute; top: 6px; right: 6px; background: #E0483E;
       color: white; border-radius: 999px; font-size: 13px; font-weight: 700;
       line-height: 1; min-width: 24px; height: 24px; box-sizing: border-box;
       display: flex; align-items: center; justify-content: center;
@@ -97,6 +135,9 @@
       color: ${TOKENS.texto};
     }
     .panel.abierto { display: flex; }
+    /* Selector de lugar en el mapa (SERVICIO PROGRAMADO): una página aparte dentro de un iframe, que cubre el panel. */
+    .mapa-overlay { position: absolute; inset: 0; z-index: 50; background: #fff; display: flex; flex-direction: column; }
+    .mapa-overlay iframe { flex: 1; width: 100%; border: 0; }
     /* Aviso flotante de "mensaje nuevo": aparece cuando llega un mensaje del
        bot/asesor/supervisor mientras la persona está revisando mensajes
        viejos más arriba (no pegada al final) — así se entera sin que la
@@ -126,13 +167,80 @@
       opacity: .85; padding: 4px;
     }
     .cabecera .cerrar:hover { opacity: 1; }
+    .cabecera .info-guardada {
+      display: none; align-items: center; justify-content: center; flex-shrink: 0;
+      width: 24px; height: 24px; padding: 0; border-radius: 50%; cursor: pointer;
+      background: none; border: 1.5px solid rgba(255,255,255,.75); color: white;
+      font-size: 14px; font-weight: 700; font-family: inherit; line-height: 1; opacity: .9;
+    }
+    .cabecera .info-guardada.visible { display: inline-flex; }
+    .cabecera .info-guardada:hover, .cabecera .info-guardada.activo { opacity: 1; background: rgba(255,255,255,.2); }
+    .cabecera .tam-fuente {
+      display: none; align-items: center; justify-content: center; flex-shrink: 0;
+      height: 24px; padding: 0 8px; border-radius: 999px; cursor: pointer;
+      background: none; border: 1.5px solid rgba(255,255,255,.75); color: white;
+      font-size: 12px; font-weight: 700; font-family: inherit; line-height: 1; opacity: .9; letter-spacing: .2px;
+    }
+    :host(.movil) .cabecera .tam-fuente { display: inline-flex; }
+    .cabecera .tam-fuente:hover, .cabecera .tam-fuente.activo { opacity: 1; background: rgba(255,255,255,.2); }
+    /* Maximizar: solo en laptop/tablet (en celular el panel ya es pantalla completa). */
+    .cabecera .maximizar {
+      display: none; align-items: center; justify-content: center; flex-shrink: 0;
+      width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; cursor: pointer;
+      background: none; color: white; opacity: .85;
+    }
+    .cabecera .maximizar svg { width: 16px; height: 16px; display: block; }
+    .cabecera .maximizar .ico-restaurar { display: none; }
+    :host(:not(.movil)) .cabecera .maximizar { display: inline-flex; }
+    .cabecera .maximizar:hover { opacity: 1; background: rgba(255,255,255,.2); }
+    :host(:not(.movil)) .panel.maximizado {
+      width: min(960px, calc(100vw - 48px)); max-width: none;
+      height: calc(100vh - 48px); max-height: none;
+      bottom: 24px; right: 24px;
+    }
+    :host(:not(.movil)) .panel.maximizado .maximizar .ico-maximizar { display: none; }
+    :host(:not(.movil)) .panel.maximizado .maximizar .ico-restaurar { display: block; }
+    :host(:not(.movil)) .panel.maximizado .msg { max-width: 70%; }
+    .tam-panel {
+      display: none; position: absolute; top: 62px; right: 12px; z-index: 25; background: white;
+      border-radius: 14px; padding: 10px 12px 12px; box-shadow: 0 10px 28px rgba(10,30,50,.22);
+      border: 1px solid ${TOKENS.borde}; flex-direction: column; gap: 8px; align-items: center;
+    }
+    .tam-panel.visible { display: flex; }
+    .tam-panel::before {
+      content: ""; position: absolute; top: -6px; right: 26px; width: 10px; height: 10px; background: white;
+      border-left: 1px solid ${TOKENS.borde}; border-top: 1px solid ${TOKENS.borde}; transform: rotate(45deg);
+    }
+    .tam-titulo { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; color: ${TOKENS.textoSuave}; font-weight: 600; }
+    .tam-opciones { display: flex; gap: 6px; align-items: center; background: ${TOKENS.burbujaBot}; padding: 4px; border-radius: 999px; }
+    .tam-op {
+      width: 38px; height: 34px; border: 0; border-radius: 999px; background: transparent; cursor: pointer;
+      color: ${TOKENS.textoSuave}; font-family: inherit; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;
+      transition: background .15s, color .15s, box-shadow .15s;
+    }
+    .tam-op.n0 { font-size: 14px; } .tam-op.n1 { font-size: 16px; } .tam-op.n2 { font-size: 18px; }
+    .tam-op.activo { background: white; color: ${TOKENS.azul}; box-shadow: 0 1px 4px rgba(10,30,50,.18); }
+    .sep-hist, .sep-actual, .sep-fin { display: flex; align-items: center; gap: 10px; margin: 16px 0 10px; color: ${TOKENS.textoSuave}; font-size: 11.5px; letter-spacing: .2px; }
+    .sep-hist::before, .sep-hist::after, .sep-actual::before, .sep-actual::after { content: ""; flex: 1; height: 1px; background: ${TOKENS.borde}; }
+    .sep-hist span, .sep-actual span { text-align: center; line-height: 1.3; }
+    .sep-actual { color: ${TOKENS.azul}; font-weight: 600; }
+    .sep-actual::before, .sep-actual::after { background: ${TOKENS.azul}; opacity: .35; }
+    .sep-fin { justify-content: center; font-style: italic; opacity: .85; margin-top: 4px; }
+    .cargando-previo { text-align: center; color: ${TOKENS.textoSuave}; font-size: 12px; padding: 6px 0 10px; }
+    .msg.previo .archivo-no-disponible { display: block; font-style: italic; color: ${TOKENS.textoSuave}; opacity: .9; }
     .cuerpo { flex: 1; overflow-y: auto; padding: 16px; background: ${TOKENS.fondo}; scroll-behavior: smooth; }
     .cuerpo.arrastrando { outline: 2px dashed ${TOKENS.azul}; outline-offset: -6px; }
     .msg {
       position: relative; max-width: 82%; margin: 6px 0; padding: 10px 13px; border-radius: 14px;
-      font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word;
+      font-size: calc(14px + var(--fs, 0px)); line-height: 1.45; white-space: pre-wrap; word-wrap: break-word;
     }
     .msg.bot { background: ${TOKENS.burbujaBot}; color: ${TOKENS.texto}; margin-right: auto; border-bottom-left-radius: 4px; }
+    .msg.escribiendo { display: flex; align-items: center; gap: 5px; width: fit-content; padding: 13px 15px; }
+    .msg.escribiendo .punto { width: 7px; height: 7px; border-radius: 50%; background: #8A9BB0; animation: sofi-punto 1.2s infinite ease-in-out; }
+    .msg.escribiendo .punto:nth-child(2) { animation-delay: .18s; }
+    .msg.escribiendo .punto:nth-child(3) { animation-delay: .36s; }
+    @keyframes sofi-punto { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .msg.escribiendo .punto { animation: none; opacity: .7; } }
     .msg.usuario { background: ${TOKENS.burbujaUsuario}; color: ${TOKENS.texto}; margin-left: auto; border-bottom-right-radius: 4px; text-align: right; }
     .msg.sistema { background: transparent; color: ${TOKENS.textoSuave}; font-size: 12px; text-align: center; margin: 10px auto; max-width: 100%; }
     .msg .hora { display: block; font-size: 10.5px; margin-top: 3px; font-weight: 400; }
@@ -200,10 +308,86 @@
     .opciones { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
     .opciones button {
       background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
-      border-radius: 999px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+      border-radius: 999px; padding: 7px 14px; font-size: calc(13px + var(--fs, 0px)); cursor: pointer;
       transition: background .12s;
     }
     .opciones button:hover { background: ${TOKENS.burbujaBot}; }
+    .no-soy-yo {
+      display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
+      padding: 5px 12px; font-size: 12px; color: ${TOKENS.textoSuave};
+      background: white; border-bottom: 1px solid ${TOKENS.borde};
+    }
+    .no-soy-yo button {
+      background: none; border: 0; padding: 0; font-size: 12px; cursor: pointer;
+      color: ${TOKENS.azul}; text-decoration: underline;
+    }
+    /* Aviso "tu conversación queda guardada": tarjeta suave sobre el fondo del chat */
+    .guardada { display: none; flex-shrink: 0; background: ${TOKENS.fondo}; padding: 10px 12px 2px; }
+    .guardada.visible { display: block; }
+    .guardada-card {
+      position: relative; display: flex; align-items: flex-start; gap: 11px;
+      background: #fff; border: 1px solid #DCE7F2; border-radius: 14px;
+      padding: 11px 34px 11px 12px; box-shadow: 0 4px 16px rgba(10,76,140,.10);
+      animation: guardada-entra .28s ease both;
+    }
+    @keyframes guardada-entra { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    .guardada .g-icono {
+      flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%;
+      background: #E4F6EF; color: ${TOKENS.verde}; display: flex; align-items: center; justify-content: center;
+    }
+    .guardada .g-texto { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .guardada .g-titulo { font-size: 13px; font-weight: 600; color: ${TOKENS.texto}; line-height: 1.3; }
+    .guardada .g-detalle { font-size: 12px; color: ${TOKENS.textoSuave}; line-height: 1.4; }
+    .guardada .abrir-qr {
+      align-self: flex-start; margin-top: 6px; background: ${TOKENS.burbujaBot}; color: ${TOKENS.azul};
+      border: 0; border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600;
+      font-family: inherit; cursor: pointer; transition: background .15s;
+    }
+    .guardada .abrir-qr:hover { background: #DCE7F2; }
+    .guardada .activar-avisos {
+      align-self: flex-start; margin-top: 6px; background: ${TOKENS.burbujaBot}; color: ${TOKENS.azul};
+      border: 0; border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600;
+      font-family: inherit; cursor: pointer; transition: background .15s;
+    }
+    .guardada .activar-avisos:hover { background: #DCE7F2; }
+    .guardada .ocultar-guardada {
+      position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; padding: 0;
+      background: none; border: 0; border-radius: 50%; color: #9AA8B6; font-size: 12px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s;
+    }
+    .guardada .ocultar-guardada:hover { background: ${TOKENS.burbujaBot}; color: ${TOKENS.texto}; }
+    .qr-panel {
+      display: none; position: absolute; inset: 0; z-index: 20; background: rgba(255,255,255,.98);
+      flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+      padding: 24px; text-align: center; color: ${TOKENS.texto};
+    }
+    .qr-panel.visible { display: flex; }
+    .qr-panel h3 { margin: 0; font-size: 16px; }
+    .qr-panel p { margin: 0; font-size: 13px; color: ${TOKENS.textoSuave}; line-height: 1.45; max-width: 280px; }
+    .qr-panel img { width: 200px; height: 200px; border: 1px solid ${TOKENS.borde}; border-radius: 12px; padding: 6px; background: #fff; }
+    .qr-panel button {
+      background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
+      border-radius: 999px; padding: 8px 18px; font-size: 13px; cursor: pointer; font-family: inherit;
+    }
+    .wa-card {
+      margin: 10px 0; padding: 14px; border-radius: 14px; background: white;
+      border: 1.5px solid ${TOKENS.verde}; box-shadow: 0 2px 10px rgba(10,30,50,.08);
+      display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
+    }
+    .wa-card h4 { margin: 0; font-size: 14px; color: ${TOKENS.texto}; }
+    .wa-card p { margin: 0; font-size: calc(12.5px + var(--fs, 0px)); line-height: 1.45; color: ${TOKENS.textoSuave}; }
+    .wa-card img { width: 170px; height: 170px; border: 1px solid ${TOKENS.borde}; border-radius: 12px; padding: 6px; background: #fff; }
+    .wa-card .wa-abrir {
+      display: inline-block; background: #25D366; color: white; text-decoration: none; font-weight: 600;
+      border-radius: 999px; padding: 10px 20px; font-size: 14px;
+    }
+    .wa-card .wa-codigo { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: ${TOKENS.burbujaBot}; border-radius: 8px; padding: 4px 10px; color: ${TOKENS.texto}; }
+    .wa-card .wa-estado { font-size: 12.5px; color: ${TOKENS.azul}; font-weight: 600; }
+    .wa-card .wa-estado.ok { color: ${TOKENS.verde}; }
+    .wa-card .wa-nuevo {
+      background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
+      border-radius: 999px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; font-family: inherit;
+    }
     .acciones-cierre { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
     .acciones-cierre button {
       background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
@@ -214,16 +398,16 @@
       background: white; border: 1px solid ${TOKENS.borde}; border-radius: 12px;
       padding: 14px; margin: 8px 0;
     }
-    .formulario label { display: block; font-size: 12.5px; margin-top: 10px; color: ${TOKENS.textoSuave}; font-weight: 600; }
+    .formulario label { display: block; font-size: calc(12.5px + var(--fs, 0px)); margin-top: 10px; color: ${TOKENS.textoSuave}; font-weight: 600; }
     .formulario input, .formulario select, .formulario textarea {
       width: 100%; padding: 8px 10px; border: 1px solid ${TOKENS.borde}; border-radius: 8px;
-      margin-top: 4px; font-size: 14px; font-family: inherit; color: ${TOKENS.texto};
+      margin-top: 4px; font-size: calc(14px + var(--fs, 0px)); font-family: inherit; color: ${TOKENS.texto};
     }
     .formulario button[type="submit"] {
       margin-top: 14px; width: 100%; background: ${TOKENS.azul}; color: white; border: none;
       border-radius: 8px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
     }
-    .pie { border-top: 1px solid ${TOKENS.borde}; padding: 10px; display: flex; gap: 8px; flex-shrink: 0; background: white; position: relative; }
+    .pie { border-top: 1px solid ${TOKENS.borde}; padding: 10px; display: flex; align-items: flex-end; gap: 8px; flex-shrink: 0; background: white; position: relative; }
     .pie .emoji-btn { background: ${TOKENS.burbujaBot}; color: ${TOKENS.azul}; font-size: 19px; }
     .emoji-panel {
       display: none; position: absolute; bottom: 58px; left: 10px; right: 10px; max-height: 210px; overflow-y: auto;
@@ -236,11 +420,13 @@
     }
     .pie .emoji-panel button:hover { background: ${TOKENS.fondo}; }
     .pie.grabando .emoji-btn { display: none; }
-    .pie input[type="text"] {
-      flex: 1; border: 1px solid ${TOKENS.borde}; border-radius: 999px; padding: 10px 16px;
-      font-size: 14px; font-family: inherit; outline: none;
+    .pie textarea.texto-input {
+      flex: 1; border: 1px solid ${TOKENS.borde}; border-radius: 20px; padding: 10px 16px;
+      font-size: calc(14px + var(--fs, 0px)); font-family: inherit; outline: none;
+      resize: none; overflow-y: hidden; line-height: 1.4; min-height: 40px; max-height: 120px;
+      height: 40px; display: block;
     }
-    .pie input[type="text"]:focus { border-color: ${TOKENS.azul}; }
+    .pie textarea.texto-input:focus { border-color: ${TOKENS.azul}; }
     .pie button {
       background: ${TOKENS.azul}; color: white; border: none; border-radius: 50%;
       width: 40px; height: 40px; flex-shrink: 0; cursor: pointer; font-size: 17px;
@@ -293,20 +479,26 @@
     }
     .camara-cancelar { background: rgba(255,255,255,.15); color: white; }
     .camara-tomar { background: ${TOKENS.azul}; color: white; }
-    @media (max-width: 480px) {
-      .panel {
-        bottom: 0; right: 0; width: 100vw; height: 100vh; height: 100dvh;
-        max-height: 100vh; max-height: 100dvh; border-radius: 0;
-      }
-      .cabecera { padding-top: max(16px, env(safe-area-inset-top)); }
-      .pie { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
-      .burbuja.oculta { display: none; }
+    /* Celular: la clase "movil" y la variable --k las pone el JS (ver ajustarMovil).
+       --k compensa páginas sin <meta viewport>, donde el navegador móvil dibuja la
+       página a ~980px y encoge todo (burbuja y panel se ven diminutos). */
+    :host(.movil) .panel {
+      bottom: 0; right: 0; width: calc(100vw / var(--k, 1)); max-width: none;
+      height: calc(100vh / var(--k, 1)); height: calc(100dvh / var(--k, 1));
+      max-height: none; border-radius: 0;
+      transform: scale(var(--k, 1)); transform-origin: bottom right;
+    }
+    :host(.movil) .cabecera { padding-top: max(16px, env(safe-area-inset-top)); }
+    :host(.movil) .pie { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+    :host(.movil) .burbuja {
+      width: min(calc(170px * var(--k, 1)), 46vw); height: min(calc(170px * var(--k, 1)), 46vw);
+      bottom: calc(12px * var(--k, 1)); right: calc(12px * var(--k, 1));
     }
   `;
   root.appendChild(style);
 
   root.innerHTML += `
-    <button class="burbuja" aria-label="Abrir chat"><img src="${API_BASE}/static/imagenes/sofi-icono.png" alt="Sofi" /><span class="badge" style="display:none;"></span></button>
+    <button class="burbuja" aria-label="Abrir chat"><img src="${API_BASE}/static/imagenes/sofiwebchat.png" alt="Sofi" /><span class="badge" style="display:none;"></span></button>
     <div class="panel">
       <div class="cabecera">
         ${LOGO_URL ? `<img src="${LOGO_URL}" alt="Sanitas" />` : ""}
@@ -314,19 +506,57 @@
           <div class="titulo">Sofi, tu asistente virtual</div>
           <div class="estado"><span class="dot"></span><span class="estado-texto">Conectando...</span></div>
         </div>
+        <button class="maximizar" type="button" aria-label="Maximizar ventana" title="Maximizar ventana" aria-pressed="false">
+          <svg class="ico-maximizar" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2H14v4.5M6.5 14H2V9.5M14 2L9 7M2 14l5-5"/></svg>
+          <svg class="ico-restaurar" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6.5H9.5V2M2 9.5h4.5V14M9.5 6.5L14 2M6.5 9.5L2 14"/></svg>
+        </button>
+        <button class="tam-fuente" type="button" aria-label="Tamaño del texto" title="Tamaño del texto" aria-haspopup="true" aria-expanded="false">Aa</button>
+        <button class="info-guardada" type="button" aria-label="¿Se pierde mi conversación?" title="¿Se pierde mi conversación?">i</button>
         <button class="cerrar" aria-label="Cerrar chat">✕</button>
       </div>
+      <div class="tam-panel" role="group" aria-label="Tamaño del texto">
+        <span class="tam-titulo">Tamaño del texto</span>
+        <div class="tam-opciones">
+          <button type="button" data-nivel="0" class="tam-op n0" aria-label="Normal">A</button>
+          <button type="button" data-nivel="1" class="tam-op n1" aria-label="Grande">A</button>
+          <button type="button" data-nivel="2" class="tam-op n2" aria-label="Más grande">A</button>
+        </div>
+      </div>
+      <div class="guardada">
+        <div class="guardada-card">
+          <span class="g-icono" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.78A6 6 0 1 0 6 18.5"/><path d="m9 14.5 2.2 2.2L15.5 12"/></svg>
+          </span>
+          <div class="g-texto">
+            <span class="g-titulo">Tu conversación queda guardada</span>
+            <span class="g-detalle">Aunque cierres esta ventana, podrás retomarla cuando quieras.</span>
+            <button type="button" class="abrir-qr" style="display:none;">📱 Seguir en mi celular</button>
+            <button type="button" class="activar-avisos" style="display:none;">🔔 Avisarme cuando me respondan</button>
+          </div>
+          <button type="button" class="ocultar-guardada" aria-label="Ocultar aviso">✕</button>
+        </div>
+      </div>
       <div class="cuerpo"></div>
+      <div class="qr-panel">
+        <h3>📱 Continúa en tu celular</h3>
+        <p class="qr-texto">Abre la cámara de tu celular y escanea este código. Tu conversación seguirá allí.</p>
+        <img class="qr-img" alt="Código QR para continuar en el celular" style="display:none;" />
+        <p class="qr-estado"></p>
+        <button type="button" class="qr-regenerar" style="display:none;">Generar otro código</button>
+        <button type="button" class="qr-cerrar">Cerrar</button>
+      </div>
       <button class="nuevo-mensaje" type="button">Mensaje nuevo ⬇️</button>
       <div class="responder-banner">
         <span class="texto-cita"></span>
         <button class="cancelar-responder" type="button" aria-label="Cancelar respuesta">✕</button>
       </div>
       <div class="pie">
-        <input type="file" class="archivo-input-documento" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv" style="display:none" />
+        <input type="file" class="archivo-input-documento" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,application/pdf" style="display:none" />
+        <input type="file" class="archivo-input-fotos" accept="image/*,.heic,.heif" style="display:none" />
         <input type="file" class="archivo-input-camara" accept="image/*" capture="environment" style="display:none" />
         <div class="adjuntar-wrap">
           <div class="adjuntar-menu">
+            <button type="button" data-tipo="fotos">🖼️ <span>Fotos</span></button>
             <button type="button" data-tipo="documento">📄 <span>Documento</span></button>
             <button type="button" data-tipo="camara">📷 <span>Cámara</span></button>
           </div>
@@ -338,7 +568,7 @@
         </div>
         <button class="emoji-btn" type="button" aria-label="Emojis" title="Emojis">😊</button>
         <div class="emoji-panel"></div>
-        <input type="text" class="texto-input" placeholder="Escribe un mensaje..." disabled />
+        <textarea class="texto-input" rows="1" placeholder="Escribe un mensaje..." disabled></textarea>
         <div class="grabacion-indicador">
           <button class="grabacion-cancelar" type="button" aria-label="Cancelar audio">✕</button>
           <span class="grabacion-punto"></span>
@@ -364,11 +594,170 @@
   const $responderTexto = root.querySelector(".texto-cita");
   const $cancelarResponder = root.querySelector(".cancelar-responder");
   const $estadoTexto = root.querySelector(".estado-texto");
+  const $guardada = root.querySelector(".guardada");
+  const $abrirQr = root.querySelector(".abrir-qr");
+  const $qrPanel = root.querySelector(".qr-panel");
+  const $qrImg = root.querySelector(".qr-img");
+  const $qrEstado = root.querySelector(".qr-estado");
+  const $qrRegenerar = root.querySelector(".qr-regenerar");
+  let temporizadorQr = null;
+  let movidoAOtroDispositivo = false;
+
+  // Maximizar ventana (solo laptop/tablet: el botón y el estilo se anulan con la clase "movil").
+  const CLAVE_MAX = "sofi_panel_maximizado";
+  const $maxBtn = root.querySelector(".maximizar");
+  function aplicarMaximizado(on, guardar) {
+    $panel.classList.toggle("maximizado", on);
+    $maxBtn.setAttribute("aria-pressed", String(on));
+    $maxBtn.setAttribute("aria-label", on ? "Restaurar tamaño" : "Maximizar ventana");
+    $maxBtn.title = on ? "Restaurar tamaño" : "Maximizar ventana";
+    if (guardar) { try { localStorage.setItem(CLAVE_MAX, on ? "1" : "0"); } catch (err) { /* no crítico */ } }
+    if (typeof $cuerpo !== "undefined" && $cuerpo) setTimeout(() => { try { $cuerpo.scrollTop = $cuerpo.scrollHeight; } catch (err) {} }, 0);
+  }
+  $maxBtn.addEventListener("click", (e) => { e.stopPropagation(); aplicarMaximizado(!$panel.classList.contains("maximizado"), true); });
+  let maxGuardado = false;
+  try { maxGuardado = localStorage.getItem(CLAVE_MAX) === "1"; } catch (err) { /* no crítico */ }
+  aplicarMaximizado(maxGuardado, false);
+  // El botón del QR solo tiene sentido en computador (en un celular no se puede escanear a sí mismo).
+  const esComputador = window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches
+    && window.innerWidth > 700;
+  if (esComputador) $abrirQr.style.display = "";
+  // Aviso "tu conversación queda guardada": se muestra la primera vez que se abre el chat,
+  // se oculta solo a los 30 segundos (o antes con la ✕) y se puede volver a ver con el botón "i".
+  // Control del tamaño del texto (solo se ve en celular): botón "Aa" -> panel con 3 niveles.
+  const $tamBtn = root.querySelector(".tam-fuente");
+  const $tamPanel = root.querySelector(".tam-panel");
+  function cerrarTamPanel() {
+    $tamPanel.classList.remove("visible");
+    $tamBtn.classList.remove("activo");
+    $tamBtn.setAttribute("aria-expanded", "false");
+  }
+  $tamBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const abrir = !$tamPanel.classList.contains("visible");
+    $tamPanel.classList.toggle("visible", abrir);
+    $tamBtn.classList.toggle("activo", abrir);
+    $tamBtn.setAttribute("aria-expanded", String(abrir));
+  });
+  root.querySelectorAll(".tam-op").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    fsNivel = Number(b.dataset.nivel) || 0;
+    try { localStorage.setItem(CLAVE_FUENTE, String(fsNivel)); } catch (err) { /* no crítico */ }
+    aplicarFuente();
+    setTimeout(cerrarTamPanel, 250);
+  }));
+  root.addEventListener("click", (e) => {
+    if ($tamPanel.classList.contains("visible") && !e.target.closest(".tam-panel")) cerrarTamPanel();
+  });
+  aplicarFuente();
+  const $infoGuardada = root.querySelector(".info-guardada");
+  const GUARDADA_SEGUNDOS = 30;
+  let temporizadorGuardada = null;
+  let guardadaMostradaAlAbrir = false;
+  function mostrarGuardada() {
+    $guardada.classList.add("visible");
+    $infoGuardada.classList.add("activo");
+    clearTimeout(temporizadorGuardada);
+    temporizadorGuardada = setTimeout(ocultarGuardada, GUARDADA_SEGUNDOS * 1000);
+  }
+  function ocultarGuardada() {
+    clearTimeout(temporizadorGuardada);
+    $guardada.classList.remove("visible");
+    $infoGuardada.classList.remove("activo");
+  }
+  root.querySelector(".ocultar-guardada").onclick = ocultarGuardada;
+  $infoGuardada.onclick = () => ($guardada.classList.contains("visible") ? ocultarGuardada() : mostrarGuardada());
+  // Mientras el cliente tiene el cursor encima (p. ej. para tocar "Seguir en mi celular") no se oculta solo.
+  $guardada.addEventListener("mouseenter", () => clearTimeout(temporizadorGuardada));
+
+  function pedirQr() {
+    $qrImg.style.display = "none";
+    $qrRegenerar.style.display = "none";
+    $qrEstado.textContent = "Generando código...";
+    clearTimeout(temporizadorQr);
+    enviar({ type: "generar_traspaso", payload: { url: window.location.origin + window.location.pathname } });
+  }
+  $abrirQr.onclick = () => { $qrPanel.classList.add("visible"); pedirQr(); };
+  $qrRegenerar.onclick = pedirQr;
+
+  // -----------------------------------------------------------------------
+  // Avisos push en el sitio web (OPCIONAL). Solo se activa si el <script> del widget trae
+  // data-push-sw="/sanitas-push-sw.js" y ese archivo está publicado en la raíz del sitio
+  // (un service worker solo puede vivir en el mismo dominio que la página). Sin ese atributo
+  // el widget se comporta exactamente igual que antes.
+  // -----------------------------------------------------------------------
+  const PUSH_SW = (script && script.dataset.pushSw) || "";
+  const $activarAvisos = root.querySelector(".activar-avisos");
+  (function avisosPush() {
+    if (!PUSH_SW || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+    let dispId = null;
+    try { dispId = localStorage.getItem("sofi_dispositivo_id"); } catch (e) { return; }
+    if (!dispId) {
+      dispId = (crypto.randomUUID ? crypto.randomUUID() : "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+      try { localStorage.setItem("sofi_dispositivo_id", dispId); } catch (e) { return; }
+    }
+    const token = () => { try { return localStorage.getItem("sanitas_webchat_sesion") || null; } catch (e) { return null; } };
+    const urlAbrir = () => window.location.origin + window.location.pathname + "?ac=1";
+    const post = (ruta, cuerpo) => fetch(API_BASE + ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+    const b64aU8 = (b64) => {
+      const raw = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+      return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+    };
+    async function registro() {
+      return (await navigator.serviceWorker.getRegistration(PUSH_SW)) || (await navigator.serviceWorker.register(PUSH_SW));
+    }
+    async function suscribir() {
+      const reg = await registro();
+      await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const k = await (await fetch(API_BASE + "/push/clave")).json();
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aU8(k.clave) });
+      }
+      const r = await post("/push/suscribir", { dispositivo_id: dispId, sesion_token: token(), modo: "widget", suscripcion: sub.toJSON(), url_abrir: urlAbrir() });
+      if (!r.ok) throw new Error("servidor");
+    }
+    async function revisar() {
+      // Muestra el botón solo si el servidor ya tiene avisos habilitados y el cliente aún no los activó/bloqueó.
+      if (Notification.permission === "denied") return;
+      try {
+        // Si el archivo del service worker aún no está publicado en el sitio, el botón no se muestra.
+        const sw = await fetch(PUSH_SW, { method: "HEAD", cache: "no-store" });
+        if (!sw.ok || !/javascript/i.test(sw.headers.get("content-type") || "")) return;
+        if ((await fetch(API_BASE + "/push/clave")).ok === false) return;
+        if (Notification.permission === "granted") {
+          const reg = await navigator.serviceWorker.getRegistration(PUSH_SW);
+          const sub = reg && (await reg.pushManager.getSubscription());
+          if (sub) { suscribir().catch(() => {}); return; }   // ya activo: solo renueva y enlaza con la sesión
+        }
+        $activarAvisos.style.display = "";
+      } catch (e) { /* sin red o sin avisos: el widget sigue normal */ }
+    }
+    $activarAvisos.onclick = async () => {
+      $activarAvisos.disabled = true;
+      try {
+        const p = await Notification.requestPermission();
+        if (p !== "granted") { post("/push/visita", { dispositivo_id: dispId, sesion_token: token(), modo: "widget", permiso: p }).catch(() => {}); $activarAvisos.style.display = "none"; return; }
+        await suscribir();
+        $activarAvisos.textContent = "🔔 Avisos activados ✓";
+        setTimeout(() => { $activarAvisos.style.display = "none"; }, 2500);
+      } catch (e) {
+        $activarAvisos.textContent = "No se pudo activar";
+        $activarAvisos.disabled = false;
+      }
+    };
+    revisar();
+  })();
+  root.querySelector(".qr-cerrar").onclick = () => {
+    $qrPanel.classList.remove("visible");
+    clearTimeout(temporizadorQr);
+  };
   const $textoInput = root.querySelector(".texto-input");
   const $enviarBtn = root.querySelector(".enviar");
   const $adjuntarBtn = root.querySelector(".adjuntar");
   const $adjuntarMenu = root.querySelector(".adjuntar-menu");
   const $archivoInputDocumento = root.querySelector(".archivo-input-documento");
+  const $archivoInputFotos = root.querySelector(".archivo-input-fotos");
   const $archivoInputCamara = root.querySelector(".archivo-input-camara");
   const $pie = root.querySelector(".pie");
   const $grabacionIndicador = root.querySelector(".grabacion-indicador");
@@ -459,8 +848,8 @@
   // /"conversacion_cerrada" en el switch del WebSocket, y actualizarIconoEnviar().
   let atendidoPorAsesor = false;
 
-  function urlArchivoWidget(ruta) {
-    return `${API_BASE}/widget/archivo?conversacion_id=${encodeURIComponent(conversacionIdActual)}`
+  function urlArchivoWidget(ruta, convId) {
+    return `${API_BASE}/widget/archivo?conversacion_id=${encodeURIComponent(convId || conversacionIdActual)}`
       + `&ruta=${encodeURIComponent(ruta)}&sesion_token=${encodeURIComponent(sesionTokenActual)}`;
   }
   function esImagen(ruta) {
@@ -621,6 +1010,7 @@
     if (!ws) conectar();
     else enviar({ type: "marcar_leido", payload: {} });
     scrollAlFinal();
+    revisarHistorialPrevio(700);
   }
   function cerrarPanel() {
     panelAbierto = false;
@@ -652,16 +1042,70 @@
     const abrirDesdeInvitacion = params.get("ac") === "1";
     if (abrirDesdeInvitacion) origenApertura = "invitacion_sms";
     else if (tokenEnlace) origenApertura = "enlace_sms";
+    const codigoTraspaso = params.get("wct");
+    const tokenArchivoSms = params.get("af");   // enlace único de un archivo que nos envió un asesor/supervisor por SMS
+    if (tokenArchivoSms) origenApertura = "enlace_sms";
+    const tokenDirecto = params.get("ad");      // enlace directo a una campaña/asesor, enviado por SMS desde el panel
+    if (tokenDirecto) origenApertura = "enlace_directo";
     if (tokenEnlace) {
       localStorage.setItem("sanitas_webchat_sesion", tokenEnlace);
     }
-    if (tokenEnlace || abrirDesdeInvitacion) {
+    if (codigoTraspaso) {
+      // Llegó escaneando el QR: canjea el código (un solo uso) por la sesión de la
+      // conversación y abre el chat ya con ella.
+      origenApertura = "traspaso_qr";
+      fetch(`${API_BASE}/widget/traspaso/canjear`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo: codigoTraspaso }),
+      }).then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+        .then((d) => { localStorage.setItem("sanitas_webchat_sesion", d.sesion_token); abrirPanel(); })
+        .catch(() => {
+          abrirPanel();
+          setTimeout(() => agregarMensaje(
+            "⚠️ Ese código QR venció o ya se usó. Genera uno nuevo desde tu computadora (📱 Seguir en mi celular).",
+            "sistema"), 1500);
+        });
+    }
+    if (tokenArchivoSms) {
+      // Canjea el enlace (un solo uso) por la sesión del celular al que se envió el archivo y abre el chat:
+      // el servidor pone el archivo en la conversación apenas se conecta.
+      fetch(`${API_BASE}/widget/archivo-enlace/canjear`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenArchivoSms, sesion_token: localStorage.getItem("sanitas_webchat_sesion") || null }),
+      }).then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+        .then((d) => { localStorage.setItem("sanitas_webchat_sesion", d.sesion_token); abrirPanel(); })
+        .catch(() => {
+          abrirPanel();
+          setTimeout(() => agregarMensaje(
+            "⚠️ Ese enlace venció o ya se usó. Escríbenos por aquí y te ayudamos a recibir el archivo.",
+            "sistema"), 1500);
+        });
+    }
+    if (tokenDirecto) {
+      // Canjea el enlace (un solo uso) por la sesión del celular que lo recibió; al conectarse el chat el servidor
+      // lo deriva a la campaña/asesor elegido (o le muestra el mensaje de fuera de horario).
+      fetch(`${API_BASE}/widget/enlace-directo/canjear`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tokenDirecto, sesion_token: localStorage.getItem("sanitas_webchat_sesion") || null }),
+      }).then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+        .then((d) => { localStorage.setItem("sanitas_webchat_sesion", d.sesion_token); abrirPanel(); })
+        .catch(() => {
+          abrirPanel();
+          setTimeout(() => agregarMensaje(
+            "⚠️ Ese enlace venció o ya se usó. Escríbenos por aquí y te ayudamos.",
+            "sistema"), 1500);
+        });
+    }
+    if (tokenEnlace || abrirDesdeInvitacion || codigoTraspaso || tokenArchivoSms || tokenDirecto) {
+      params.delete("ad");
       params.delete("wcs");
+      params.delete("wct");
       params.delete("ac");
+      params.delete("af");
       const resto = params.toString();
       const nuevaUrl = window.location.pathname + (resto ? "?" + resto : "") + window.location.hash;
       window.history.replaceState({}, "", nuevaUrl);
-      setTimeout(abrirPanel, 300);
+      if (!codigoTraspaso && !tokenArchivoSms && !tokenDirecto) setTimeout(abrirPanel, 300);
     }
   } catch (e) {
     // localStorage bloqueado (modo privado estricto) o URL no soportada —
@@ -712,7 +1156,171 @@
   }
   $cuerpo.addEventListener("scroll", () => {
     if (estaCercaDelFinal()) ocultarIndicadorNuevoMensaje();
-  });
+    if ($cuerpo.scrollTop < 80) pedirHistorialPrevio();
+  }, { passive: true });
+
+  // ---------------------------------------------------------------------
+  // Conversaciones pasadas (hasta 3 meses): al subir el scroll hasta el inicio se cargan
+  // en bloques, de la más reciente hacia atrás. Solo si el celular está verificado
+  // (el servidor decide); son de solo lectura.
+  // ---------------------------------------------------------------------
+  let previoCursor = null;     // id del mensaje más antiguo ya cargado
+  let previoFin = false;       // no hay más (o no está disponible)
+  let previoCargando = false;
+  let previoCargados = 0;
+  let previoAutoSeguidos = 0;
+  let previoTimer = null;
+  let sepPorConv = {};
+
+  function resetPrevio() {
+    previoCursor = null; previoFin = false; previoCargando = false; previoCargados = 0;
+    previoAutoSeguidos = 0; sepPorConv = {};
+    if (previoTimer) { clearTimeout(previoTimer); previoTimer = null; }
+  }
+  function pedirHistorialPrevio() {
+    if (previoFin || previoCargando || !ws || ws.readyState !== WebSocket.OPEN) return;
+    previoCargando = true;
+    if (!$cuerpo.querySelector(".cargando-previo")) {
+      const ind = document.createElement("div");
+      ind.className = "cargando-previo";
+      ind.textContent = "Cargando conversaciones anteriores…";
+      $cuerpo.insertBefore(ind, $cuerpo.firstChild);
+    }
+    enviar({ type: "cargar_historial_previo", payload: { antes_de: previoCursor } });
+  }
+  // Si lo que hay en pantalla no alcanza para hacer scroll, se carga solo lo anterior.
+  function revisarHistorialPrevio(ms) {
+    if (previoTimer) clearTimeout(previoTimer);
+    previoTimer = setTimeout(() => {
+      previoTimer = null;
+      if (panelAbierto && !previoFin && !previoCargando && $cuerpo.scrollHeight <= $cuerpo.clientHeight + 4) {
+        pedirHistorialPrevio();
+      }
+    }, ms || 400);
+  }
+  function fechaCorta(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }); }
+    catch (e) { return ""; }
+  }
+  function crearSeparadorConv(convId, info) {
+    if (sepPorConv[convId]) sepPorConv[convId].remove();
+    const sep = document.createElement("div");
+    sep.className = "sep-hist";
+    const t = document.createElement("span");
+    const partes = ["Conversación anterior", fechaCorta(info && info.iniciado_en)];
+    if (info && info.campana) partes.push(info.campana);
+    t.textContent = partes.filter(Boolean).join(" · ");
+    sep.appendChild(t);
+    sepPorConv[convId] = sep;
+    return sep;
+  }
+  function crearMensajePrevio(m) {
+    const tipo = m.emisor_tipo === "usuario" ? "usuario" : m.emisor_tipo === "sistema" ? "sistema" : "bot";
+    const div = document.createElement("div");
+    div.className = "msg previo " + tipo;
+    if (m.eliminado_en) {
+      div.classList.add("eliminado");
+      const sp = document.createElement("span");
+      sp.className = "texto-mensaje";
+      sp.textContent = "🚫 Este mensaje se eliminó";
+      div.appendChild(sp);
+    } else if (m.tipo_contenido === "archivo") {
+      if (m.archivo_disponible) {
+        const url = urlArchivoWidget(m.contenido, m.conversacion_id);
+        if (esImagen(m.contenido)) {
+          const img = document.createElement("img");
+          img.src = url; img.className = "msg-imagen"; img.loading = "lazy";
+          img.addEventListener("click", () => abrirLightbox(url));
+          div.appendChild(img);
+        } else if (esAudio(m.contenido)) {
+          const audio = document.createElement("audio");
+          audio.controls = true; audio.preload = "none"; audio.src = url;
+          audio.style.cssText = "max-width:230px;width:100%;";
+          div.appendChild(audio);
+        } else {
+          const a = document.createElement("a");
+          a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+          a.textContent = "📎 Ver archivo enviado"; a.style.color = "inherit";
+          div.appendChild(a);
+        }
+      } else {
+        const sp = document.createElement("span");
+        sp.className = "texto-mensaje archivo-no-disponible";
+        sp.textContent = "📎 Aquí había un archivo, pero ya no está disponible.";
+        div.appendChild(sp);
+      }
+    } else {
+      const sp = document.createElement("span");
+      sp.className = "texto-mensaje";
+      sp.innerHTML = formatearTexto(m.contenido);
+      div.appendChild(sp);
+    }
+    if (tipo !== "sistema") {
+      if (m.editado_en && !m.eliminado_en) {
+        const tag = document.createElement("span");
+        tag.className = "editado-tag"; tag.textContent = "(editado)";
+        div.appendChild(tag);
+      }
+      const hora = document.createElement("span");
+      hora.className = "hora";
+      hora.textContent = formatearHora(m.enviado_en);
+      div.appendChild(hora);
+    }
+    return div;
+  }
+  function mostrarHistorialPrevio(p) {
+    previoCargando = false;
+    // Se mide ANTES de quitar el "Cargando…", para que ese hueco también cuente al conservar la posición.
+    const estabaAbajo = estaCercaDelFinal();
+    const alturaAntes = $cuerpo.scrollHeight, topAntes = $cuerpo.scrollTop;
+    const ind = $cuerpo.querySelector(".cargando-previo");
+    if (ind) ind.remove();
+    const msgs = (p && p.mensajes) || [];
+    if (!p || !p.disponible || !msgs.length) { previoFin = true; return; }
+
+    const frag = document.createDocumentFragment();
+    let convPrev = null;
+    msgs.forEach((m) => {
+      if (m.conversacion_id !== convPrev) {
+        convPrev = m.conversacion_id;
+        frag.appendChild(crearSeparadorConv(m.conversacion_id, (p.conversaciones || {})[String(m.conversacion_id)]));
+      }
+      frag.appendChild(crearMensajePrevio(m));
+    });
+    if (previoCargados === 0) {  // primer bloque: marca dónde empieza la conversación actual
+      const act = document.createElement("div");
+      act.className = "sep-actual";
+      const t = document.createElement("span");
+      t.textContent = "Conversación actual";
+      act.appendChild(t);
+      frag.appendChild(act);
+    }
+    const finViejo = $cuerpo.querySelector(".sep-fin");
+    if (finViejo) finViejo.remove();
+    if (!p.hay_mas) {
+      const fin = document.createElement("div");
+      fin.className = "sep-fin";
+      fin.textContent = "Aquí empieza tu historial (últimos 3 meses)";
+      frag.insertBefore(fin, frag.firstChild);
+    }
+    $cuerpo.insertBefore(frag, $cuerpo.firstChild);
+    previoCursor = msgs[0].id;
+    previoCargados += msgs.length;
+    previoFin = !p.hay_mas;
+
+    // Sin saltos: si la persona estaba abajo se queda abajo; si estaba arriba, se mantiene lo que miraba.
+    $cuerpo.style.scrollBehavior = "auto";
+    if (estabaAbajo) $cuerpo.scrollTop = $cuerpo.scrollHeight;
+    else $cuerpo.scrollTop = topAntes + ($cuerpo.scrollHeight - alturaAntes);
+    requestAnimationFrame(() => { $cuerpo.style.scrollBehavior = ""; });
+
+    // Si todavía no hay con qué hacer scroll, sigue cargando (con tope).
+    if (!previoFin && $cuerpo.scrollHeight <= $cuerpo.clientHeight + 4 && previoAutoSeguidos < 5) {
+      previoAutoSeguidos++;
+      revisarHistorialPrevio(60);
+    }
+  }
   $nuevoMensaje.addEventListener("click", () => {
     scrollAlFinal();
     if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
@@ -764,6 +1372,10 @@
       if (esDescargaConocida) {
         const linkOculto = `${API_BASE}/widget/redirigir?u=${base64UrlEncode(url)}`;
         return `<a href="${linkOculto}" target="_blank" rel="noopener noreferrer">⬇️ Descargar archivo</a>`;
+      }
+      // Enlace al mapa (confirmación de Médico a domicilio): etiqueta propia, para que se entienda qué abre.
+      if (/^https:\/\/www\.google\.com\/maps\?q=-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(url)) {
+        return `<a href="${url}" target="_blank" rel="noopener noreferrer">📍 Ver en el mapa</a>`;
       }
       return `<a href="${url}" target="_blank" rel="noopener noreferrer">🔗 Abrir enlace</a>`;
     });
@@ -906,6 +1518,26 @@
     div.appendChild(menu);
   }
 
+  // Indicador "escribiendo…" (tres puntos): el servidor lo manda cuando una respuesta tarda
+  // (agente de IA). Desaparece solo al llegar cualquier mensaje, o a los 60 s por seguridad.
+  let divEscribiendo = null, temporizadorEscribiendo = null;
+  function quitarEscribiendo() {
+    clearTimeout(temporizadorEscribiendo);
+    if (divEscribiendo) { divEscribiendo.remove(); divEscribiendo = null; }
+  }
+  function mostrarEscribiendo() {
+    quitarEscribiendo();
+    const d = document.createElement("div");
+    d.className = "msg bot escribiendo";
+    d.setAttribute("role", "status");
+    d.setAttribute("aria-label", "Sofi está escribiendo");
+    d.innerHTML = '<span class="punto"></span><span class="punto"></span><span class="punto"></span>';
+    $cuerpo.appendChild(d);
+    divEscribiendo = d;
+    temporizadorEscribiendo = setTimeout(quitarEscribiendo, 60000);
+    scrollAlFinal();
+  }
+
   function agregarMensaje(texto, tipo, imagenUrl, ruta, extra) {
     extra = extra || {};
     const cercaDelFinalAntes = estaCercaDelFinal();
@@ -978,6 +1610,7 @@
         hora.appendChild(check);
         checksPendientesRecibido.push(check);
         divsPendientesId.push(div);
+        ultimaBurbujaUsuario = div; ultimaBurbujaUsuarioTs = Date.now();
       }
       div.appendChild(hora);
       agregarBotonAcciones(div, {
@@ -1133,6 +1766,35 @@
     $cuerpo.appendChild(div);
   }
 
+  // "Hola de nuevo": si el navegador ya fue reconocido, una barra discreta sobre
+  // el chat muestra el nombre y permite borrar los datos con "No soy yo".
+  function mostrarNoSoyYo(nombre) {
+    let barra = root.querySelector(".no-soy-yo");
+    if (!nombre) {
+      if (barra) barra.remove();
+      return;
+    }
+    if (!barra) {
+      barra = document.createElement("div");
+      barra.className = "no-soy-yo";
+      $cuerpo.parentNode.insertBefore(barra, $cuerpo);
+    }
+    barra.textContent = "";
+    const quien = document.createElement("span");
+    quien.textContent = "👤 " + nombre + " ·";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "No soy yo";
+    btn.title = "Olvidar mis datos en este navegador";
+    btn.onclick = () => {
+      barra.remove();
+      $cuerpo.innerHTML = "";
+      enviar({ type: "reiniciar_datos", payload: {} });
+    };
+    barra.appendChild(quien);
+    barra.appendChild(btn);
+  }
+
   function agregarAccionesCierre() {
     const cont = document.createElement("div");
     cont.className = "acciones-cierre";
@@ -1160,12 +1822,96 @@
     scrollAlFinal();
   }
 
+  // Botón "📍 Compartir mi ubicación" (opción con accion:"ubicacion", ver bot_engine.py captura_ubicacion).
+  // Pide la posición con alta precisión y se la manda al servidor; si falla (permiso denegado, sin señal,
+  // tiempo agotado, navegador sin soporte) avisa el motivo y el servidor responde con un mensaje claro
+  // y el botón de nuevo, para reintentar.
+  function pedirUbicacion(btn, cont) {
+    const enviarError = (motivo) => {
+      enviar({ type: "ubicacion_error", payload: { motivo: motivo } });
+      cont.remove();
+    };
+    if (!navigator.geolocation) { enviarError("no_soportado"); return; }
+    const textoOriginal = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "⏳ Obteniendo tu ubicación…";
+    // Por si el navegador nunca llama a ninguno de los dos callbacks (pasa con algunos permisos en espera).
+    const respaldo = setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = textoOriginal;
+    }, 30000);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(respaldo);
+        agregarMensaje("📍 Ubicación compartida", "usuario");
+        enviar({ type: "ubicacion_compartida", payload: {
+          lat: pos.coords.latitude, lng: pos.coords.longitude, precision: pos.coords.accuracy } });
+        cont.remove();
+      },
+      (err) => {
+        clearTimeout(respaldo);
+        enviarError(err && err.code === 1 ? "denegado" : err && err.code === 3 ? "timeout" : "no_disponible");
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  }
+
+  // "🗺️ Elegir en el mapa": abre /mapa/mapa.html (Leaflet + OpenStreetMap, servido por la API) en un iframe que cubre
+  // el panel. Leaflet necesita su CSS y el Shadow DOM del widget no lo recibiría; el iframe lo evita. La página devuelve
+  // lat/lng por postMessage; solo se aceptan mensajes de ESE iframe y del origen de la API.
+  let mapaAbierto = null;
+  function abrirMapa(cont) {
+    if (mapaAbierto) return;
+    let origenApi;
+    try { origenApi = new URL(API_BASE || window.location.origin, window.location.href).origin; }
+    catch (e) { origenApi = window.location.origin; }
+    const overlay = document.createElement("div");
+    overlay.className = "mapa-overlay";
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("allow", "geolocation");
+    iframe.setAttribute("title", "Elegir el lugar en el mapa");
+    iframe.src = `${origenApi}/mapa/mapa.html`;
+    overlay.appendChild(iframe);
+    const cerrar = () => {
+      window.removeEventListener("message", alMensaje);
+      overlay.remove();
+      mapaAbierto = null;
+    };
+    function alMensaje(e) {
+      if (e.source !== iframe.contentWindow || e.origin !== origenApi) return;
+      const d = e.data || {};
+      if (d.tipo !== "sanitas_mapa") return;
+      if (d.accion === "cancelar") { cerrar(); return; }
+      if (d.accion === "confirmar") {
+        const lat = Number(d.lat), lng = Number(d.lng);
+        if (!isFinite(lat) || !isFinite(lng)) return;
+        cerrar();
+        agregarMensaje("🗺️ Lugar elegido en el mapa", "usuario");
+        enviar({ type: "ubicacion_compartida", payload: { lat: lat, lng: lng, precision: null, origen: "mapa" } });
+        cont.remove();
+      }
+    }
+    window.addEventListener("message", alMensaje);
+    mapaAbierto = overlay;
+    $panel.appendChild(overlay);
+  }
+
   function agregarOpciones(opciones) {
     const cont = document.createElement("div");
     cont.className = "opciones";
     (opciones || []).forEach((op) => {
       const btn = document.createElement("button");
       btn.textContent = op.label;
+      if (op.accion === "ubicacion") {
+        btn.onclick = () => pedirUbicacion(btn, cont);
+        cont.appendChild(btn);
+        return;
+      }
+      if (op.accion === "mapa") {
+        btn.onclick = () => abrirMapa(cont);
+        cont.appendChild(btn);
+        return;
+      }
       btn.onclick = () => {
         agregarMensaje(op.label, "usuario");
         enviar({ type: "click_opcion", payload: { opcion_codigo: op.id || op.label } });
@@ -1189,9 +1935,116 @@
   // Antes de que se pueda pedir un reenvío hay que esperar este tiempo —
   // a veces el SMS solo tarda unos segundos en llegar y reenviar de
   // inmediato es innecesario. Se muestra como cuenta regresiva en el botón.
-  const OTP_ESPERA_REENVIO_SEGUNDOS = 60;
+  const OTP_ESPERA_REENVIO_SEGUNDOS = 30;
+
+  // --- Verificación por WhatsApp (respaldo del SMS) --------------------------
+  const WA_APARECE_SEGUNDOS = 30;   // tras este tiempo sin SMS se ofrece "Verificar con WhatsApp"
+  const WA_SONDEO_MS = 3000;
+  let waTimerAparece = null;
+  let waSondeoId = null;
+  let waExpiraId = null;
+  let waCard = null;
+  let waBotonVisible = false;
+  let waCodigoActual = null;
+
+  function waDetenerTimers() {
+    if (waTimerAparece) { clearTimeout(waTimerAparece); waTimerAparece = null; }
+    if (waSondeoId) { clearInterval(waSondeoId); waSondeoId = null; }
+    if (waExpiraId) { clearTimeout(waExpiraId); waExpiraId = null; }
+  }
+
+  function waLimpiar() {
+    waDetenerTimers();
+    if (waCard) { waCard.remove(); waCard = null; }
+    waBotonVisible = false;
+    waCodigoActual = null;
+  }
+
+  function waPedirCodigo() {
+    waDetenerTimers();
+    waCodigoActual = null;
+    if (waCard) waCard.remove();
+    waCard = document.createElement("div");
+    waCard.className = "wa-card";
+    waCard.innerHTML = '<h4>Verificar con WhatsApp</h4><p>Preparando tu código…</p>';
+    $cuerpo.appendChild(waCard);
+    scrollAlFinal();
+    enviar({ type: "iniciar_verificacion_whatsapp", payload: { con_qr: esComputador } });
+  }
+
+  function waMostrarCodigo(p) {
+    if (!waCard) return;
+    waCodigoActual = p.codigo;
+    waCard.innerHTML = "";
+    const h = document.createElement("h4");
+    h.textContent = "💬 Verifica con WhatsApp";
+    waCard.appendChild(h);
+
+    const instr = document.createElement("p");
+    if (esComputador && p.qr) {
+      instr.textContent = "Escanea este QR con tu celular y envía el mensaje que aparece, sin cambiarlo. " +
+        "Debe ser desde el celular que registraste.";
+      waCard.appendChild(instr);
+      const img = document.createElement("img");
+      img.src = p.qr;
+      img.alt = "Código QR para verificar por WhatsApp";
+      waCard.appendChild(img);
+    } else {
+      instr.textContent = "Toca el botón, se abrirá WhatsApp con el mensaje listo. Envíalo sin cambiarlo, " +
+        "desde el celular que registraste.";
+      waCard.appendChild(instr);
+      const a = document.createElement("a");
+      a.className = "wa-abrir";
+      a.href = p.enlace;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "Abrir WhatsApp";
+      waCard.appendChild(a);
+    }
+    const cod = document.createElement("div");
+    cod.className = "wa-codigo";
+    cod.textContent = p.texto;
+    waCard.appendChild(cod);
+    const est = document.createElement("div");
+    est.className = "wa-estado";
+    est.textContent = "⏳ Esperando confirmación…";
+    waCard.appendChild(est);
+    scrollAlFinal();
+
+    waSondeoId = setInterval(() => {
+      if (waCodigoActual) enviar({ type: "consultar_verificacion_whatsapp", payload: { codigo: waCodigoActual } });
+    }, WA_SONDEO_MS);
+    waExpiraId = setTimeout(() => waVencido(), (p.expira_seg || 300) * 1000);
+  }
+
+  function waVencido(texto) {
+    if (!waCard) return;
+    waDetenerTimers();
+    waCodigoActual = null;
+    waCard.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = texto || "El código venció. Puedes generar uno nuevo.";
+    waCard.appendChild(p);
+    const b = document.createElement("button");
+    b.className = "wa-nuevo";
+    b.textContent = "Generar código nuevo";
+    b.onclick = () => waPedirCodigo();
+    waCard.appendChild(b);
+  }
+
+  function waCompletado() {
+    waDetenerTimers();
+    waCodigoActual = null;
+    if (waCard) {
+      waCard.innerHTML = '<div class="wa-estado ok">✅ Celular verificado</div>';
+      const c = waCard;
+      setTimeout(() => { if (waCard === c) { c.remove(); waCard = null; } }, 4000);
+    }
+    waBotonVisible = false;
+  }
 
   function quitarAccionesOtp() {
+    if (waTimerAparece) { clearTimeout(waTimerAparece); waTimerAparece = null; }
     if (otpTimerId) {
       clearInterval(otpTimerId);
       otpTimerId = null;
@@ -1215,31 +2068,48 @@
     };
     cont.appendChild(btnReenviar);
 
+    // "Token por llamada": siempre disponible (ya no hay que reenviar dos veces antes);
+    // se habilita junto con "Reenviar" para darle tiempo al SMS de llegar.
+    const btnLlamar = document.createElement("button");
+    btnLlamar.disabled = true;
+    btnLlamar.onclick = () => {
+      btnLlamar.disabled = true;
+      agregarMensaje("📞 Token por llamada", "usuario");
+      enviar({ type: "solicitar_llamada_otp", payload: {} });
+    };
+    cont.appendChild(btnLlamar);
+
     let restante = OTP_ESPERA_REENVIO_SEGUNDOS;
     const actualizarCuentaRegresiva = () => {
       if (restante <= 0) {
         btnReenviar.textContent = "🔁 Reenviar código";
         btnReenviar.disabled = false;
+        btnLlamar.textContent = "📞 Token por llamada";
+        btnLlamar.disabled = false;
         clearInterval(otpTimerId);
         otpTimerId = null;
         return;
       }
       btnReenviar.textContent = `🔁 Reenviar código (${restante}s)`;
+      btnLlamar.textContent = `📞 Token por llamada (${restante}s)`;
       restante--;
     };
     actualizarCuentaRegresiva();
     otpTimerId = setInterval(actualizarCuentaRegresiva, 1000);
 
-    if (puedeLlamar) {
-      const btnLlamar = document.createElement("button");
-      btnLlamar.textContent = "📞 Prefiero que me llamen";
-      btnLlamar.onclick = () => {
-        btnLlamar.disabled = true;
-        agregarMensaje("📞 Prefiero que me llamen", "usuario");
-        enviar({ type: "solicitar_llamada_otp", payload: {} });
-      };
-      cont.appendChild(btnLlamar);
-    }
+    // "Verificar con WhatsApp": aparece a los WA_APARECE_SEGUNDOS sin que llegue el SMS
+    // (o de inmediato si ya había aparecido antes en esta verificación).
+    const btnWhatsapp = document.createElement("button");
+    btnWhatsapp.textContent = "💬 Verificar con WhatsApp";
+    btnWhatsapp.style.display = "none";
+    btnWhatsapp.onclick = () => {
+      agregarMensaje("💬 Verificar con WhatsApp", "usuario");
+      waPedirCodigo();
+    };
+    cont.appendChild(btnWhatsapp);
+    const mostrarBotonWa = () => { waBotonVisible = true; btnWhatsapp.style.display = ""; scrollAlFinal(); };
+    if (waBotonVisible) mostrarBotonWa();
+    else waTimerAparece = setTimeout(mostrarBotonWa, WA_APARECE_SEGUNDOS * 1000);
 
     // A diferencia de "Reenviar"/"Llamar", este botón está disponible desde
     // el primer intento (sin esperar ni contador) -- si la persona se dio
@@ -1376,6 +2246,68 @@
         return;
       }
 
+      if (campo.tipo === "fecha_hora_programada") {
+        // Día (hoy hasta +14) y hora en 24 h, SIEMPRE en hora de Lima (no la del dispositivo). Deja en un campo
+        // oculto "AAAA-MM-DDTHH:MM", el formato que espera el servidor.
+        const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+        const DIAS = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+        const ahoraLima = () => {
+          const p = {};
+          new Intl.DateTimeFormat("en-GB", { timeZone: "America/Lima", hourCycle: "h23", year: "numeric", month: "2-digit",
+            day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date()).forEach((x) => { p[x.type] = x.value; });
+          return { y: +p.year, m: +p.month, d: +p.day, h: +p.hour, mi: +p.minute };
+        };
+        const base = ahoraLima();
+        const pad = (n) => String(n).padStart(2, "0");
+        const cont = document.createElement("div");
+        cont.className = "campo-compuesto";
+        cont.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;align-items:center;";
+        const selDia = document.createElement("select");
+        for (let i = 0; i <= 14; i++) {
+          const f = new Date(Date.UTC(base.y, base.m - 1, base.d + i));
+          const o = document.createElement("option");
+          o.value = `${f.getUTCFullYear()}-${pad(f.getUTCMonth() + 1)}-${pad(f.getUTCDate())}`;
+          o.textContent = (i === 0 ? "Hoy" : i === 1 ? "Mañana" : DIAS[f.getUTCDay()]) + ` ${f.getUTCDate()} ${MESES[f.getUTCMonth()]}`;
+          selDia.appendChild(o);
+        }
+        const selHora = document.createElement("select");
+        const selMin = document.createElement("select");
+        for (let h = 0; h < 24; h++) { const o = document.createElement("option"); o.value = pad(h); o.textContent = pad(h); selHora.appendChild(o); }
+        ["00", "15", "30", "45"].forEach((m) => { const o = document.createElement("option"); o.value = m; o.textContent = m; selMin.appendChild(o); });
+        // Sugerencia inicial: dentro de ~2 horas, redondeada al próximo cuarto de hora.
+        let t = base.h * 60 + base.mi + 120;
+        t = Math.ceil(t / 15) * 15;
+        selDia.selectedIndex = Math.min(14, Math.floor(t / 1440));
+        t = t % 1440;
+        selHora.value = pad(Math.floor(t / 60));
+        selMin.value = pad(t % 60);
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = campo.variable;
+        const recomponer = () => { hidden.value = `${selDia.value}T${selHora.value}:${selMin.value}`; };
+        if (borrador && borrador[campo.variable]) {
+          const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(borrador[campo.variable]);
+          if (m && [...selDia.options].some((o) => o.value === m[1]) && ["00", "15", "30", "45"].includes(m[3])) {
+            selDia.value = m[1]; selHora.value = m[2]; selMin.value = m[3];
+          }
+        }
+        [selDia, selHora, selMin].forEach((el) => el.addEventListener("change", () => { recomponer(); guardarBorradorActual(); }));
+        recomponer();
+        const dos = document.createElement("span");
+        dos.textContent = ":";
+        cont.appendChild(selDia);
+        cont.appendChild(selHora);
+        cont.appendChild(dos);
+        cont.appendChild(selMin);
+        cont.appendChild(hidden);
+        form.appendChild(cont);
+        const nota = document.createElement("small");
+        nota.textContent = "Hora de Lima, formato 24 h.";
+        nota.style.cssText = "display:block;color:#5b6b7b;margin-top:2px;";
+        form.appendChild(nota);
+        return;
+      }
+
       let input;
       if (campo.tipo === "textarea") {
         input = document.createElement("textarea");
@@ -1446,12 +2378,14 @@
   // WebSocket
   // ---------------------------------------------------------------------
   function conectar() {
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
     const sesionToken = localStorage.getItem("sanitas_webchat_sesion") || "";
     sesionTokenActual = sesionToken;
     const url = `${WS_BASE}/ws/widget${sesionToken ? "?sesion_token=" + encodeURIComponent(sesionToken) : ""}`;
     ws = new WebSocket(url);
 
     ws.onopen = () => {
+      conexionLista = false;
       intentosReconexion = 0;
       reconectando = false;
       // Solo informa el origen en la primera conexión de esta carga de página
@@ -1477,13 +2411,18 @@
 
     ws.onclose = () => {
       clearInterval(latido);
+      quitarEscribiendo();
       ws = null;
-      $textoInput.disabled = true;
-      $enviarBtn.disabled = true;
-      if (cerradoManualmente) return;
+      conexionLista = false;
+      if (cerradoManualmente || movidoAOtroDispositivo) {
+        $textoInput.disabled = true;
+        $enviarBtn.disabled = true;
+        return;
+      }
+      // Sin red el campo sigue habilitado: lo que escriba queda en cola y se envía al reconectar.
 
       reconectando = true;
-      $estadoTexto.textContent = "Reconectando...";
+      $estadoTexto.textContent = outbox.length ? "Sin conexión: se enviará al reconectar" : "Reconectando...";
       const espera = siguienteEsperaReconexion();
       intentosReconexion++;
       setTimeout(() => {
@@ -1498,13 +2437,65 @@
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       const p = data.payload || {};
+      // Cualquier evento (menos la confirmación de recibido) significa que ya llegó la respuesta.
+      if (data.type !== "escribiendo" && data.type !== "mensaje_recibido_servidor") quitarEscribiendo();
       switch (data.type) {
+        case "escribiendo":
+          mostrarEscribiendo();
+          break;
+        case "aviso_cola":
+          agregarMensaje(p.texto, "sistema");
+          break;
+        case "traspaso_listo":
+          $qrImg.src = p.qr;
+          $qrImg.style.display = "";
+          $qrEstado.textContent = `Válido por ${Math.round(p.expira_seg / 60)} minutos y de un solo uso.`;
+          clearTimeout(temporizadorQr);
+          temporizadorQr = setTimeout(() => {
+            $qrImg.style.display = "none";
+            $qrEstado.textContent = "El código venció.";
+            $qrRegenerar.style.display = "";
+          }, p.expira_seg * 1000);
+          break;
+        case "traspaso_error":
+          $qrEstado.textContent = "No pudimos generar el código. Inténtalo de nuevo.";
+          $qrRegenerar.style.display = "";
+          break;
+        case "sesion_en_otro_dispositivo": {
+          movidoAOtroDispositivo = true;
+          $qrPanel.classList.remove("visible");
+          $textoInput.disabled = true;
+          $enviarBtn.disabled = true;
+          $estadoTexto.textContent = "Abierta en otro dispositivo";
+          const aviso = document.createElement("div");
+          aviso.className = "acciones-cierre";
+          const texto = document.createElement("div");
+          texto.className = "msg sistema";
+          texto.textContent = "📱 Tu conversación continúa en otro dispositivo.";
+          const btn = document.createElement("button");
+          btn.textContent = "Continuar aquí";
+          btn.onclick = () => { aviso.remove(); movidoAOtroDispositivo = false; conectar(); };
+          aviso.appendChild(texto);
+          aviso.appendChild(btn);
+          $cuerpo.appendChild(aviso);
+          scrollAlFinal();
+          break;
+        }
         case "sesion_iniciada":
+          $infoGuardada.classList.add("visible");
+          if (!guardadaMostradaAlAbrir) { guardadaMostradaAlAbrir = true; mostrarGuardada(); }
           localStorage.setItem("sanitas_webchat_sesion", p.sesion_token);
           sesionTokenActual = p.sesion_token;
           conversacionIdActual = p.conversacion_id;
+          resetPrevio();
+          revisarHistorialPrevio(1200);
+          mostrarNoSoyYo(p.reconocido);
           atendidoPorAsesor = false;
           actualizarIconoEnviar();
+          // Si es una reconexión, enseguida llega el "historial" (que redibuja todo y marca la conexión
+          // lista). Si no llega, se da por lista y se envía lo pendiente.
+          clearTimeout(esperaHistorial);
+          esperaHistorial = setTimeout(() => marcarConexionLista(false), 800);
           break;
         case "otp_acciones":
           // Tras reconectar mientras esperaba el código SMS: repone los botones.
@@ -1514,9 +2505,15 @@
         case "historial":
           // Reconstruye la pantalla tras una reconexión (deploy, corte de red, etc.)
           $cuerpo.innerHTML = "";
+          resetPrevio();
           (p.mensajes || []).forEach((msg, i, arr) => agregarMensajeHistorial(msg, i === arr.length - 1));
           scrollAlFinal();
+          revisarHistorialPrevio(500);
+          marcarConexionLista(true);
           if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
+          break;
+        case "historial_previo":
+          mostrarHistorialPrevio(p);
           break;
         case "mensaje_bot":
           agregarMensaje(p.texto, "bot", p.imagen_url);
@@ -1532,18 +2529,33 @@
             agregarAccionesOtp(p.otp_reenvios || 0, !!p.otp_puede_llamar);
           } else {
             quitarAccionesOtp();
+            if (!waCard || !waCodigoActual) waLimpiar();
           }
-          // Cualquier mensaje del bot significa que todavía no hay un
-          // asesor humano en la conversación -- notas de voz deshabilitadas.
-          atendidoPorAsesor = false;
-          actualizarIconoEnviar();
+          // OJO: aquí NO se apaga atendidoPorAsesor. Al asignar, el servidor manda
+          // "asignado" y enseguida el mensaje de bienvenida del asesor como
+          // "mensaje_bot"; apagarlo aquí hacía desaparecer el micrófono. Los
+          // estados "en_cola", "conversacion_cerrada" y "sesion_iniciada" ya lo reinician.
+          break;
+        case "verificacion_whatsapp_lista":
+          waMostrarCodigo(p);
+          break;
+        case "verificacion_whatsapp_ok":
+          if (waCodigoActual) enviar({ type: "consultar_verificacion_whatsapp", payload: { codigo: waCodigoActual } });
+          break;
+        case "verificacion_whatsapp_completada":
+          waCompletado();
+          break;
+        case "verificacion_whatsapp_error":
+          if (p.motivo === "demasiados") waVencido("Generaste muchos códigos seguidos. Espera unos minutos o usa el código del SMS.");
+          else if (p.motivo === "vencido") waVencido();
+          else waVencido("No pudimos usar WhatsApp en este momento. Usa el código del SMS o inténtalo de nuevo.");
           break;
         case "mostrar_formulario":
           if (p.texto) agregarMensaje(p.texto, "bot");
           agregarFormulario(p.campos);
           break;
         case "mensaje_asesor":
-          agregarMensaje(`${p.asesor_nombre}: ${p.texto}`, "bot", null, null,
+          agregarMensaje(p.asesor_nombre ? `${p.asesor_nombre}: ${p.texto}` : p.texto, "bot", null, null,
                          { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
           if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
           avisarMensajeNuevoSiNoMiraPantalla();
@@ -1557,7 +2569,8 @@
           marcarMensajesLeidos();
           break;
         case "mensaje_recibido_servidor":
-          marcarMensajeRecibido(p.mensaje_id, p.recibido);
+          if (p.cid) confirmarEntrada(p);
+          else marcarMensajeRecibido(p.mensaje_id, p.recibido);
           break;
         case "mensaje_editado": {
           const divEditado = $cuerpo.querySelector(`[data-id="${p.mensaje_id}"]`);
@@ -1606,6 +2619,8 @@
           actualizarIconoEnviar();
           break;
         case "conversacion_cerrada":
+          ocultarGuardada();
+          $infoGuardada.classList.remove("visible");
           agregarMensaje("— Conversación finalizada —", "sistema");
           agregarAccionesCierre();
           atendidoPorAsesor = false;
@@ -1615,9 +2630,121 @@
     };
   }
 
+  // ---------------------------------------------------------------------
+  // Envío fiable (como WhatsApp): lo que la persona escribe sin red NO se pierde.
+  // Se guarda en una cola (también en el navegador, por si recarga la página) y se
+  // reenvía al reconectar. Cada envío lleva un "cid": si el servidor ya lo había
+  // procesado (se cortó justo antes de confirmar), responde "dup" y no se duplica.
+  // ---------------------------------------------------------------------
+  const TIPOS_FIABLES = { mensaje_usuario: 1, click_opcion: 1, archivo_subido: 1, formulario_completado: 1 };
+  const CLAVE_OUTBOX = "sanitas_webchat_outbox";
+  const VIGENCIA_OUTBOX_MS = 6 * 60 * 60 * 1000;
+  let outbox = [];                 // [{cid, obj, div, ts, enviadoEn, rerender}]
+  let conexionLista = false;       // true cuando el servidor ya nos devolvió el estado tras (re)conectar
+  let esperaHistorial = null;
+  let ultimaBurbujaUsuario = null, ultimaBurbujaUsuarioTs = 0;
+
+  function guardarOutbox() {
+    try {
+      localStorage.setItem(CLAVE_OUTBOX, JSON.stringify(outbox.map(e => ({ cid: e.cid, obj: e.obj, ts: e.ts }))));
+    } catch (e) { /* sin almacenamiento: queda solo en memoria */ }
+  }
+  function cargarOutbox() {
+    try {
+      const guardado = JSON.parse(localStorage.getItem(CLAVE_OUTBOX) || "[]");
+      const limite = Date.now() - VIGENCIA_OUTBOX_MS;
+      outbox = (Array.isArray(guardado) ? guardado : [])
+        .filter(e => e && e.cid && e.obj && e.ts > limite)
+        .map(e => ({ cid: e.cid, obj: e.obj, div: null, ts: e.ts, enviadoEn: 0, rerender: false }));
+    } catch (e) { outbox = []; }
+  }
+  function marcarCheck(div, texto) {
+    const c = div && div.querySelector(".check");
+    if (c && !c.classList.contains("leido") && c.textContent !== " ✓✓") c.textContent = texto;
+  }
+  function enviarEntrada(entrada) {
+    if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+    try { ws.send(JSON.stringify(entrada.obj)); } catch (e) { return; }
+    const marca = entrada.enviadoEn = Date.now();
+    marcarCheck(entrada.div, " ✓");
+    // Si en 10 s el servidor no confirmó, la conexión está muerta aunque parezca abierta
+    // (pasa al perder la red en el celular): se cierra para que reconecte y reenvíe.
+    setTimeout(() => {
+      if (entrada.enviadoEn === marca && outbox.indexOf(entrada) !== -1 && ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.close(); } catch (e) { /* ya cerrada */ }
+      }
+    }, 10000);
+  }
+  function vaciarOutbox() {
+    if (!conexionLista) return;
+    outbox.slice().forEach(enviarEntrada);
+  }
+  function encolar(obj) {
+    const cid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : String(Date.now()) + Math.random().toString(16).slice(2);
+    const completo = { type: obj.type, payload: Object.assign({}, obj.payload || {}, { cid }) };
+    const reciente = ultimaBurbujaUsuario && (Date.now() - ultimaBurbujaUsuarioTs < 800);
+    const entrada = { cid, obj: completo, div: reciente ? ultimaBurbujaUsuario : null, ts: Date.now(), enviadoEn: 0, rerender: false };
+    outbox.push(entrada);
+    guardarOutbox();
+    if (conexionLista && ws && ws.readyState === WebSocket.OPEN) enviarEntrada(entrada);
+    else marcarCheck(entrada.div, " 🕓");
+  }
+  // Tras reconstruir la pantalla con el historial del servidor, se vuelven a dibujar los mensajes
+  // que todavía no se confirmaron, para que la persona los siga viendo.
+  function dibujarPendientes() {
+    outbox.forEach((e) => {
+      e.div = null; e.rerender = true;
+      if (e.obj.type === "mensaje_usuario" && e.obj.payload.texto) {
+        agregarMensaje(e.obj.payload.texto, "usuario");
+        e.div = ultimaBurbujaUsuario;
+        marcarCheck(e.div, " 🕓");
+      }
+    });
+  }
+  function marcarConexionLista(desdeHistorial) {
+    clearTimeout(esperaHistorial); esperaHistorial = null;
+    conexionLista = true;
+    if (desdeHistorial) { checksPendientesRecibido = []; divsPendientesId = []; dibujarPendientes(); scrollAlFinal(); }
+    vaciarOutbox();
+  }
+  function confirmarEntrada(p) {
+    const i = outbox.findIndex(e => e.cid === p.cid);
+    if (i === -1) return true;     // ya confirmado antes
+    const e = outbox.splice(i, 1)[0];
+    guardarOutbox();
+    if (p.dup) {
+      // El servidor ya lo tenía (llegó antes del corte): la copia que redibujamos sobra.
+      if (e.rerender && e.div && e.div.parentNode) e.div.remove();
+      return true;
+    }
+    if (e.div) {
+      const ic = checksPendientesRecibido.indexOf(e.div.querySelector(".check"));
+      if (ic !== -1) checksPendientesRecibido.splice(ic, 1);
+      const id = divsPendientesId.indexOf(e.div);
+      if (id !== -1) divsPendientesId.splice(id, 1);
+      if (p.recibido !== false) marcarCheck(e.div, " ✓✓");
+      if (p.mensaje_id) e.div.dataset.id = String(p.mensaje_id);
+    }
+    return true;
+  }
+
   function enviar(obj) {
+    if (TIPOS_FIABLES[obj.type]) { encolar(obj); return; }
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
+  cargarOutbox();
+  // El navegador avisa cuando vuelve la red: se reconecta de inmediato (sin esperar el backoff) y,
+  // si la conexión "abierta" estaba muerta, se fuerza a cerrarse para reenviar lo pendiente.
+  window.addEventListener("offline", () => {
+    conexionLista = false;
+    if (!cerradoManualmente) $estadoTexto.textContent = "Sin conexión: se enviará al reconectar";
+  });
+  window.addEventListener("online", () => {
+    if (cerradoManualmente || movidoAOtroDispositivo) return;
+    if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch (e) { /* ya cerrada */ } }
+    else if (!ws) { intentosReconexion = 0; conectar(); }
+  });
 
   // ---------------------------------------------------------------------
   // Envío de texto
@@ -1792,9 +2919,26 @@
     if (!atendidoPorAsesor) return; // el bot no procesa notas de voz
     iniciarGrabacionAudio();
   });
-  $textoInput.addEventListener("input", actualizarIconoEnviar);
+  // La caja crece con el texto (salta de línea en vez de desplazar el texto a la derecha).
+  const TEXTO_ALTO_MAX = 120;
+  function ajustarAltoTexto() {
+    $textoInput.style.height = "auto";
+    const alto = $textoInput.scrollHeight;
+    $textoInput.style.height = Math.max(40, Math.min(alto, TEXTO_ALTO_MAX)) + "px";
+    $textoInput.style.overflowY = alto > TEXTO_ALTO_MAX ? "auto" : "hidden";
+  }
+  (function () { // también reacciona a cambios por código (.value = "")
+    const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+    Object.defineProperty($textoInput, "value", {
+      get() { return desc.get.call($textoInput); },
+      set(v) { desc.set.call($textoInput, v); ajustarAltoTexto(); },
+      configurable: true,
+    });
+  })();
+  $textoInput.addEventListener("input", () => { ajustarAltoTexto(); actualizarIconoEnviar(); });
+  // Enter envía; Shift+Enter hace un salto de línea.
   $textoInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") enviarTexto();
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); enviarTexto(); }
   });
   actualizarIconoEnviar();
 
@@ -1808,6 +2952,16 @@
   root.querySelector('[data-tipo="documento"]').addEventListener("click", () => {
     $adjuntarMenu.classList.remove("abierto");
     $archivoInputDocumento.click();
+  });
+  // "Fotos": abre directo el selector de imágenes del celular (en Android, el selector de fotos con las más
+  // recientes primero). El navegador no deja leer la galería por su cuenta, así que el usuario toca la foto.
+  root.querySelector('[data-tipo="fotos"]').addEventListener("click", () => {
+    $adjuntarMenu.classList.remove("abierto");
+    $archivoInputFotos.click();
+  });
+  $archivoInputFotos.addEventListener("change", (e) => {
+    if (e.target.files.length > 0) subirArchivo(e.target.files[0]);
+    e.target.value = "";
   });
   root.querySelector('[data-tipo="camara"]').addEventListener("click", () => {
     $adjuntarMenu.classList.remove("abierto");
@@ -1866,7 +3020,11 @@
 
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      // Sin restricciones el navegador entrega 640x480. Se pide la máxima resolución que la cámara permita
+      // (ideal 4K; el navegador baja a lo que soporte el dispositivo).
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 2160 } },
+      });
     } catch (e1) {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -1884,14 +3042,33 @@
     }
 
     overlay.querySelector(".camara-cancelar").addEventListener("click", cerrarCamara);
-    overlay.querySelector(".camara-tomar").addEventListener("click", () => {
+    // Foto fija a resolución completa del sensor (Chrome/Android y otros con ImageCapture); si no existe,
+    // se captura el cuadro del video, que ya viene a la máxima resolución pedida arriba.
+    const MAX_BYTES_FOTO = 9.5 * 1024 * 1024; // el servidor acepta hasta 10 MB
+    async function blobDesdeVideo() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext("2d").drawImage(video, 0, 0);
-      canvas.toBlob((blob) => {
-        cerrarCamara();
-        if (blob) subirArchivo(blob, `foto-${Date.now()}.jpg`);
-      }, "image/jpeg", 0.9);
+      for (const calidad of [0.95, 0.85, 0.75]) {
+        const b = await new Promise((r) => canvas.toBlob(r, "image/jpeg", calidad));
+        if (b && b.size <= MAX_BYTES_FOTO) return b;
+      }
+      return null;
+    }
+    overlay.querySelector(".camara-tomar").addEventListener("click", async (ev) => {
+      ev.currentTarget.disabled = true;
+      let blob = null;
+      try {
+        const track = stream.getVideoTracks()[0];
+        if (window.ImageCapture && track) {
+          const foto = await new window.ImageCapture(track).takePhoto();
+          if (foto && foto.size <= MAX_BYTES_FOTO) blob = foto;
+        }
+      } catch (e) { blob = null; }
+      if (!blob) blob = await blobDesdeVideo();
+      cerrarCamara();
+      if (blob) subirArchivo(blob, `foto-${Date.now()}.jpg`);
+      else agregarMensaje("⚠️ La foto es demasiado pesada. Intenta de nuevo.", "sistema");
     });
   }
 

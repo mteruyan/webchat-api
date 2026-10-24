@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Consola de Asesor — Sanitas</title>
 <style>
   :root {
@@ -94,9 +95,9 @@
   #ayudaBotCabecera .datos { font-size: 12px; color: var(--texto-suave); }
   #ayudaBotMensajes { flex: 1; overflow-y: auto; padding: 14px 16px; background: var(--fondo); }
   #ayudaBotMensajes .msg { max-width: 85%; }
-  #ayudaBotEntrada { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--borde); }
-  #ayudaBotEntrada input { flex: 1; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
-  #ayudaBotEntrada input:focus { outline: none; border-color: var(--azul); }
+  #ayudaBotEntrada { display: flex; align-items: flex-end; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--borde); }
+  #ayudaBotEntrada textarea { flex: 1; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; resize: none; overflow-y: hidden; line-height: 1.4; min-height: 40px; max-height: 140px; box-sizing: border-box; }
+  #ayudaBotEntrada textarea:focus { outline: none; border-color: var(--azul); }
   #ayudaBotAviso { display: none; background: #FDF3E7; color: #8A5A15; font-size: 12.5px; padding: 8px 16px; border-bottom: 1px solid #F0D9B5; }
   #ayudaBotAviso.activa { display: block; }
 
@@ -128,6 +129,23 @@
   #modalNota input, #modalNota textarea { width: 100%; padding: 9px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; margin-bottom: 14px; }
   #modalNota textarea { min-height: 110px; resize: vertical; }
   #modalNota .botones { display: flex; gap: 8px; justify-content: flex-end; }
+
+  #modalRecOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
+  #modalRecOverlay.activa { display: flex; }
+  #modalRec { background: white; border-radius: 14px; padding: 22px; width: 440px; max-width: 94vw; max-height: 88vh; overflow-y: auto; }
+  #modalRec h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalRec p { margin: 0 0 12px; font-size: 13px; color: var(--texto-suave); }
+  #modalRec label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 4px; color: var(--texto-suave); }
+  #modalRec input, #modalRec select, #modalRec textarea { width: 100%; padding: 8px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; margin-bottom: 12px; box-sizing: border-box; }
+  #modalRec textarea { min-height: 80px; resize: vertical; }
+  #modalRec .fila-rec { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  #modalRec .fila-rec span { font-size: 12.5px; width: 78px; flex-shrink: 0; color: var(--texto-suave); }
+  #modalRec .fila-rec input { margin-bottom: 0; }
+  #modalRec .botones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  #modalRec .rec-lista { border-top: 1px solid var(--borde); margin-top: 14px; padding-top: 10px; font-size: 12.5px; }
+  #modalRec .rec-item { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 4px 0; }
+  #modalRec .rec-item small { color: var(--texto-suave); }
+  #modalRec .rec-msg { color: #b3261e; font-size: 12.5px; min-height: 16px; }
 
   #modalTransferirOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1000; align-items: center; justify-content: center; }
   #modalTransferirOverlay.activa { display: flex; }
@@ -267,7 +285,14 @@
   .msg-imagen { display: block; max-width: 240px; width: 100%; border-radius: 10px; cursor: pointer; }
   #lightboxOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.85); z-index: 2000; align-items: center; justify-content: center; padding: 24px; }
   #lightboxOverlay.activa { display: flex; }
-  #lightboxOverlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  #lightboxOverlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); transform-origin: center center; user-select: none; -webkit-user-drag: none; touch-action: none; cursor: zoom-in; }
+  #lightboxOverlay img.zoom { cursor: grab; }
+  #lightboxOverlay img.arrastrando { cursor: grabbing; }
+  #lightboxOverlay .lb-barra { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; background: rgba(20,30,45,.88); border-radius: 999px; padding: 6px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #lightboxOverlay .lb-barra button { background: none; border: none; color: white; font-size: 20px; line-height: 1; min-width: 38px; height: 38px; border-radius: 999px; cursor: pointer; font-family: inherit; }
+  #lightboxOverlay .lb-barra button:hover { background: rgba(255,255,255,.18); }
+  #lightboxOverlay .lb-barra .lb-pct { color: white; font-size: 13px; min-width: 48px; text-align: center; }
+  #lightboxOverlay .lb-barra .lb-sep { width: 1px; height: 22px; background: rgba(255,255,255,.3); margin: 0 4px; }
   #lightboxOverlay .cerrar { position: absolute; top: 16px; right: 20px; color: white; font-size: 32px; line-height: 1; cursor: pointer; background: none; border: none; opacity: .85; }
   #lightboxOverlay .cerrar:hover { opacity: 1; }
 
@@ -278,8 +303,8 @@
   .msg-opciones .opcion-chip:last-child { margin-bottom: 0; }
 
   #entrada { display: none; gap: 8px; padding: 12px 16px; background: white; border-top: 1px solid var(--borde); }
-  #entrada.activa { display: flex; }
-  #texto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 999px; font-size: 14px; font-family: inherit; }
+  #entrada.activa { display: flex; align-items: flex-end; }
+  #texto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 20px; font-size: 14px; font-family: inherit; resize: none; overflow-y: hidden; line-height: 1.4; min-height: 40px; max-height: 140px; box-sizing: border-box; }
   #texto:focus { outline: none; border-color: var(--azul); }
   #btnAdjuntar { background: #EEF3F8; color: var(--azul); border: none; border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   #btnAdjuntar:hover { background: #E1EBF5; }
@@ -448,8 +473,8 @@ body.sofi .msg { border-radius: 4px 16px 16px 16px; padding: 12px 14px; font-siz
 body.sofi .usuario { background: #fff; border: 1px solid var(--borde); }
 body.sofi .asesor { background: var(--azul); color: #fff; border-radius: 16px 4px 16px 16px; }
 body.sofi .bot { background: #E6EDF5; border: 0; color: var(--texto-suave); border-radius: 10px; padding: 5px 12px; font-size: 12px; }
-body.sofi #entrada { padding: 14px 24px; gap: 10px; align-items: center; }
-body.sofi #texto { height: 46px; border-radius: var(--radio); border: 1.5px solid var(--borde-fuerte); padding: 0 14px; }
+body.sofi #entrada { padding: 14px 24px; gap: 10px; align-items: flex-end; }
+body.sofi #texto { min-height: 46px; border-radius: var(--radio); border: 1.5px solid var(--borde-fuerte); padding: 12px 14px; }
 body.sofi #btnAdjuntar, body.sofi #btnEmoji, body.sofi #btnRespuestasRapidas { background: var(--fondo); color: var(--texto-suave); border-radius: var(--radio); width: 44px; height: 44px; }
 body.sofi #btnEnviar { height: 46px; min-width: 46px; border-radius: var(--radio); }
 body.sofi #btnCerrar { height: 46px; background: var(--azul); color: #fff; border: 0; }
@@ -463,7 +488,12 @@ body.sofi-con-chat #datosAfiliado { display: flex; }
 #datosAfiliado dt { font-size: 12px; color: var(--texto-suave); }
 #datosAfiliado dd { margin: 3px 0 0; font-size: 14px; font-weight: 600; word-break: break-word; }
 #datosAfiliado .bloque-tiempos { background: var(--fondo); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #2E4560; }
-@media (max-width: 1280px) { #datosAfiliado { display: none !important; } }
+@media (max-width: 1280px) { #datosAfiliado { display: none !important; } #btnDatosAfiliado { display: none !important; } }
+/* El asesor decide si ve la columna (por defecto oculta, para dar todo el ancho al chat) */
+body:not(.mostrar-datos-afiliado) #datosAfiliado { display: none !important; }
+#panel .chat-header .btn-datos-afiliado { margin-left: auto; background: white; color: var(--azul); border: 1.5px solid var(--borde-fuerte, #C9D6E2); border-radius: 999px; padding: 6px 14px; min-height: 0; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+#panel .chat-header .btn-datos-afiliado[aria-pressed="true"] { background: var(--azul); color: #fff; border-color: var(--azul); }
+#datosAfiliado .cerrar-datos { float: right; background: none; border: 0; min-height: 0; padding: 0 4px; font-size: 16px; color: var(--texto-suave); cursor: pointer; }
 
 /* ---------- Tablas / paneles genéricos (dashboard, supervisor, editor) ---------- */
 body.sofi table { border-collapse: collapse; }
@@ -471,7 +501,7 @@ body.sofi th { font-weight: 700; color: var(--texto-suave); }
 .sofi-card, body.sofi .panel, body.sofi .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 16px; }
 
 /* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
-body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnAyudarBot,
+body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
 body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
 body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi { display: none !important; }
 body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
@@ -548,6 +578,57 @@ body.sofi .conv-item .badge { background: var(--coral); }
 .acciones-supervisor { max-width: 456px; }          /* 4 + 3 */
 @media (min-width: 1560px) { .acciones-supervisor { max-width: none; } }
 
+/* Cabecera de la conversación más compacta en pantallas grandes (deja más alto para el chat) */
+@media (min-width: 901px) {
+  body.sofi #panel .chat-header, body.sofi #panel .panel-header { padding: 6px 16px; gap: 4px 10px; }
+  body.sofi #panel .chat-header .avatar, body.sofi #panel .panel-header .avatar { width: 32px; height: 32px; font-size: 12px; }
+  body.sofi #panel .chat-header .nombre, body.sofi #panel .panel-header .nombre { font-size: 14.5px; line-height: 1.25; }
+  #panel .chat-header .telefono, #panel .panel-header .telefono { display: inline-block; margin-right: 10px; font-size: 12px; line-height: 1.3; }
+  #panel .chat-header .codigo-sesion { font-size: 11px; line-height: 1.2; }
+  #panel .cab-info { flex: 0 0 auto; }
+  #panel .cab-info .nombre { white-space: nowrap; }
+  #panel .chat-header .bandera-selector, #panel .panel-header .bandera-selector { align-self: center; }
+  #panel .tiempos-cab { display: flex; gap: 12px; margin-left: 4px !important; font-size: 11.5px; line-height: 1.3 !important; white-space: nowrap; }
+  #panel .chat-header .btn-datos-afiliado { padding: 4px 10px; font-size: 12px; }
+  #panel .acciones-top { flex: 1 1 auto; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+  body.sofi #panel .acciones-conv { flex: 0 1 auto; max-width: none !important; gap: 5px; justify-content: flex-end; }
+  body.sofi #panel .acciones-conv > * {
+    width: auto !important; min-width: 0 !important; max-width: none !important;
+    height: 28px !important; min-height: 28px !important; padding: 0 9px !important;
+    font-size: 12px !important; border-radius: 8px !important; gap: 3px !important; }
+}
+
+.sofi-banner-login { position: absolute; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 11px 52px 11px 18px; background: #FFF1CC; color: #4D3800; border-bottom: 2px solid #F5A524; font-size: 14px; font-weight: 600; line-height: 1.4; text-align: center; box-shadow: 0 2px 8px rgba(10,30,50,.12); }
+.sofi-banner-login span { white-space: pre-line; }
+.sofi-banner-login button { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: 0; min-height: 0; padding: 4px 8px; font-size: 16px; line-height: 1; color: #4D3800; cursor: pointer; border-radius: 6px; }
+.sofi-banner-login button:hover { background: rgba(0,0,0,.08); }
+</style>
+<style id="sofi-nav-compacta">
+/* Barra lateral: botón para adelgazarla (solo iconos) y volver al tamaño normal */
+.sofi-nav .nav-logo .nav-toggle { margin-left: auto; width: 28px; height: 28px; flex: none; padding: 0; border: 0; border-radius: 8px; background: rgba(255,255,255,.10); color: #B9CDE2; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+.sofi-nav .nav-logo .nav-toggle:hover { background: rgba(255,255,255,.22); color: #fff; }
+.sofi-nav .nav-logo .nav-toggle:focus-visible { outline: 2px solid var(--turquesa, #1AA6B7); outline-offset: 2px; }
+.sofi-nav .nav-logo .nav-toggle svg { transition: transform .2s; }
+body.sofi { transition: grid-template-columns .2s ease; }
+body.sofi.nav-compacta { grid-template-columns: 72px minmax(0, 1fr); }
+body.sofi.nav-compacta .sofi-nav { padding: 16px 10px; align-items: center; gap: 16px; overflow-x: hidden; scrollbar-width: none; }
+body.sofi.nav-compacta .sofi-nav::-webkit-scrollbar { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-links { gap: 2px; }
+body.sofi.nav-compacta .sofi-nav .nav-logo { flex-direction: column; gap: 12px; padding: 0; }
+body.sofi.nav-compacta .sofi-nav .nav-logo b { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-logo .nav-toggle { margin-left: 0; }
+body.sofi.nav-compacta .sofi-nav .nav-logo .nav-toggle svg { transform: rotate(180deg); }
+body.sofi.nav-compacta .sofi-nav .nav-links { align-items: center; }
+body.sofi.nav-compacta .sofi-nav .nav-links a { position: relative; width: 44px; height: 40px; padding: 0; gap: 0; justify-content: center; }
+body.sofi.nav-compacta .sofi-nav .nav-links a > span:not(.insignia) { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-links a .insignia { position: absolute; top: 1px; right: 1px; margin: 0; min-width: 18px; height: 18px; padding: 0 4px; font-size: 11px; border-radius: 9px; }
+body.sofi.nav-compacta .sofi-nav .nav-seccion { width: 28px; height: 1px; padding: 0; margin: 0; font-size: 0; background: rgba(255,255,255,.18); }
+body.sofi.nav-compacta .sofi-nav .nav-usuario { padding: 10px 6px; align-items: center; gap: 10px; background: none; border-color: transparent; }
+body.sofi.nav-compacta .sofi-nav .nav-usuario .fila > div:last-child { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir { font-size: 0; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.08); }
+body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir::before { content: ""; width: 18px; height: 18px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/%3E%3Cpath d='m16 17 5-5-5-5'/%3E%3Cpath d='M21 12H9'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/%3E%3Cpath d='m16 17 5-5-5-5'/%3E%3Cpath d='M21 12H9'/%3E%3C/svg%3E") center / contain no-repeat; }
+body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgba(255,255,255,.18); }
+@media (prefers-reduced-motion: reduce) { body.sofi, .sofi-nav .nav-logo .nav-toggle svg { transition: none; } }
 </style>
 </head>
 <body>
@@ -563,14 +644,15 @@ body.sofi .conv-item .badge { background: var(--coral); }
       <div class="campo"><label for="usuario">Usuario</label><input id="usuario" type="text" placeholder="ej. vcapia" autocomplete="username" /></div>
       <div class="campo"><label for="password">Contraseña</label><div class="campo-clave"><input id="password" type="password" placeholder="Tu contraseña" autocomplete="current-password" />
         <button type="button" class="ver-clave" id="btnVerClave" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#5b6b7b;margin:2px 0 10px;cursor:pointer"><input type="checkbox" id="activar2fa" style="width:16px;height:16px;min-width:16px;padding:0;margin:0;flex:none" /> Configurar verificación en dos pasos</label>
       <button id="btnConectar">Ingresar</button>
       <details class="avanzado"><summary>Opciones avanzadas</summary><input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" /></details>
       <div class="login-pie">¿Problemas para ingresar? Contacta a tu supervisor.</div>
     </div></section>
   </div>
   <nav class="sofi-nav" aria-label="Menú principal">
-    <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b></div>
-    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Conversaciones</span><span class="insignia" id="insigAsesor" style="display:none"></span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
+    <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b><button type="button" class="nav-toggle" id="navToggle" aria-expanded="true" aria-label="Reducir barra lateral" title="Reducir barra lateral"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></button></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Conversaciones</span><span class="insignia" id="insigAsesor" style="display:none"></span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
     <div class="nav-seccion">Ir a</div>
     <div class="nav-links"><a href="/supervisor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Supervisor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a><a href="/dashboard" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
     <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Asesor</small></div></div>
@@ -584,6 +666,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
     <span class="stats-conexion" id="statsConexion" title="Tiempo de hoy"></span>
     <button class="chico gris" id="btnBuscar" title="Buscar una conversación por celular, DNI o nombre">🔎 Buscar</button>
     <button class="chico gris" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
+    <button class="chico gris" id="btnArchivoSms" title="Subir un PDF o imagen y enviarle al cliente un enlace único por SMS">📎 Enviar archivo</button>
     <button class="chico gris" id="btnAyudarBot" title="Ayudar a una persona que todavía está navegando el bot o en cola">🧭 Ayudar en el bot</button>
     <button id="btnPausa">⏸ Pausar</button>
     <button class="btn-salir" id="btnSalir">Cerrar sesión</button>
@@ -603,17 +686,19 @@ body.sofi .conv-item .badge { background: var(--coral); }
     <div id="panel">
       <div class="chat-header" id="chatHeader">
         <div class="avatar" id="chatAvatar"></div>
-        <div>
+        <div class="cab-info">
           <div class="nombre" id="chatNombre"></div>
           <div class="telefono" id="chatTelefono"></div>
           <div class="telefono" id="chatDni"></div>
           <div class="codigo-sesion" id="chatCodigo" title="Código único de esta sesión de chat"></div>
         </div>
-        <div id="chatTiempos" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
+        <div id="chatTiempos" class="tiempos-cab" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
           <div>⏱ Esperó: <b id="tiempoEspera">--</b></div>
           <div>🕐 En atención: <b id="tiempoAtencion">--</b></div>
         </div>
-        <div class="bandera-selector" style="margin-left:auto;">
+        <button id="btnDatosAfiliado" class="btn-datos-afiliado" type="button" aria-pressed="false"
+                title="Mostrar u ocultar la columna de datos del afiliado">👤 Datos del afiliado</button>
+        <div class="bandera-selector">
           <button id="btnBandera" type="button" title="Marcar conversación">
             <span class="bandera-dot blanco" id="banderaDotActual"></span>
           </button>
@@ -630,6 +715,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
         <button class="chico gris" id="btnPausarConv" title="Pausar o reanudar esta conversación: la pasa a la bandeja 'Pausados' mientras esperas que el cliente responda">⏸ Pausar</button>
         <button class="chico gris" id="btnAvisoInactividad" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
         <button class="chico gris" id="btnTransferir" title="Transferir esta conversación a otro asesor">🔀 Transf.</button>
+        <button class="chico gris" id="btnRecordatorio" title="Programar recordatorios por SMS para las próximas entregas de una receta extendida">💊 Recordat.</button>
         <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones de este usuario">🕘 Histor.</button></div>
       </div>
       <div id="notaClienteBanner">
@@ -643,7 +729,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
         <button id="btnCancelarResponder" type="button" aria-label="Cancelar respuesta">✕</button>
       </div>
       <div id="entrada">
-        <input id="texto" placeholder="Escribe tu respuesta..." spellcheck="true" lang="es" />
+        <textarea id="texto" rows="1" placeholder="Escribe tu respuesta..." spellcheck="true" lang="es"></textarea>
         <div id="emojiWrap">
           <button id="btnEmoji" type="button" title="Emojis">😊</button>
           <div id="emojiPopover"></div>
@@ -662,7 +748,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
         <button id="btnCerrar" title="Cerrar la conversación y elegir su etiqueta de cierre">✅ Cerrar</button>
       </div>
     </div>
-    <aside id="datosAfiliado" aria-label="Datos del afiliado"><h2>Datos del afiliado</h2>
+    <aside id="datosAfiliado" aria-label="Datos del afiliado"><h2>Datos del afiliado<button type="button" class="cerrar-datos" id="btnCerrarDatosAfiliado" aria-label="Ocultar datos del afiliado" title="Ocultar">✕</button></h2>
       <dl><div><dt>Nombre</dt><dd id="dNombre">—</dd></div><div><dt>DNI</dt><dd id="dDni">—</dd></div><div><dt>Celular</dt><dd id="dCelular">—</dd></div><div><dt>Código de sesión</dt><dd id="dCodigo">—</dd></div></dl>
       <div class="bloque-tiempos"><span>⏱ Esperó: <b id="dEspera">--</b></span><span>🕐 En atención: <b id="dAtencion">--</b></span></div></aside>
   </div>
@@ -694,11 +780,47 @@ body.sofi .conv-item .badge { background: var(--coral); }
     </div>
   </div>
 
+  <div id="modalRecOverlay">
+    <div id="modalRec">
+      <h3>💊 Recordatorio de receta extendida</h3>
+      <p>Se enviará un SMS al paciente en cada fecha para que coordine la siguiente entrega (máx. 30 días de medicamentos por entrega). La entrega de hoy es la primera.</p>
+      <label for="recCelular">Celular del paciente</label>
+      <input id="recCelular" type="text" inputmode="numeric" placeholder="9XXXXXXXX" />
+      <label for="recDias">Duración total de la receta</label>
+      <select id="recDias">
+        <option value="60">60 días (2 entregas)</option>
+        <option value="90" selected>90 días (3 entregas)</option>
+        <option value="120">120 días (4 entregas)</option>
+        <option value="150">150 días (5 entregas)</option>
+        <option value="180">180 días (6 entregas)</option>
+      </select>
+      <label>Fechas de envío (puedes cambiarlas)</label>
+      <div id="recFechas"></div>
+      <label for="recMensaje" style="margin-top:10px">Mensaje</label>
+      <textarea id="recMensaje"></textarea>
+      <p style="margin:-6px 0 8px;font-size:11.5px">{{NOMBRE}}, {{ENTREGA}} y {{TOTAL}} se reemplazan solos. Máx. 300 caracteres.</p>
+      <div class="rec-msg" id="recError"></div>
+      <div class="botones">
+        <button class="gris" id="btnCerrarRec">Cerrar</button>
+        <button id="btnGuardarRec">Programar</button>
+      </div>
+      <div class="rec-lista" id="recLista"></div>
+    </div>
+  </div>
+
   <div id="tooltipUltimoMensaje"></div>
 
   <div id="lightboxOverlay">
     <button class="cerrar" id="btnCerrarLightbox">✕</button>
     <img src="" alt="" />
+    <div class="lb-barra" id="lbBarra">
+      <button type="button" id="lbMenos" title="Alejar (-)" aria-label="Alejar">&minus;</button>
+      <span class="lb-pct" id="lbPct">100%</span>
+      <button type="button" id="lbMas" title="Acercar (+)" aria-label="Acercar">+</button>
+      <button type="button" id="lbReset" title="Tamaño original (0)" aria-label="Restablecer zoom" style="font-size:13px;">100%</button>
+      <span class="lb-sep"></span>
+      <button type="button" id="lbDescargar" title="Descargar imagen" aria-label="Descargar imagen">&#11015;</button>
+    </div>
   </div>
 
   <div id="modalHistorialOverlay">
@@ -752,6 +874,22 @@ body.sofi .conv-item .badge { background: var(--coral); }
     </div>
   </div>
 
+  <div id="modalArchivoSmsOverlay" style="display:none;position:fixed;inset:0;background:rgba(10,20,30,.4);z-index:1003;align-items:center;justify-content:center;">
+    <div style="background:white;border-radius:14px;padding:22px;width:420px;max-width:94vw;display:flex;flex-direction:column;">
+      <h3 style="margin:0 0 8px;font-size:16px;">Enviar un archivo por SMS</h3>
+      <p style="margin:0 0 12px;font-size:12.5px;color:var(--texto-suave);">Sube un PDF o una imagen. Al cliente le llega un SMS con un enlace único (un solo uso, vence en 7 días) que abre el webchat con el archivo ya dentro de la conversación.</p>
+      <input id="archivoSmsCelular" inputmode="numeric" maxlength="15" placeholder="Celular (9 dígitos, ej. 987654321)" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:14px;font-family:inherit;" />
+      <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Archivo (PDF o imagen, máx. 10 MB)</label>
+      <input id="archivoSmsArchivo" type="file" accept="application/pdf,image/*" style="font-size:13px;" />
+      <div style="margin-top:10px;font-size:12px;color:var(--texto-suave);">SMS que recibirá: <i>“Sanitas: te enviamos un archivo. Ábrelo aquí y te atendemos: (enlace)”</i></div>
+      <div id="archivoSmsEstado" style="min-height:20px;margin-top:10px;font-size:12.5px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button class="gris" id="btnCancelarArchivoSms" type="button">Cerrar</button>
+        <button id="btnEnviarArchivoSms" type="button">Enviar archivo</button>
+      </div>
+    </div>
+  </div>
+
   <div id="modalBuscarOverlay">
     <div class="modal-buscar">
       <h3>Buscar conversación</h3>
@@ -793,7 +931,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
       <div id="ayudaBotAviso"></div>
       <div id="ayudaBotMensajes"></div>
       <div id="ayudaBotEntrada">
-        <input id="ayudaBotTexto" placeholder="Escribe un mensaje para esta persona..." autocomplete="off" />
+        <textarea id="ayudaBotTexto" rows="1" placeholder="Escribe un mensaje para esta persona..." autocomplete="off" spellcheck="true" lang="es"></textarea>
         <button id="btnAyudaBotEnviar">Enviar</button>
       </div>
     </div>
@@ -873,6 +1011,7 @@ function actualizarTiempos() {
 }
 let ws = null;
 let tokenGuardado = null;
+let tokenArchivoEn = 0;
 let tokenArchivo = null; // token de vida corta (5 min) solo para links de /archivo-receta y /conversacion-pdf
 let intervaloTokenArchivo = null;
 let urlBaseGuardada = null;
@@ -898,6 +1037,7 @@ async function refrescarTokenArchivo() {
     if (resp.ok) {
       const data = await resp.json();
       tokenArchivo = data.token;
+      tokenArchivoEn = Date.now();
     }
   } catch (e) { /* si falla, urlArchivo()/conversacion-pdf usan tokenGuardado como respaldo */ }
 }
@@ -906,6 +1046,64 @@ function iniciarRenovacionTokenArchivo() {
   if (intervaloTokenArchivo) clearInterval(intervaloTokenArchivo);
   intervaloTokenArchivo = setInterval(refrescarTokenArchivo, 4 * 60 * 1000);
 }
+
+// ---- Links de archivos ya dibujados ----
+// El token de archivo dura 5 minutos y cada link (PDF, imagen, audio) lo lleva
+// escrito en la URL al momento de DIBUJAR el mensaje. Si el mensaje se dibujó
+// hace más de 5 min (o el navegador pausó el temporizador de renovación con la
+// pestaña en segundo plano / PC suspendida), el link guarda un token vencido y
+// sale "Token inválido o expirado" aunque la sesión siga viva. Por eso, al
+// hacer clic se reemplaza por el token vigente, renovándolo antes si hace falta.
+const RUTAS_TOKEN_ARCHIVO = ['/archivo-receta?', '/conversacion-pdf?'];
+const TOKEN_ARCHIVO_FRESCO_MS = 3 * 60 * 1000;
+function esUrlConTokenArchivo(u) {
+  return typeof u === 'string' && RUTAS_TOKEN_ARCHIVO.some((r) => u.indexOf(r) !== -1);
+}
+function conTokenArchivoVigente(u) {
+  if (!esUrlConTokenArchivo(u) || !tokenArchivo) return u;
+  try {
+    const url = new URL(u, location.href);
+    url.searchParams.set('token', tokenArchivo);
+    return url.toString();
+  } catch (e) { return u; }
+}
+async function asegurarTokenArchivoFresco() {
+  if (tokenArchivo && Date.now() - tokenArchivoEn < TOKEN_ARCHIVO_FRESCO_MS) return;
+  await refrescarTokenArchivo();
+}
+document.addEventListener('click', (e) => {
+  const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if (!a || !esUrlConTokenArchivo(a.href)) return;
+  if (tokenArchivo && Date.now() - tokenArchivoEn < TOKEN_ARCHIVO_FRESCO_MS) {
+    a.href = conTokenArchivoVigente(a.href);   // token vigente: se abre normal
+    return;
+  }
+  // Token viejo: se renueva y recién entonces se abre.
+  e.preventDefault();
+  const destino = a.target || '_blank';
+  const bruta = a.href;
+  asegurarTokenArchivoFresco().then(() => {
+    const u = conTokenArchivoVigente(bruta);
+    a.href = u;
+    const w = window.open(u, destino, 'noopener');
+    if (!w) location.href = u;   // popup bloqueado: se abre en esta misma pestaña
+  });
+}, true);
+// Audios: se reproducen desde la URL guardada, así que también se actualizan al darle play.
+document.addEventListener('play', (e) => {
+  const el = e.target;
+  if (el && el.tagName === 'AUDIO' && esUrlConTokenArchivo(el.currentSrc || el.src)) {
+    if (Date.now() - tokenArchivoEn >= TOKEN_ARCHIVO_FRESCO_MS) {
+      const t = el.currentTime;
+      el.src = conTokenArchivoVigente(el.currentSrc || el.src);
+      el.currentTime = t; el.play().catch(() => {});
+    }
+  }
+}, true);
+// Al volver a la pestaña / reconectar la red se renueva de inmediato (los temporizadores se pausan en segundo plano).
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescarTokenArchivo(); });
+window.addEventListener('focus', () => { refrescarTokenArchivo(); });
+window.addEventListener('online', () => { refrescarTokenArchivo(); });
 
 function escapeHtml(valor) {
   return String(valor ?? '')
@@ -935,16 +1133,116 @@ function esAudio(ruta) {
 }
 
 function abrirLightbox(url) {
+  lbReset();
+  url = conTokenArchivoVigente(url);
+  lbUrl = url;
   document.querySelector('#lightboxOverlay img').src = url;
   document.getElementById('lightboxOverlay').classList.add('activa');
 }
 function cerrarLightbox() {
   document.getElementById('lightboxOverlay').classList.remove('activa');
   document.querySelector('#lightboxOverlay img').src = '';
+  lbUrl = '';
+  lbReset();
 }
+// ---- Zoom, arrastre y descarga de la imagen ampliada ----
+let lbUrl = '', lbEsc = 1, lbX = 0, lbY = 0, lbMovio = false;
+const LB_MIN = 0.5, LB_MAX = 6;
+function lbAplicar() {
+  const img = document.querySelector('#lightboxOverlay img');
+  img.style.transform = 'translate(' + lbX + 'px,' + lbY + 'px) scale(' + lbEsc + ')';
+  img.classList.toggle('zoom', lbEsc > 1);
+  document.getElementById('lbPct').textContent = Math.round(lbEsc * 100) + '%';
+}
+function lbReset() { lbEsc = 1; lbX = 0; lbY = 0; lbAplicar(); }
+function lbZoom(nuevo) {
+  lbEsc = Math.min(LB_MAX, Math.max(LB_MIN, nuevo));
+  if (lbEsc <= 1) { lbX = 0; lbY = 0; }
+  lbAplicar();
+}
+document.getElementById('lbMas').onclick = (e) => { e.stopPropagation(); lbZoom(lbEsc * 1.25); };
+document.getElementById('lbMenos').onclick = (e) => { e.stopPropagation(); lbZoom(lbEsc / 1.25); };
+document.getElementById('lbReset').onclick = (e) => { e.stopPropagation(); lbReset(); };
+(function () {
+  const ov = document.getElementById('lightboxOverlay');
+  const img = ov.querySelector('img');
+  ov.addEventListener('wheel', (e) => {
+    if (!ov.classList.contains('activa')) return;
+    e.preventDefault();
+    lbZoom(lbEsc * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+  }, { passive: false });
+  img.addEventListener('dblclick', (e) => { e.preventDefault(); lbEsc > 1 ? lbReset() : lbZoom(2.5); });
+  // Arrastrar para mover la imagen cuando está ampliada (mouse, dedo y lápiz) + pellizco con dos dedos.
+  const punt = new Map(); let ini = null, distIni = 0, escIni = 1;
+  img.addEventListener('pointerdown', (e) => {
+    punt.set(e.pointerId, { x: e.clientX, y: e.clientY }); lbMovio = false;
+    try { img.setPointerCapture(e.pointerId); } catch (err) {}
+    if (punt.size === 2) { const [a, b] = [...punt.values()]; distIni = Math.hypot(a.x - b.x, a.y - b.y); escIni = lbEsc; }
+    else ini = { x: e.clientX, y: e.clientY, bx: lbX, by: lbY };
+    if (lbEsc > 1) img.classList.add('arrastrando');
+  });
+  img.addEventListener('pointermove', (e) => {
+    if (!punt.has(e.pointerId)) return;
+    punt.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (punt.size === 2 && distIni) {
+      const [a, b] = [...punt.values()]; lbMovio = true;
+      lbZoom(escIni * Math.hypot(a.x - b.x, a.y - b.y) / distIni);
+    } else if (ini && lbEsc > 1) {
+      const dx = e.clientX - ini.x, dy = e.clientY - ini.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) lbMovio = true;
+      lbX = ini.bx + dx; lbY = ini.by + dy; lbAplicar();
+    }
+  });
+  const fin = (e) => { punt.delete(e.pointerId); img.classList.remove('arrastrando'); distIni = 0; ini = null; setTimeout(() => { lbMovio = false; }, 0); };
+  img.addEventListener('pointerup', fin); img.addEventListener('pointercancel', fin);
+  document.addEventListener('keydown', (e) => {
+    if (!ov.classList.contains('activa')) return;
+    if (e.key === 'Escape') cerrarLightbox();
+    else if (e.key === '+' || e.key === '=') lbZoom(lbEsc * 1.25);
+    else if (e.key === '-' || e.key === '_') lbZoom(lbEsc / 1.25);
+    else if (e.key === '0') lbReset();
+  });
+})();
+async function lbDescargar() {
+  if (!lbUrl) return;
+  await asegurarTokenArchivoFresco();
+  const url = conTokenArchivoVigente(lbUrl);
+  // Imágenes del cliente: el servidor firma la URL con "attachment" y el navegador
+  // la descarga directo (el bucket es de otro dominio, un fetch fallaría por CORS).
+  if (url.indexOf('/archivo-receta') !== -1) {
+    const a = document.createElement('a');
+    a.href = url + (url.indexOf('?') === -1 ? '?' : '&') + 'descargar=1';
+    a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    return;
+  }
+  // Nombre: el del archivo en la URL si lo tiene; si no, uno genérico con fecha.
+  let nombre = '';
+  try { nombre = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || ''); } catch (e) {}
+  if (!/\.(png|jpe?g|gif|webp|heic|bmp)$/i.test(nombre)) nombre = 'imagen-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const blob = await r.blob();
+    if (!/\.[a-z0-9]{3,4}$/i.test(nombre)) {
+      const ext = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic' })[blob.type] || 'jpg';
+      nombre += '.' + ext;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    // Si el navegador no deja leer la imagen (CORS), se descarga directo / se abre en otra pestaña.
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre; a.target = '_blank'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+}
+document.getElementById('lbDescargar').onclick = (e) => { e.stopPropagation(); lbDescargar(); };
 document.getElementById('btnCerrarLightbox').onclick = cerrarLightbox;
 document.getElementById('lightboxOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'lightboxOverlay') cerrarLightbox();
+  if (e.target.id === 'lightboxOverlay' && !lbMovio) cerrarLightbox();
 });
 
 function iniciales(nombre) {
@@ -1212,6 +1510,83 @@ document.getElementById('btnGuardarNota').onclick = async () => {
   }
 };
 
+// ---- Recordatorios SMS de recetas extendidas ----
+let recCtx = null;
+function recEsc(t) { const d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
+function recSumarMeses(isoHoy, k) {
+  const [a, m, d] = isoHoy.split('-').map(Number);
+  const tot = (m - 1) + k;
+  const anio = a + Math.floor(tot / 12), mes = tot % 12;
+  const ultimo = new Date(Date.UTC(anio, mes + 1, 0)).getUTCDate();
+  return `${anio}-${String(mes + 1).padStart(2, '0')}-${String(Math.min(d, ultimo)).padStart(2, '0')}`;
+}
+function recPintarFechas() {
+  const entregas = Math.ceil(parseInt(document.getElementById('recDias').value, 10) / 30);
+  let h = '';
+  for (let k = 1; k < entregas; k++) {
+    h += `<div class="fila-rec"><span>Entrega ${k + 1} de ${entregas}</span><input type="date" class="rec-fecha" min="${recCtx.hoy}" value="${recSumarMeses(recCtx.hoy, k)}"></div>`;
+  }
+  document.getElementById('recFechas').innerHTML = h;
+}
+async function recCargar() {
+  const cont = document.getElementById('recLista');
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/recordatorios-receta/${activaId}`, { headers: { Authorization: `Bearer ${tokenGuardado}` } });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { document.getElementById('recError').textContent = data.detail || 'No se pudo cargar.'; return; }
+    recCtx = data;
+    document.getElementById('recCelular').value = data.celular ? data.celular.slice(-9) : '';
+    if (!document.getElementById('recMensaje').value) document.getElementById('recMensaje').value = data.mensaje_defecto;
+    recPintarFechas();
+    const est = { pendiente: '⏳ Pendiente', enviando: '📤 Enviando', enviado: '✅ Enviado', error: '⚠️ Error' };
+    cont.innerHTML = data.items.length
+      ? '<b>Programados para este paciente</b>' + data.items.map(i =>
+          `<div class="rec-item"><div>${recEsc(i.fecha_envio.split('-').reverse().join('/'))} · entrega ${i.entrega_n}/${i.entregas_total} · ${est[i.estado] || i.estado}<br><small>***${recEsc(i.celular.slice(-3))}${i.programado_por ? ' · por ' + recEsc(i.programado_por) : ''}${i.error ? ' · ' + recEsc(i.error) : ''}</small></div>` +
+          (i.estado === 'pendiente' || i.estado === 'error' ? `<button class="chico gris" data-cancelar-rec="${i.id}">Cancelar</button>` : '') + '</div>').join('')
+      : '<small>Aún no hay recordatorios programados.</small>';
+    cont.querySelectorAll('[data-cancelar-rec]').forEach(b => b.onclick = async () => {
+      if (!confirm('¿Cancelar este recordatorio?')) return;
+      const r = await fetch(`${urlBaseGuardada}/recordatorios-receta/${b.dataset.cancelarRec}`, { method: 'DELETE', headers: { Authorization: `Bearer ${tokenGuardado}` } });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.detail || 'No se pudo cancelar.'); }
+      recCargar();
+    });
+  } catch (e) { document.getElementById('recError').textContent = 'No se pudo cargar.'; }
+}
+document.getElementById('btnRecordatorio').onclick = () => {
+  if (!activaId) return;
+  document.getElementById('recError').textContent = '';
+  document.getElementById('recMensaje').value = '';
+  document.getElementById('recFechas').innerHTML = '';
+  document.getElementById('recLista').innerHTML = '';
+  document.getElementById('modalRecOverlay').classList.add('activa');
+  recCargar();
+};
+document.getElementById('recDias').onchange = () => { if (recCtx) recPintarFechas(); };
+document.getElementById('btnCerrarRec').onclick = () => document.getElementById('modalRecOverlay').classList.remove('activa');
+document.getElementById('btnGuardarRec').onclick = async () => {
+  const err = document.getElementById('recError');
+  err.textContent = '';
+  const fechas = [...document.querySelectorAll('.rec-fecha')].map(i => i.value);
+  if (!fechas.length || fechas.some(f => !f)) { err.textContent = 'Completa todas las fechas.'; return; }
+  const btn = document.getElementById('btnGuardarRec');
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/recordatorios-receta/${activaId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenGuardado}` },
+      body: JSON.stringify({
+        celular: document.getElementById('recCelular').value,
+        dias_receta: parseInt(document.getElementById('recDias').value, 10),
+        fechas, mensaje: document.getElementById('recMensaje').value,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { err.textContent = data.detail || 'No se pudo programar.'; return; }
+    recCargar();
+  } catch (e) { err.textContent = 'No se pudo programar.'; }
+  finally { btn.disabled = false; }
+};
+
 // El bot guarda los menús como JSON crudo (tipo_contenido "opciones") — acá
 // se intenta parsear para mostrar cada botón como una lista legible, en vez
 // del texto JSON tal cual. Si no se puede parsear, devuelve null y el llamador
@@ -1434,7 +1809,7 @@ function renderChat() {
       const check = document.createElement('span');
       check.className = 'check';
       check.style.cssText = 'font-size:11px;margin-left:4px;opacity:.85;';
-      check.textContent = m.leido ? '✓✓' : '✓';
+      check.textContent = m.pendiente ? '🕓' : (m.leido ? '✓✓' : '✓');
       div.appendChild(check);
     }
     const emojisUsados = Object.entries(m.reacciones || {});
@@ -1455,9 +1830,29 @@ function renderChat() {
   chat.scrollTop = chat.scrollHeight;
 }
 
+// Llegó un evento de una conversación que esta consola no conoce (se perdió su 'nueva_asignacion',
+// p. ej. por una reconexión): se crea un borrador y se piden al servidor los datos completos
+// (nombre, celular, historial) para que no quede como "Usuario N".
+let _refrescoPedidoEn = 0;
+function asegurarConversacion(id) {
+  if (conversaciones[id]) return;
+  conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0, provisional: true };
+  pedirRefrescoConversaciones();
+}
+function pedirRefrescoConversaciones() {
+  const ahora = Date.now();
+  if (ahora - _refrescoPedidoEn < 1500) return;
+  _refrescoPedidoEn = ahora;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'refrescar_conversaciones', payload: {} }));
+}
+// Si alguna conversación sigue sin datos, se reintenta cada 10 s.
+setInterval(() => {
+  if (Object.values(conversaciones).some(c => c && c.provisional)) pedirRefrescoConversaciones();
+}, 10000);
+
 function agregarArchivo(id, ruta, extra) {
   extra = extra || {};
-  if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+  asegurarConversacion(id);
   conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'usuario', ruta, hora: new Date().toISOString(),
                                       id: extra.mensajeId || null, respondidoA: extra.respondidoA || null });
   conversaciones[id].ultimaActividad = new Date().toISOString();
@@ -1471,9 +1866,10 @@ function agregarArchivo(id, ruta, extra) {
 
 function agregarMensaje(id, texto, tipo, extra) {
   extra = extra || {};
-  if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+  asegurarConversacion(id);
   conversaciones[id].mensajes.push({ texto, tipo, leido: false, hora: new Date().toISOString(),
-                                      id: extra.mensajeId || null, respondidoA: extra.respondidoA || null });
+                                      id: extra.mensajeId || null, respondidoA: extra.respondidoA || null,
+                                      cid: extra.cid || null, pendiente: !!extra.cid });
   conversaciones[id].ultimaActividad = new Date().toISOString();
   if (String(activaId) === String(id)) {
     renderChat();
@@ -1507,17 +1903,19 @@ function reproducirAvisoNuevaConversacion() {
   try {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     const ahora = audioCtx.currentTime;
-    [[880, ahora], [1175, ahora + 0.14]].forEach(([frecuencia, inicio]) => {
+    // Patrón "ding-dong" repetido dos veces, con el mismo volumen y timbre que el
+    // aviso del widget, para que no pase desapercibido.
+    [[988, ahora], [740, ahora + 0.17], [988, ahora + 0.5], [740, ahora + 0.67]].forEach(([frecuencia, inicio]) => {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.type = 'sine';
+      osc.type = 'triangle';
       osc.frequency.value = frecuencia;
       gain.gain.setValueAtTime(0, inicio);
-      gain.gain.linearRampToValueAtTime(0.22, inicio + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, inicio + 0.22);
+      gain.gain.linearRampToValueAtTime(0.4, inicio + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, inicio + 0.32);
       osc.connect(gain).connect(audioCtx.destination);
       osc.start(inicio);
-      osc.stop(inicio + 0.24);
+      osc.stop(inicio + 0.34);
     });
   } catch (e) { /* si algo falla, no interrumpe el flujo normal */ }
 }
@@ -1539,7 +1937,7 @@ document.getElementById('btnConectar').onclick = async () => {
     const resp = await fetch(`${urlBase}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usuario, password }),
+      body: JSON.stringify({ usuario, password, activar_2fa: !!(document.getElementById('activar2fa') || {}).checked }),
     });
     if (!resp.ok) {
       alert('Usuario o contraseña incorrectos');
@@ -1547,6 +1945,10 @@ document.getElementById('btnConectar').onclick = async () => {
       return;
     }
     data = await resp.json();
+    if (data.requiere_2fa || data.requiere_enrolar) {
+      data = await sofi2fa(data, urlBase);
+      if (!data) { btn.disabled = false; btn.textContent = 'Ingresar'; return; }
+    }
   } catch (e) {
     alert('No se pudo contactar al servidor');
     btn.disabled = false; btn.textContent = 'Ingresar';
@@ -1556,6 +1958,7 @@ document.getElementById('btnConectar').onclick = async () => {
   tokenGuardado = data.token;
   urlBaseGuardada = urlBase;
   cerradoManualmente = false;
+  cargarOutboxStaff(usuario);
   iniciarRenovacionTokenArchivo();
 
   document.getElementById('login').style.display = 'none';
@@ -1697,6 +2100,15 @@ function conectarWs() {
     // instante después, cuando ya pasó esa ráfaga inicial.
     sonidoHabilitado = false;
     setTimeout(() => { sonidoHabilitado = true; }, 1500);
+    // Si había una conversación abierta con "Ayudar en el bot", el servidor olvida
+    // la escucha cuando se cae la conexión: se vuelve a registrar y, de paso, se
+    // recupera lo que pasó mientras estuvo desconectado.
+    if (ayudaBotConversacionId !== null) {
+      try {
+        ws.send(JSON.stringify({ type: 'ayuda_bot_abrir', payload: { conversacion_id: Number(ayudaBotConversacionId) } }));
+      } catch (e) { /* si falla, el próximo intento de reconexión lo reintenta */ }
+    }
+    vaciarOutboxStaff();   // reenvía lo que se escribió sin red
   };
 
   ws.onclose = (e) => {
@@ -1719,11 +2131,13 @@ function conectarWs() {
     const p = data.payload || {};
     switch (data.type) {
       case 'nueva_asignacion': {
-        const esNueva = !conversaciones[p.conversacion_id];
+        const previa = conversaciones[p.conversacion_id];
+        const esNueva = !previa || !!previa.provisional;
         conversaciones[p.conversacion_id] = {
           resumen_usuario: p.resumen_usuario || ('Usuario ' + p.conversacion_id),
           telefono: p.telefono || '',
           dni: p.dni || '',
+          campana: p.campana ?? null,
           entrada_cola: p.entrada_cola || null,
           asignado_en: p.asignado_en || null,
           pausada: !!p.pausada,
@@ -1743,9 +2157,22 @@ function conectarWs() {
                   hora: h.enviado_en,
                 }
           )),
-          noLeidos: esNueva ? 1 : 0,
+          noLeidos: esNueva ? Math.max(1, (previa && previa.noLeidos) || 0) : 0,
           ultimaActividad: new Date().toISOString(),
         };
+        // Lo que se escribió sin red y aún no se confirmó se vuelve a dibujar (el historial del
+        // servidor todavía no lo tiene): sigue visible con 🕓 hasta que se envíe.
+        outboxStaff.forEach((en) => {
+          const o = en.obj.payload || {};
+          if (String(o.conversacion_id) !== String(p.conversacion_id)) return;
+          if (en.obj.type === 'mensaje_asesor') {
+            conversaciones[p.conversacion_id].mensajes.push({ texto: o.texto, tipo: 'asesor', leido: false,
+              hora: new Date(en.ts).toISOString(), id: null, cid: en.cid, pendiente: true });
+          } else if (en.obj.type === 'mensaje_asesor_archivo') {
+            conversaciones[p.conversacion_id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'asesor', ruta: o.ruta,
+              leido: false, hora: new Date(en.ts).toISOString(), id: null, cid: en.cid, pendiente: true });
+          }
+        });
         if (esNueva && sonidoHabilitado) reproducirAvisoNuevaConversacion();
         renderLista();
         if (activaId === null) seleccionar(String(p.conversacion_id));
@@ -1761,9 +2188,34 @@ function conectarWs() {
       case 'archivo_usuario':
         agregarArchivo(p.conversacion_id, p.ruta, { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
         break;
-      case 'mensaje_propio_guardado':
+      case 'mensaje_propio_guardado': {
+        if (p.cid) {
+          confirmarEntradaStaff(p.cid);
+          let hallado = null, convHallada = null;
+          Object.keys(conversaciones).forEach(k => {
+            const m = (conversaciones[k].mensajes || []).find(x => x.cid === p.cid);
+            if (m) { hallado = m; convHallada = k; }
+          });
+          if (p.dup) {
+            // Ya estaba en el servidor (llegó antes del corte): la copia local pendiente sobra.
+            if (hallado) {
+              convHallada && (conversaciones[convHallada].mensajes = conversaciones[convHallada].mensajes.filter(x => x !== hallado));
+              if (String(activaId) === String(convHallada)) renderChat();
+            }
+            break;
+          }
+          if (hallado) {
+            hallado.pendiente = false; hallado.id = p.mensaje_id;
+            if (String(activaId) === String(convHallada)) renderChat();
+            break;
+          }
+        }
+        const ent = confirmarSinCid(p.conversacion_id);
+        if (ent) { const k = String(p.conversacion_id); const ms = (conversaciones[k] || {}).mensajes || [];
+          const mm = ms.find(x => x.cid === ent.cid); if (mm) { mm.pendiente = false; } }
         asignarIdMensajePropio(p.conversacion_id, p.mensaje_id);
         break;
+      }
       case 'mensaje_editado':
         aplicarMensajeEditado(p);
         break;
@@ -1811,7 +2263,7 @@ function conectarWs() {
         break;
       case 'archivo_supervisor_directo': {
         const id = p.conversacion_id;
-        if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
+        asegurarConversacion(id);
         conversaciones[id].mensajes.push({
           texto: `👤 ${p.supervisor_nombre} (supervisor) le envió una imagen al usuario`,
           tipo: 'bot', ruta: p.ruta, hora: new Date().toISOString(),
@@ -1849,6 +2301,21 @@ function conectarWs() {
         renderLista();
         renderChat();
         break;
+      case 'conversaciones_vigentes': {
+        const vigentes = new Set((p.ids || []).map(String));
+        Object.keys(conversaciones).forEach(k => {
+          if (vigentes.has(String(k))) return;
+          if (conversaciones[k] && conversaciones[k].provisional) return;
+          delete conversaciones[k];
+          if (String(activaId) === String(k)) {
+            activaId = null;
+            document.getElementById('entrada').classList.remove('activa');
+            document.getElementById('chatHeader').classList.remove('activa');
+          }
+        });
+        renderLista(); renderChat();
+        break;
+      }
       case 'error_transferencia':
         alert(p.motivo || 'No se pudo transferir la conversación.');
         break;
@@ -1913,6 +2380,9 @@ function conectarWs() {
         statsDesde = Date.now();
         actualizarStatsConexion();
         break;
+      case 'resultado_archivo_sms':
+        if (window.__resultadoArchivoSms) window.__resultadoArchivoSms(p);
+        break;
       case 'resultado_sms_invitacion':
         if (window.__resultadoSmsInvitacion) window.__resultadoSmsInvitacion(p);
         break;
@@ -1952,15 +2422,111 @@ function conectarWs() {
 }
 
 document.getElementById('btnEnviar').onclick = enviar;
-document.getElementById('texto').addEventListener('keydown', (e) => { if (e.key === 'Enter') enviar(); });
+
+// Caja de texto que crece con el contenido (salta de línea en vez de desplazar el texto
+// hacia la derecha). Reacciona al escribir y también a cambios por código (.value = ...).
+function hacerCrecer(el, maxPx) {
+  if (!el || el.dataset.crece) return;
+  el.dataset.crece = '1';
+  const ajustar = () => {
+    el.style.height = 'auto';
+    const alto = el.scrollHeight;
+    el.style.height = Math.min(alto, maxPx) + 'px';
+    el.style.overflowY = alto > maxPx ? 'auto' : 'hidden';
+  };
+  el.addEventListener('input', ajustar);
+  const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+  Object.defineProperty(el, 'value', {
+    get() { return desc.get.call(el); },
+    set(v) { desc.set.call(el, v); ajustar(); },
+    configurable: true,
+  });
+  ajustar();
+}
+hacerCrecer(document.getElementById('texto'), 140);
+// Enter envía; Shift+Enter hace un salto de línea.
+document.getElementById('texto').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); enviar(); }
+});
+
+// ---- Envío fiable (como WhatsApp): lo que se escribe sin red NO se pierde ----
+// Cada envío lleva un "cid". Se guarda en una cola (también en el navegador, por si se recarga la
+// página) y se reenvía al reconectar; si el servidor ya lo había procesado responde "dup" y no se duplica.
+const CLAVE_OUTBOX_STAFF = 'sanitas_asesor_outbox';
+const VIGENCIA_OUTBOX_STAFF_MS = 6 * 60 * 60 * 1000;
+let outboxStaff = [];
+let usuarioOutbox = '';
+function cargarOutboxStaff(usuario) {
+  usuarioOutbox = usuario || '';
+  let guardado = [];
+  try { guardado = JSON.parse(localStorage.getItem(CLAVE_OUTBOX_STAFF) || '[]'); } catch (e) {}
+  const limite = Date.now() - VIGENCIA_OUTBOX_STAFF_MS;
+  const enMemoria = new Set(outboxStaff.map(e => e.cid));
+  (Array.isArray(guardado) ? guardado : []).forEach(e => {
+    if (e && e.cid && e.obj && e.ts > limite && e.usuario === usuarioOutbox && !enMemoria.has(e.cid)) {
+      outboxStaff.push({ cid: e.cid, obj: e.obj, ts: e.ts, usuario: e.usuario, enviadoEn: 0 });
+    }
+  });
+}
+function guardarOutboxStaff() {
+  try {
+    localStorage.setItem(CLAVE_OUTBOX_STAFF, JSON.stringify(
+      outboxStaff.map(e => ({ cid: e.cid, obj: e.obj, ts: e.ts, usuario: e.usuario }))));
+  } catch (e) { /* sin almacenamiento: queda solo en memoria */ }
+}
+function enviarEntradaStaff(entrada) {
+  if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+  try { ws.send(JSON.stringify(entrada.obj)); } catch (e) { return; }
+  const marca = entrada.enviadoEn = Date.now();
+  // Si en 10 s el servidor no confirmó, la conexión está muerta aunque parezca abierta: se cierra
+  // para que reconecte y reenvíe.
+  setTimeout(() => {
+    if (entrada.enviadoEn === marca && outboxStaff.indexOf(entrada) !== -1 && ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.close(); } catch (e) { /* ya cerrada */ }
+    }
+  }, 10000);
+}
+function enviarFiable(tipo, payload) {
+  const cid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : String(Date.now()) + Math.random().toString(16).slice(2);
+  const entrada = { cid, obj: { type: tipo, payload: Object.assign({}, payload, { cid }) },
+                    ts: Date.now(), usuario: usuarioOutbox, enviadoEn: 0 };
+  outboxStaff.push(entrada);
+  guardarOutboxStaff();
+  enviarEntradaStaff(entrada);
+  return entrada;
+}
+// Servidor sin "cid" en la confirmación (versión anterior): se da por confirmado el envío más
+// antiguo de esa conversación que ya se mandó, para no reenviarlo en bucle.
+function confirmarSinCid(conversacionId) {
+  const e = outboxStaff.find(x => x.enviadoEn > 0 && String((x.obj.payload || {}).conversacion_id) === String(conversacionId));
+  return e ? confirmarEntradaStaff(e.cid) : null;
+}
+function vaciarOutboxStaff() { outboxStaff.slice().forEach(enviarEntradaStaff); }
+// Devuelve la entrada confirmada (o null si ya estaba confirmada).
+function confirmarEntradaStaff(cid) {
+  const i = outboxStaff.findIndex(e => e.cid === cid);
+  if (i === -1) return null;
+  const e = outboxStaff.splice(i, 1)[0];
+  guardarOutboxStaff();
+  return e;
+}
+window.addEventListener('online', () => {
+  if (typeof cerradoManualmente !== 'undefined' && cerradoManualmente) return;
+  if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch (e) {} }
+});
+window.addEventListener('online', () => {
+  if (!cerradoManualmente && tokenGuardado && !ws) { intentosReconexion = 0; conectarWs(); }
+});
 
 function enviar() {
   const input = document.getElementById('texto');
   const texto = input.value.trim();
-  if (!texto || activaId === null || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!texto || activaId === null) return;
   const respondidoAId = respondiendoA ? respondiendoA.id : null;
-  ws.send(JSON.stringify({ type: 'mensaje_asesor', payload: { conversacion_id: Number(activaId), texto, respondido_a_id: respondidoAId } }));
-  agregarMensaje(activaId, texto, 'asesor', { respondidoA: respondiendoA ? { emisor_tipo: respondiendoA.tipo, texto: respondiendoA.texto } : null });
+  // Sin red el mensaje queda en cola (🕓) y se envía solo al reconectar.
+  const entrada = enviarFiable('mensaje_asesor', { conversacion_id: Number(activaId), texto, respondido_a_id: respondidoAId });
+  agregarMensaje(activaId, texto, 'asesor', { cid: entrada.cid, respondidoA: respondiendoA ? { emisor_tipo: respondiendoA.tipo, texto: respondiendoA.texto } : null });
   input.value = '';
   cancelarRespuesta();
 }
@@ -2070,11 +2636,8 @@ async function subirImagenAsesor(archivo) {
       throw new Error(`HTTP ${resp.status} ${detalle}`);
     }
     const data = await resp.json();
-    ws.send(JSON.stringify({
-      type: 'mensaje_asesor_archivo',
-      payload: { conversacion_id: Number(idDestino), ruta: data.ruta },
-    }));
-    agregarArchivoPropio(idDestino, data.ruta);
+    const entradaArch = enviarFiable('mensaje_asesor_archivo', { conversacion_id: Number(idDestino), ruta: data.ruta });
+    agregarArchivoPropio(idDestino, data.ruta, entradaArch.cid);
     cancelarRespuesta();
   } catch (e) {
     console.error('Error al subir archivo:', e);
@@ -2113,9 +2676,10 @@ $chatArrastrable.addEventListener('drop', (e) => {
   if (e.dataTransfer.files.length > 0) subirImagenAsesor(e.dataTransfer.files[0]);
 });
 
-function agregarArchivoPropio(id, ruta) {
-  if (!conversaciones[id]) conversaciones[id] = { resumen_usuario: 'Usuario ' + id, telefono: '', mensajes: [], noLeidos: 0 };
-  conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'asesor', ruta, leido: false, hora: new Date().toISOString() });
+function agregarArchivoPropio(id, ruta, cid) {
+  asegurarConversacion(id);
+  conversaciones[id].mensajes.push({ texto: '📎 Ver archivo enviado', tipo: 'asesor', ruta, leido: false, hora: new Date().toISOString(),
+                                    cid: cid || null, pendiente: !!cid });
   conversaciones[id].ultimaActividad = new Date().toISOString();
   if (String(activaId) === String(id)) renderChat();
   renderLista();
@@ -2124,10 +2688,16 @@ function agregarArchivoPropio(id, ruta) {
 document.getElementById('btnCerrar').onclick = () => {
   if (activaId === null) return;
   const select = document.getElementById('selectEtiqueta');
-  select.innerHTML = etiquetasDisponibles
+  // Solo las etiquetas de la campaña de esta conversación (sin campañas = valen para todas).
+  const campanaConv = conversaciones[activaId] ? conversaciones[activaId].campana : null;
+  const etiquetasConv = etiquetasDisponibles.filter(e => {
+    const ids = e.campana_ids || [];
+    return !ids.length || (campanaConv != null && ids.includes(Number(campanaConv)));
+  });
+  select.innerHTML = etiquetasConv
     .map(e => `<option value="${e.id}">${escapeHtml(e.nombre)}</option>`)
     .join('');
-  if (etiquetasDisponibles.length === 0) {
+  if (etiquetasConv.length === 0) {
     select.innerHTML = '<option value="">(sin etiquetas configuradas)</option>';
   }
   document.getElementById('modalOverlay').classList.add('activa');
@@ -2502,6 +3072,53 @@ const EMOJIS_COMUNES = ['😀','😃','😄','😁','😆','😅','😂','🤣',
   };
 })();
 
+
+// ---- Enviar un archivo por SMS: PDF/imagen -> enlace único que abre el webchat con el archivo ----
+(function iniciarArchivoSms() {
+  const overlay = document.getElementById('modalArchivoSmsOverlay');
+  const input = document.getElementById('archivoSmsCelular');
+  const archivoInput = document.getElementById('archivoSmsArchivo');
+  const estado = document.getElementById('archivoSmsEstado');
+  const btnEnviar = document.getElementById('btnEnviarArchivoSms');
+  const mostrar = (txt, ok) => { estado.textContent = txt; estado.style.color = ok ? '#197A54' : '#C0392B'; };
+  document.getElementById('btnArchivoSms').onclick = () => {
+    input.value = ''; archivoInput.value = ''; mostrar('', true);
+    btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar archivo';
+    overlay.style.display = 'flex';
+    setTimeout(() => input.focus(), 50);
+  };
+  document.getElementById('btnCancelarArchivoSms').onclick = () => { overlay.style.display = 'none'; };
+  btnEnviar.onclick = async () => {
+    const celular = input.value.replace(/\D/g, '');
+    if (!/^(51)?9\d{8}$/.test(celular)) { mostrar('Escribe un celular válido de 9 dígitos que empiece con 9.', false); return; }
+    const archivo = archivoInput.files[0];
+    if (!archivo) { mostrar('Elige el archivo (PDF o imagen) que quieres enviar.', false); return; }
+    if (archivo.type !== 'application/pdf' && !(archivo.type || '').startsWith('image/')) { mostrar('Solo se permite PDF o imagen.', false); return; }
+    if (archivo.size > 10 * 1024 * 1024) { mostrar('El archivo supera los 10 MB.', false); return; }
+    if (!ws || ws.readyState !== WebSocket.OPEN) { mostrar('Sin conexión con el servidor. Intenta de nuevo en un momento.', false); return; }
+    if (!confirm('¿Enviar "' + archivo.name + '" al ' + celular + ' por SMS?')) return;
+    btnEnviar.disabled = true; btnEnviar.textContent = 'Subiendo...'; mostrar('', true);
+    try {
+      const formData = new FormData();
+      formData.append('file', archivo, archivo.name);
+      const resp = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: formData, headers: { Authorization: `Bearer ${tokenGuardado}` } });
+      if (!resp.ok) throw new Error('No se pudo subir el archivo (HTTP ' + resp.status + ').');
+      const data = await resp.json();
+      if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Se perdió la conexión con el servidor. Intenta de nuevo.');
+      btnEnviar.textContent = 'Enviando SMS...';
+      ws.send(JSON.stringify({ type: 'enviar_archivo_sms', payload: { celular, ruta: data.ruta, nombre: archivo.name } }));
+    } catch (e) {
+      btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar archivo';
+      mostrar(e.message || 'No se pudo enviar el archivo.', false);
+    }
+  };
+  window.__resultadoArchivoSms = (p) => {
+    btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar archivo';
+    if (p.ok) { mostrar('✅ SMS enviado. Puedes enviar otro archivo.', true); input.value = ''; archivoInput.value = ''; input.focus(); }
+    else { mostrar(p.motivo || 'No se pudo enviar el archivo.', false); }
+  };
+})();
+
 // ---- Buscar: celular, DNI o nombre, de cualquier estado -------------------
 let historialOrigenBusqueda = false;
 const ETIQUETAS_ESTADO = { bot: 'En bot', en_cola: 'En cola', asignada: 'Asignada', cerrada: 'Cerrada' };
@@ -2661,6 +3278,10 @@ function agregarMensajeAyudaBot(emisorTipo, texto, horaIso, ruta) {
 }
 
 function abrirChatAyudaBot(p) {
+  // Si es la misma conversación que ya estaba abierta (reconexión), se conserva lo
+  // que el asesor estaba escribiendo.
+  const esReconexion = ayudaBotConversacionId !== null && String(ayudaBotConversacionId) === String(p.conversacion_id);
+  const borrador = esReconexion ? document.getElementById('ayudaBotTexto').value : '';
   ayudaBotConversacionId = p.conversacion_id;
   document.getElementById('modalAyudarBotOverlay').classList.remove('activa');
   document.getElementById('ayudaBotNombre').textContent = p.usuario_nombre || '';
@@ -2684,9 +3305,9 @@ function abrirChatAyudaBot(p) {
     else agregarMensajeAyudaBot(m.emisor_tipo, m.contenido, m.enviado_en, null);
   });
   chat.scrollTop = chat.scrollHeight;
-  document.getElementById('ayudaBotTexto').value = '';
+  document.getElementById('ayudaBotTexto').value = borrador;
   document.getElementById('modalAyudaBotChatOverlay').classList.add('activa');
-  setTimeout(() => document.getElementById('ayudaBotTexto').focus(), 50);
+  if (!esReconexion) setTimeout(() => document.getElementById('ayudaBotTexto').focus(), 50);
 }
 
 function cerrarChatAyudaBot() {
@@ -2710,7 +3331,9 @@ function enviarAyudaBot() {
   input.value = '';  // el mensaje aparece cuando el servidor lo confirma (evento de vuelta)
 }
 document.getElementById('btnAyudaBotEnviar').onclick = enviarAyudaBot;
-document.getElementById('ayudaBotTexto').addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarAyudaBot(); });
+hacerCrecer(document.getElementById('ayudaBotTexto'), 140);
+// Enter envía; Shift+Enter hace un salto de línea.
+document.getElementById('ayudaBotTexto').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); enviarAyudaBot(); } });
 </script>
 <script id="sofi-js">
 /* Sofi Desk — comportamiento del cascarón (no toca la lógica de cada consola) */
@@ -2718,6 +3341,18 @@ document.getElementById('ayudaBotTexto').addEventListener('keydown', (e) => { if
   var b = document.body; b.classList.add('sofi');
   var $ = function (id) { return document.getElementById(id); };
   var login = $('login');
+  // Aviso en la parte superior del login (texto editable desde /editor -> "banner_login"; vacío = sin aviso)
+  if (login) {
+    fetch('/consola/aviso', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var texto = d && (d.texto || '').trim(); if (!texto) return;
+      try { if (sessionStorage.getItem('sofi_banner_cerrado') === texto) return; } catch (e) {}
+      var bar = document.createElement('div'); bar.className = 'sofi-banner-login'; bar.setAttribute('role', 'status');
+      var t = document.createElement('span'); t.textContent = texto;
+      var x = document.createElement('button'); x.type = 'button'; x.setAttribute('aria-label', 'Cerrar aviso'); x.title = 'Cerrar'; x.textContent = '✕';
+      x.onclick = function () { bar.remove(); try { sessionStorage.setItem('sofi_banner_cerrado', texto); } catch (e) {} };
+      bar.appendChild(t); bar.appendChild(x); login.insertBefore(bar, login.firstChild);
+    }).catch(function () {});
+  }
   function iniciales(n) { var p = (n || '').trim().split(/\s+/).filter(Boolean); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
   function sync() {
     var conectado = login && login.style.display === 'none';
@@ -2759,6 +3394,22 @@ document.getElementById('ayudaBotTexto').addEventListener('keydown', (e) => { if
     espejo('badgeCola', 'insigCola', function (o) { return o.style.display === 'none' ? '' : o.textContent.trim(); });
   }
 
+  // Asesor: mostrar/ocultar la columna "Datos del afiliado" (se recuerda la elección)
+  (function () {
+    var btn = $('btnDatosAfiliado'); if (!btn) return;
+    var aplicar = function (visible, guardar) {
+      b.classList.toggle('mostrar-datos-afiliado', visible);
+      btn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      if (guardar) { try { localStorage.setItem('asesor_datos_afiliado', visible ? '1' : '0'); } catch (e) {} }
+    };
+    var inicial = false;
+    try { inicial = localStorage.getItem('asesor_datos_afiliado') === '1'; } catch (e) {}
+    aplicar(inicial, false);
+    btn.onclick = function () { aplicar(!b.classList.contains('mostrar-datos-afiliado'), true); };
+    var cerrar = $('btnCerrarDatosAfiliado');
+    if (cerrar) cerrar.onclick = function () { aplicar(false, true); };
+  })();
+
   // Asesor: columna "Datos del afiliado"
   var ch = $('chatHeader');
   if (ch && $('datosAfiliado')) {
@@ -2773,6 +3424,283 @@ document.getElementById('ayudaBotTexto').addEventListener('keydown', (e) => { if
   }
 })();
 
+</script>
+<script id="sofi-2fa">
+/* Verificación en dos pasos (TOTP): ventana que pide el código de la app autenticadora o,
+   si hace falta, guía la configuración (QR + códigos de respaldo). Devuelve los datos de
+   sesión ({token, ...}) o null si la persona cancela. */
+window.sofi2fa = function (data, urlBase) {
+  return new Promise(function (resolve) {
+    var AZUL = '#0A2540', TEAL = '#0A7E8C';
+    var fondo = document.createElement('div');
+    fondo.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,30,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+    var caja = document.createElement('div');
+    caja.style.cssText = 'background:#fff;color:' + AZUL + ';border-radius:16px;padding:24px;width:380px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)';
+    fondo.appendChild(caja);
+    document.body.appendChild(fondo);
+
+    var BTN = 'width:100%;padding:11px;border:0;border-radius:10px;background:' + AZUL + ';color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit';
+    var LINK = 'background:none;border:0;color:#5b6b7b;font-size:12.5px;cursor:pointer;margin-top:12px;text-decoration:underline;font-family:inherit';
+    var INPUT = 'width:100%;box-sizing:border-box;padding:12px;border:1.5px solid #d5dde5;border-radius:10px;font-size:22px;letter-spacing:.3em;text-align:center;font-family:ui-monospace,Menlo,monospace;margin:10px 0';
+
+    function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+    function cerrar(valor) { document.body.removeChild(fondo); resolve(valor); }
+    function msg(t) { var m = caja.querySelector('.err'); if (m) m.textContent = t || ''; }
+    async function llamar(ruta, cuerpo) {
+      var r = await fetch(urlBase + ruta, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+      var j = {}; try { j = await r.json(); } catch (e) {}
+      return { ok: r.ok, status: r.status, j: j };
+    }
+    function cabecera(titulo, texto) {
+      return '<div style="font-size:30px;line-height:1">🔐</div><h3 style="margin:8px 0 4px;font-size:18px">' + titulo + '</h3>' +
+             '<p style="margin:0;font-size:13.5px;line-height:1.5;color:#4a5b6c">' + texto + '</p>';
+    }
+    var ERR = '<div class="err" style="color:#C0392B;font-size:13px;min-height:18px;margin-top:6px" role="alert"></div>';
+
+    function pantallaCodigo() {
+      caja.innerHTML = cabecera('Verificación en dos pasos', 'Ingresa el código de 6 dígitos que muestra tu aplicación autenticadora.') +
+        '<input class="cod" style="' + INPUT + '" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="000000" />' + ERR +
+        '<button class="ok" style="' + BTN + '">Verificar</button>' +
+        '<div style="text-align:center"><button class="resp" style="' + LINK + '">Usar un código de respaldo</button> ' +
+        '<button class="no" style="' + LINK + '">Cancelar</button></div>' +
+        '<p style="margin:12px 0 0;font-size:11.5px;color:#7a8896;line-height:1.4">¿Perdiste tu celular? Pide a tu supervisor que quite la verificación de tu cuenta.</p>';
+      var cod = caja.querySelector('.cod'); cod.focus();
+      var enviando = false;
+      async function enviar() {
+        if (enviando) return;
+        var v = cod.value.trim(); if (!v) return;
+        enviando = true; msg('');
+        try {
+          var r = await llamar('/auth/2fa/verificar', { pre_token: data.pre_token, codigo: v });
+          if (r.ok) return cerrar(r.j);
+          msg(r.status === 429 ? (r.j.detail || 'Demasiados intentos. Espera unos minutos.') : r.status === 401 && /venci/.test(r.j.detail || '') ? 'La sesión venció. Ingresa de nuevo.' : 'Código incorrecto o ya usado.');
+          if (r.status === 401 && /venci/.test(r.j.detail || '')) setTimeout(function () { cerrar(null); }, 1500);
+        } catch (e) { msg('No se pudo contactar al servidor.'); }
+        enviando = false; cod.select();
+      }
+      caja.querySelector('.ok').onclick = enviar;
+      cod.onkeydown = function (e) { if (e.key === 'Enter') enviar(); };
+      caja.querySelector('.resp').onclick = function () { cod.placeholder = 'xxxx-xxxxxx'; cod.style.fontSize = '17px'; cod.value = ''; cod.focus(); msg(''); };
+      caja.querySelector('.no').onclick = function () { cerrar(null); };
+    }
+
+    async function pantallaEnrolar() {
+      caja.innerHTML = cabecera('Configura tu verificación en dos pasos', data.obligatorio
+        ? 'Tu cuenta requiere este paso de seguridad para poder ingresar.' : 'Protege tu cuenta con un código que cambia cada 30 segundos.') +
+        '<p style="font-size:13px;color:#4a5b6c">Preparando…</p>' + ERR;
+      var r;
+      try { r = await llamar('/auth/2fa/iniciar', { pre_token: data.pre_token }); } catch (e) { r = { ok: false, j: {} }; }
+      if (!r.ok) { caja.innerHTML = cabecera('No se pudo continuar', esc(r.j.detail || 'Ingresa de nuevo.')) + '<button class="no" style="' + BTN + ';margin-top:14px">Cerrar</button>'; caja.querySelector('.no').onclick = function () { cerrar(null); }; return; }
+      caja.innerHTML = cabecera('Configura tu verificación en dos pasos', data.obligatorio
+        ? 'Tu cuenta requiere este paso de seguridad para poder ingresar.' : 'Protege tu cuenta con un código que cambia cada 30 segundos.') +
+        '<ol style="margin:12px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:#33475b">' +
+        '<li>Instala <b>Google Authenticator</b>, <b>Microsoft Authenticator</b> o similar.</li>' +
+        '<li>Escanea este código QR (o escribe la clave).</li><li>Ingresa el código de 6 dígitos que aparece.</li></ol>' +
+        '<div style="text-align:center;margin:12px 0 4px"><img alt="Código QR" src="' + r.j.qr + '" style="width:178px;height:178px;border:1px solid #e3e9ef;border-radius:10px"></div>' +
+        '<div style="text-align:center;font-size:11.5px;color:#5b6b7b">Clave manual:<br><span style="font-family:ui-monospace,Menlo,monospace;font-size:13px;color:' + AZUL + ';word-break:break-all;user-select:all">' + esc(r.j.secreto.replace(/(.{4})/g, '$1 ').trim()) + '</span></div>' +
+        '<input class="cod" style="' + INPUT + '" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />' + ERR +
+        '<button class="ok" style="' + BTN + '">Activar y entrar</button>' +
+        '<div style="text-align:center"><button class="no" style="' + LINK + '">Cancelar</button></div>';
+      var cod = caja.querySelector('.cod'); cod.focus();
+      var enviando = false;
+      async function activar() {
+        if (enviando) return;
+        var v = cod.value.trim(); if (v.length < 6) { msg('Escribe los 6 dígitos.'); return; }
+        enviando = true; msg('');
+        try {
+          var a = await llamar('/auth/2fa/activar', { pre_token: data.pre_token, codigo: v });
+          if (a.ok) return pantallaRespaldo(a.j);
+          msg(a.status === 429 ? (a.j.detail || 'Demasiados intentos.') : (a.j.detail || 'Código incorrecto.'));
+        } catch (e) { msg('No se pudo contactar al servidor.'); }
+        enviando = false; cod.select();
+      }
+      caja.querySelector('.ok').onclick = activar;
+      cod.onkeydown = function (e) { if (e.key === 'Enter') activar(); };
+      caja.querySelector('.no').onclick = function () { cerrar(null); };
+    }
+
+    function pantallaRespaldo(sesion) {
+      var codigos = sesion.codigos_respaldo || [];
+      caja.innerHTML = cabecera('Verificación activada', 'Guarda estos <b>códigos de respaldo</b> en un lugar seguro. Cada uno sirve una sola vez si pierdes el acceso a tu celular. <b>No se volverán a mostrar.</b>') +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:14px 0;padding:12px;background:#f3f6f9;border-radius:10px;font-family:ui-monospace,Menlo,monospace;font-size:14px;text-align:center;user-select:all">' +
+        codigos.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div>' +
+        '<button class="copiar" style="' + BTN + ';background:#fff;color:' + AZUL + ';border:1.5px solid #d5dde5;margin-bottom:8px">Copiar códigos</button>' +
+        '<button class="ok" style="' + BTN + '">Ya los guardé, continuar</button>';
+      caja.querySelector('.copiar').onclick = function () {
+        var t = codigos.join('\n'); var b = this;
+        (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = '¡Copiados!'; }, function () { b.textContent = 'Selecciónalos y copia (Ctrl+C)'; });
+      };
+      caja.querySelector('.ok').onclick = function () { delete sesion.codigos_respaldo; cerrar(sesion); };
+    }
+
+    if (data.requiere_enrolar) pantallaEnrolar(); else pantallaCodigo();
+  });
+};
+</script>
+<script id="sofi-nav-compacta-js">
+/* Barra lateral compacta: el botón de la parte superior la adelgaza (solo iconos) y la vuelve a ampliar.
+   La elección se recuerda en este navegador. */
+(function () {
+  var KEY = 'sofi_nav_compacta', b = document.body, btn = document.getElementById('navToggle');
+  if (!btn) return;
+  function leer() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+  function aplicar(c) {
+    b.classList.toggle('nav-compacta', c);
+    var t = c ? 'Ampliar barra lateral' : 'Reducir barra lateral';
+    btn.title = t; btn.setAttribute('aria-label', t); btn.setAttribute('aria-expanded', String(!c));
+    document.querySelectorAll('.sofi-nav .nav-links a').forEach(function (a) {
+      var s = a.querySelector('span:not(.insignia)');
+      if (s) { a.title = c ? s.textContent.trim() : ''; a.setAttribute('aria-label', s.textContent.trim()); }
+    });
+    var sal = document.getElementById('navSalir'); if (sal) sal.title = c ? 'Cerrar sesión' : '';
+  }
+  aplicar(leer());
+  btn.addEventListener('click', function () {
+    var c = !b.classList.contains('nav-compacta'); aplicar(c);
+    try { localStorage.setItem(KEY, c ? '1' : '0'); } catch (e) {}
+  });
+})();
+</script>
+<!-- sofi-movil: vista de celular compartida por asesor / supervisor / editor / dashboard (solo actúa en pantallas <= 900px) -->
+<style id="sofi-movil-css">
+#sofiBurger, .mov-volver, #sofiScrim { display: none; }
+@media (max-width: 900px) {
+  html, body { overflow-x: hidden; max-width: 100vw; }
+  /* --- Cascarón: una sola columna (antes el contenido caía en una 2.ª columna fantasma) --- */
+  body.sofi, body.sofi.nav-compacta { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; }
+  body.sofi #barraConectado, body.sofi .sofi-top, body.sofi #main, body.sofi .sofi-contenido { grid-column: 1 !important; }
+  body.sofi .sofi-contenido { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  body.sofi:not(.sofi-conectado) { height: auto; min-height: 100dvh; }
+
+  /* --- Barra superior: una fila que se desliza de lado, con el botón ☰ --- */
+  body.sofi #barraConectado, body.sofi .sofi-top { padding: 8px 10px !important; gap: 8px !important; flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  body.sofi #barraConectado::-webkit-scrollbar, body.sofi .sofi-top::-webkit-scrollbar { display: none; }
+  body.sofi #barraConectado > *, body.sofi .sofi-top > * { flex: 0 0 auto; white-space: nowrap; }
+  body.sofi #barraConectado .sofi-icono, body.sofi .sofi-top .sofi-icono, body.sofi .sofi-titulo span, body.sofi #barraConectado .stats-conexion, #barraConectado .separador { display: none !important; }
+  body.sofi .sofi-titulo h1 { font-size: 16px; }
+  body.sofi #barraConectado .estado { flex: 0 0 auto; font-size: 12px; }
+  body.sofi #barraConectado .nombre-asesor { display: none; }
+  /* Los atajos que el escritorio deja en la barra lateral, aquí vuelven a la barra */
+  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
+  body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
+  body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi,
+  body.sofi #barraConectado #btnReporte { display: inline-flex !important; align-items: center; }
+  body.sofi #barraConectado button, body.sofi #barraConectado .chico { min-height: 38px; padding: 0 12px; font-size: 13px; }
+  body.sofi-conectado #sofiBurger { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; border-radius: 12px; font-size: 20px; line-height: 1; padding: 0; color: var(--marino, #0B2A4A); cursor: pointer; }
+
+  body.mov-filtros #barraConectado { flex-wrap: wrap !important; overflow: visible; }
+  body.mov-filtros #barraConectado > * { white-space: normal; }
+  body.mov-filtros #sofiBurger { margin-right: auto; }
+
+  /* --- Menú lateral como cajón --- */
+  body.sofi-conectado .sofi-nav { display: flex !important; position: fixed; z-index: 400; top: 0; left: 0; bottom: 0; width: min(280px, 84vw); transform: translateX(-104%); transition: transform .22s ease, box-shadow .22s ease; grid-column: auto; padding: 22px 16px; align-items: stretch; }
+  body.sofi-conectado.menu-abierto .sofi-nav { transform: none; box-shadow: 8px 0 30px rgba(0,0,0,.25); }
+  body.sofi-conectado .sofi-nav .nav-toggle { display: none !important; }
+  body.sofi.nav-compacta .sofi-nav .nav-logo b, body.sofi.nav-compacta .sofi-nav .nav-links a > span:not(.insignia), body.sofi.nav-compacta .sofi-nav .nav-usuario .fila > div:last-child { display: revert; }
+  #sofiScrim { position: fixed; inset: 0; z-index: 390; background: rgba(8,20,36,.5); }
+  body.menu-abierto #sofiScrim { display: block; }
+  body.menu-abierto { overflow: hidden; }
+
+  /* --- Asesor / supervisor: lista ↔ conversación (una pantalla a la vez) --- */
+  body.sofi #main { display: flex; }
+  body.sofi #lista, body.sofi #tableroCol { width: 100% !important; flex: 1 1 auto; border-right: 0 !important; min-width: 0; }
+  body.sofi #panel { display: none; width: 100%; flex: 1 1 auto; min-width: 0; }
+  body.movil-chat #lista, body.movil-chat #tableroCol { display: none !important; }
+  body.movil-chat #panel { display: flex !important; }
+  body.movil-chat #datosAfiliado { display: none !important; }
+  .mov-volver { align-items: center; justify-content: center; flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; font-size: 22px; line-height: 1; padding: 0; color: var(--azul, #0A4C8C); cursor: pointer; }
+  body.movil-chat .mov-volver { display: inline-flex; }
+
+  body.sofi #panel .chat-header, body.sofi #panel .panel-header { padding: 8px 10px; gap: 6px 8px; flex-wrap: wrap; }
+  body.sofi #panel .chat-header .nombre { font-size: 15px; }
+  .acciones-conv, .acciones-asesor, .acciones-supervisor { flex: 1 1 100%; max-width: none !important; display: flex !important; flex-wrap: nowrap !important; overflow-x: auto; gap: 6px; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .acciones-conv::-webkit-scrollbar { display: none; }
+  .acciones-conv > * { flex: 0 0 auto; white-space: nowrap; min-height: 36px; display: inline-flex; align-items: center; }
+  #panel .acciones-top { flex: 1 1 100%; flex-wrap: wrap; }
+  body.sofi #chat, body.sofi #chatEscucha { padding: 12px 10px; }
+  body.sofi .msg { max-width: 88%; font-size: 14.5px; }
+  body.sofi .msg.usuario, body.sofi .msg.asesor { padding-right: 34px; }
+  .msg-acciones { top: 4px !important; right: 4px !important; left: auto !important; width: 26px !important; height: 26px !important; opacity: .8 !important; }
+  .msg-menu { right: 4px !important; left: auto !important; top: 32px !important; }
+  body.sofi #entrada { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); gap: 6px; flex-wrap: wrap; }
+  body.sofi #entrada #texto { flex: 1 1 100%; min-height: 44px; height: auto; font-size: 16px; }
+  body.sofi #entrada #btnEnviar { margin-left: auto; min-height: 42px; padding: 0 18px; }
+  body.sofi #entrada #btnEmoji, body.sofi #entrada #btnAdjuntar, body.sofi #entrada #btnRespuestasRapidas { width: 42px; height: 42px; }
+  body.sofi #entrada #btnCerrar { height: 42px; padding: 0 12px; }
+  body.sofi #acciones { flex-wrap: wrap; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  body.sofi #acciones #accionTexto { flex: 1 1 100%; min-height: 44px; }
+  body.sofi #acciones #btnDirecto { margin-left: auto; }
+  body.sofi .conv-item { padding: 12px; }
+  body.sofi .asesor-card { margin: 8px; }
+
+  /* --- General --- */
+  input, select, textarea { font-size: 16px !important; }
+  div[id^="modal"], #modalOverlay > div { max-width: calc(100vw - 20px) !important; max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
+  body.sofi .sofi-contenido table, body.sofi #contenido table { display: block; overflow-x: auto; max-width: 100%; }
+
+  /* --- Pantalla de ingreso: el formulario primero, sin el texto de marca --- */
+  .sofi-login .login-marca { padding: 16px 20px; gap: 0; }
+  .sofi-login .login-marca h1, .sofi-login .login-marca .marca-sub, .sofi-login .marca-roles { display: none !important; }
+  .sofi-login .login-card { padding: 22px 18px; }
+}
+</style>
+<script id="sofi-movil-js">
+(function () {
+  var b = document.body, mq = window.matchMedia('(max-width: 900px)');
+  var barra = document.getElementById('barraConectado') || document.querySelector('.sofi-top');
+  var nav = document.querySelector('.sofi-nav');
+  if (document.getElementById('filtros')) b.classList.add('mov-filtros');  // dashboard: los filtros de fecha necesitan varias filas
+
+  // Botón ☰ + fondo oscuro del cajón
+  if (barra && nav) {
+    var burger = document.createElement('button');
+    burger.id = 'sofiBurger'; burger.type = 'button'; burger.textContent = '☰';
+    burger.setAttribute('aria-label', 'Abrir menú');
+    barra.insertBefore(burger, barra.firstChild);
+    var scrim = document.createElement('div'); scrim.id = 'sofiScrim'; b.appendChild(scrim);
+    var cerrar = function () { b.classList.remove('menu-abierto'); };
+    burger.onclick = function () { b.classList.toggle('menu-abierto'); };
+    scrim.onclick = cerrar;
+    nav.addEventListener('click', function (e) { if (e.target.closest('a, button')) setTimeout(cerrar, 50); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') cerrar(); });
+  }
+
+  // En celular la barra lateral siempre va completa (se recuerda el modo "solo íconos" para la PC)
+  function ajustarNavCompacta() {
+    if (mq.matches) b.classList.remove('nav-compacta');
+    else { try { if (localStorage.getItem('sofi_nav_compacta') === '1') b.classList.add('nav-compacta'); } catch (e) {} b.classList.remove('menu-abierto'); }
+  }
+  ajustarNavCompacta();
+  (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(ajustarNavCompacta);
+
+  // Lista ↔ conversación (asesor: #lista; supervisor: #tableroCol)
+  var lista = document.getElementById('lista') || document.getElementById('tableroCol');
+  var panel = document.getElementById('panel');
+  if (lista && panel) {
+    var cab = document.getElementById('chatHeader') || document.getElementById('panelHeader');
+    if (cab) {
+      var volver = document.createElement('button');
+      volver.type = 'button'; volver.className = 'mov-volver'; volver.textContent = '‹'; volver.setAttribute('aria-label', 'Volver a la lista');
+      volver.onclick = function () { b.classList.remove('movil-chat'); };
+      cab.insertBefore(volver, cab.firstChild);
+    }
+    // Abrir: tocar una conversación (asesor: .conv-item; supervisor: .conv-mini)
+    lista.addEventListener('click', function (e) {
+      if (mq.matches && e.target.closest('.conv-item, .conv-mini')) b.classList.add('movil-chat');
+    }, true);
+    // Volver solo al cerrar / dejar de escuchar
+    ['btnCerrar', 'btnCerrarConversacion', 'btnDejarEscuchar'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('click', function () { setTimeout(function () { b.classList.remove('movil-chat'); }, 400); });
+    });
+    // Asesor: si la conversación se cierra por otro lado, el encabezado se apaga -> volver a la lista
+    var ch = document.getElementById('chatHeader');
+    if (ch && window.MutationObserver) {
+      new MutationObserver(function () { if (!ch.classList.contains('activa')) b.classList.remove('movil-chat'); })
+        .observe(ch, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
+})();
 </script>
 </body>
 </html>

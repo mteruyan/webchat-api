@@ -13,13 +13,14 @@ import os
 import io
 import re
 import uuid
+import secrets
 import json
 import asyncio
 import time
 import logging
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Header, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import google.auth
@@ -36,12 +37,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
 
 from db import get_connection, release_connection
-from bot_engine import iniciar_conversacion, recibir_entrada_usuario
-from api_handlers import enviar_sms_danaconnect, enviar_llamada_otp, _generar_codigo_otp
+from bot_engine import iniciar_conversacion, recibir_entrada_usuario, conversacion_en_ia, entrar_a_nodo
+from api_handlers import enviar_sms_danaconnect, enviar_llamada_otp, _generar_codigo_otp, validar_horario_consultas
 import asignacion
+import enlaces_directos
 import auth
+import reportes
 import supervisor
 import usuarios_sofi
+import totp
+import recordatorios
+import push
+import temas_consulta
+import verificacion_whatsapp
 
 LIMA_TZ = timezone(timedelta(hours=-5))
 
@@ -88,6 +96,225 @@ def widget_js():
     )
 
 
+# ---------------------------------------------------------------------------
+# Agente de IA OCULTO (modo experimental). Nadie lo ve en ningún menú: se entra solo escribiendo
+# una palabra clave secreta (IA_PALABRA_CLAVE) Y desde un celular de la lista blanca (IA_TESTERS,
+# "51XXXXXXXXX" separados por comas) que ya pasó la verificación por código. Si falta cualquiera
+# de las dos variables, o el celular no está en la lista, el mensaje se trata como texto normal,
+# sin ninguna pista de que existe algo. Nodo del bot: "ia_conversacion" (tipo conversacion_ia).
+# ---------------------------------------------------------------------------
+NODO_IA = "ia_conversacion"
+
+
+def _normalizar_celular_ia(valor) -> str:
+    d = "".join(ch for ch in str(valor or "") if ch.isdigit())
+    return "51" + d if len(d) == 9 else d
+
+
+def _ia_testers(variable: str = "IA_TESTERS") -> set:
+    return {n for n in (_normalizar_celular_ia(x) for x in (os.environ.get(variable) or "").split(",")) if n}
+
+
+def _es_palabra_clave_ia(texto, variable: str = "IA_PALABRA_CLAVE") -> bool:
+    clave = (os.environ.get(variable) or "").strip().lower()
+    return bool(clave) and (texto or "").strip().lower() == clave
+
+
+# Médico a domicilio / Ambulancia OCULTO (prueba): mismo doble candado que el agente de IA pero con su
+# propia palabra clave (MAD_PALABRA_CLAVE) y su propia lista blanca (MAD_TESTERS), a propósito
+# separada de IA_TESTERS: este flujo despacha profesionales de verdad y manda SMS reales.
+# Nodo del bot: "mad_inicio" (no está enlazado desde ningún menú).
+NODO_MAD = "mad_inicio"
+
+
+def _celular_tester_de_sesion(sesion_token: str, variable: str = "IA_TESTERS"):
+    """Celular (51XXXXXXXXX) si esta sesión tiene un celular YA VERIFICADO con código y está en
+    la lista blanca; si no, None. Se valida contra el celular guardado en el servidor, nunca
+    contra lo que mande el navegador."""
+    testers = _ia_testers(variable)
+    if not testers:
+        return None
+    try:
+        datos = _obtener_datos_usuario(sesion_token)
+    except Exception:  # noqa: BLE001
+        return None
+    celular = _normalizar_celular_ia(datos.get("telefono")) if datos else ""
+    if datos and datos.get("verificado") and celular in testers:
+        return celular
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Avisos push (PWA y widget del sitio). Ver push.py y migracion_push_avisos.sql.
+# ---------------------------------------------------------------------------
+_tareas_push: set = set()
+
+
+def _lanzar_aviso_push(conversacion_id: int, tipo: str = "respuesta", ctx: dict | None = None):
+    """Dispara el aviso sin frenar al asesor (la red del servicio push puede tardar)."""
+    try:
+        t = asyncio.get_running_loop().create_task(asyncio.to_thread(push.avisar_conversacion, conversacion_id, tipo, ctx))
+    except RuntimeError:
+        return
+    _tareas_push.add(t)
+    t.add_done_callback(_tareas_push.discard)
+
+
+_golpes_push: dict = {}
+
+
+def _limitar_push(request: Request, ruta: str, maximo: int = 30, ventana: int = 60):
+    """Freno simple por IP: estos endpoints son públicos (el cliente no tiene login)."""
+    ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "?")).split(",")[0].strip()
+    clave = f"{ip}|{ruta}"          # un contador por IP y por endpoint
+    ahora = time.time()
+    marcas = [t for t in _golpes_push.get(clave, []) if ahora - t < ventana]
+    if len(marcas) >= maximo:
+        raise HTTPException(status_code=429, detail="Demasiadas solicitudes")
+    marcas.append(ahora)
+    _golpes_push[clave] = marcas
+    if len(_golpes_push) > 5000:
+        for k in [k for k, v in _golpes_push.items() if not v or ahora - v[-1] > ventana]:
+            _golpes_push.pop(k, None)
+
+
+_UUID_RE = re.compile(r"^[0-9a-fA-F-]{16,64}$")
+
+
+def _url_abrir_segura(url: str | None) -> str | None:
+    """Solo rutas del propio servicio o páginas de los orígenes permitidos (el aviso abre esa dirección)."""
+    if not url:
+        return None
+    if url.startswith("/") and not url.startswith("//"):
+        return url[:300]
+    for o in allowed_origins:
+        if url == o or url.startswith(o.rstrip("/") + "/") or url.startswith(o.rstrip("/") + "?"):
+            return url[:300]
+    return None
+
+
+class PushVisita(BaseModel):
+    dispositivo_id: str
+    sesion_token: str | None = None
+    modo: str = "navegador"
+    permiso: str | None = None
+    url_abrir: str | None = None
+
+
+class PushSuscripcion(BaseModel):
+    dispositivo_id: str
+    sesion_token: str | None = None
+    modo: str = "navegador"
+    suscripcion: dict
+    url_abrir: str | None = None
+
+
+class PushCancelar(BaseModel):
+    dispositivo_id: str
+
+
+def _validar_disp(dispositivo_id: str):
+    if not _UUID_RE.match(dispositivo_id or ""):
+        raise HTTPException(status_code=400, detail="dispositivo_id inválido")
+
+
+def _push_no_disponible():
+    return HTTPException(status_code=503, detail="Los avisos todavía no están habilitados en el servidor")
+
+
+@app.get("/push/clave")
+def push_clave():
+    try:
+        return {"clave": push.clave_publica_b64u()}
+    except push.PushNoConfigurado:
+        raise _push_no_disponible()
+
+
+@app.post("/push/visita")
+def push_visita(datos: PushVisita, request: Request):
+    """El app/widget avisa que se abrió (modo 'app' = instalada) y en qué estado está el permiso."""
+    _limitar_push(request, "visita")
+    _validar_disp(datos.dispositivo_id)
+    try:
+        push.registrar_visita(datos.dispositivo_id, datos.sesion_token, datos.modo, datos.permiso,
+                              request.headers.get("user-agent", ""), _url_abrir_segura(datos.url_abrir))
+    except Exception as e:  # noqa: BLE001
+        if "app_dispositivos" in str(e):
+            raise _push_no_disponible()
+        raise
+    return {"ok": True}
+
+
+@app.post("/push/suscribir")
+def push_suscribir(datos: PushSuscripcion, request: Request):
+    _limitar_push(request, "suscribir", maximo=10)
+    _validar_disp(datos.dispositivo_id)
+    try:
+        push.clave_publica_b64u()
+        push.guardar_suscripcion(datos.dispositivo_id, datos.sesion_token, datos.suscripcion, datos.modo,
+                                 request.headers.get("user-agent", ""), _url_abrir_segura(datos.url_abrir))
+    except push.PushNoConfigurado:
+        raise _push_no_disponible()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        if "app_dispositivos" in str(e):
+            raise _push_no_disponible()
+        raise
+    return {"ok": True}
+
+
+@app.post("/push/cancelar")
+def push_cancelar(datos: PushCancelar, request: Request):
+    _limitar_push(request, "cancelar")
+    _validar_disp(datos.dispositivo_id)
+    push.cancelar_suscripcion(datos.dispositivo_id)
+    return {"ok": True}
+
+
+@app.post("/push/prueba")
+async def push_prueba(datos: PushCancelar, request: Request):
+    """Manda un aviso de prueba SOLO al dispositivo que lo pide (botón 'Probar' del app)."""
+    _limitar_push(request, "prueba", maximo=5)
+    _validar_disp(datos.dispositivo_id)
+    r = await asyncio.to_thread(push.avisar_dispositivo, datos.dispositivo_id, "prueba")
+    return r
+
+
+# ---------------------------------------------------------------------------
+# PWA experimental ("app" de Sofi): misma conversación del widget, instalable en
+# el celular. La pantalla vive en /app; el service worker se sirve desde la raíz
+# (/app-sw.js) para poder controlar el alcance /app.
+# ---------------------------------------------------------------------------
+_ARCHIVOS_APP = {
+    "manifest.webmanifest": "application/manifest+json",
+    "icon-192.png": "image/png", "icon-512.png": "image/png",
+    "icon-maskable-512.png": "image/png", "apple-touch-icon.png": "image/png",
+    "icon-notif-192.png": "image/png", "badge-96.png": "image/png",
+}
+
+
+@app.get("/app")
+def pwa_pantalla():
+    return FileResponse("static/app.html", media_type="text/html",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/app-sw.js")
+def pwa_service_worker():
+    return FileResponse("static/app/sw.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/app"})
+
+
+@app.get("/app/{archivo}")
+def pwa_archivo(archivo: str):
+    tipo = _ARCHIVOS_APP.get(archivo)
+    if not tipo:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    return FileResponse(os.path.join("static/app", archivo), media_type=tipo,
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+
 # Segunda capa de defensa contra XSS (además del escapeHtml() del lado del
 # cliente) para las 4 consolas internas: aunque algo se cuele sin escapar,
 # el navegador se niega a ejecutar código venido de otro origen, a incrustar
@@ -108,6 +335,8 @@ _CSP_CONSOLA = (
     "frame-ancestors 'none'"
 )
 _HEADERS_CONSOLA = {
+    # Siempre revalidar: así, tras un deploy, las consolas cargan la versión nueva sin Ctrl+F5.
+    "Cache-Control": "no-cache",
     "Content-Security-Policy": _CSP_CONSOLA,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -119,6 +348,12 @@ _HEADERS_CONSOLA = {
 def consola_asesor():
     """Consola de asesor — URL fija que cada asesor guarda en favoritos."""
     return FileResponse("static/asesor.html", media_type="text/html", headers=_HEADERS_CONSOLA)
+
+
+@app.get("/static/supervisor_resumen.js")
+def supervisor_resumen_js():
+    """Tabla resumen de asesores de la consola de supervisor (se carga desde supervisor.html)."""
+    return FileResponse("static/supervisor_resumen.js", media_type="application/javascript", headers=_HEADERS_CONSOLA)
 
 
 @app.get("/supervisor")
@@ -174,7 +409,7 @@ async def subir_imagen_editor(file: UploadFile = File(...), authorization: str |
     return {"url": f"https://storage.googleapis.com/{bucket_nombre}/{nombre_archivo}"}
 
 
-def _generar_url_firmada(nombre_archivo: str, minutos: int = 60) -> str:
+def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como: str | None = None) -> str:
     """Firma una URL de corta duración para un objeto del bucket privado de
     recetas. Se llama al vuelo cada vez que alguien necesita VER el archivo —
     nunca se persiste una URL firmada en la base de datos, porque expira
@@ -195,6 +430,10 @@ def _generar_url_firmada(nombre_archivo: str, minutos: int = 60) -> str:
         method="GET",
         service_account_email=credentials.service_account_email,
         access_token=credentials.token,
+        # Con esto el navegador DESCARGA el archivo en vez de mostrarlo (sin
+        # necesitar CORS en el bucket). Solo se usa cuando el asesor/supervisor
+        # pulsa "Descargar" en el visor de imágenes.
+        **({"response_disposition": f'attachment; filename="{descargar_como}"'} if descargar_como else {}),
     )
 
 
@@ -220,6 +459,68 @@ def _firma_documento_valida(extension: str, contenido: bytes) -> bool:
     if extension == "csv":
         return b"\x00" not in contenido[:4096]
     return False
+
+
+_EXT_IMAGEN_POR_TIPO = {"image/jpeg": "jpg", "image/jpg": "jpg", "image/pjpeg": "jpg", "image/png": "png",
+                        "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp"}
+_EXT_IMAGEN_NOMBRE = {"jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "heic", "heif", "heics", "avif", "tif", "tiff"}
+
+
+def _tipo_imagen_real(contenido: bytes) -> str | None:
+    """Deduce el formato por la FIRMA del archivo (no por el nombre ni el content-type, que los celulares mandan
+    mal): devuelve jpg|png|gif|webp|bmp|heic|avif|tiff, o None si no parece una imagen."""
+    c = contenido[:16]
+    if c[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if c[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if c[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if c[:4] == b"RIFF" and c[8:12] == b"WEBP":
+        return "webp"
+    if c[:2] == b"BM":
+        return "bmp"
+    if c[:4] in (b"II*\x00", b"MM\x00*"):
+        return "tiff"
+    if c[4:8] == b"ftyp":
+        marca = c[8:12]
+        if marca in (b"avif", b"avis"):
+            return "avif"
+        if marca in (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1", b"heif"):
+            return "heic"
+    return None
+
+
+def _normalizar_imagen(contenido: bytes, content_type: str, nombre: str) -> tuple[bytes, str, str] | None:
+    """Para imágenes: (contenido, extension, content_type) ya normalizados, o None si NO es una imagen.
+    - La extensión sale del formato real, no del nombre (un 'Captura 10.44.12' ya no queda como archivo '.12').
+    - HEIC/HEIF (iPhone), AVIF y TIFF se convierten a JPEG para que se vean en Windows y en el navegador.
+    - Se aplica la orientación EXIF para que la foto no salga girada."""
+    real = _tipo_imagen_real(contenido)
+    ext_nombre = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+    if real is None:
+        # Firma desconocida: si dice ser imagen se deja pasar como estaba (no se rompe lo que ya funcionaba).
+        if (content_type or "").startswith("image/") and (content_type or "") in _EXT_IMAGEN_POR_TIPO:
+            return contenido, _EXT_IMAGEN_POR_TIPO[content_type], content_type
+        return None
+    if real in ("jpg", "png", "gif", "webp", "bmp"):
+        tipo = {"jpg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp"}[real]
+        return contenido, real, tipo
+    try:
+        from PIL import Image, ImageOps
+        if real in ("heic", "avif"):
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        img = Image.open(io.BytesIO(contenido))
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        salida = io.BytesIO()
+        img.save(salida, format="JPEG", quality=92, optimize=True)
+        return salida.getvalue(), "jpg", "image/jpeg"
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("No se pudo convertir la imagen %s a JPEG; se guarda tal cual", real)
+        return contenido, real if real != "heic" else (ext_nombre or "heic"), content_type or "application/octet-stream"
 
 
 @app.post("/upload")
@@ -291,7 +592,11 @@ async def upload(
     tipo_documento = _DOCUMENTOS_OFIMATICA.get(extension_original)
     es_documento = tipo_documento is not None
 
-    if not content_type.startswith("image/") and not es_pdf and not es_audio and not es_documento:
+    nombre_original = file.filename or ""
+    # Algunos celulares/navegadores mandan la foto como application/octet-stream o con otro tipo: se deja pasar
+    # si el NOMBRE parece de imagen y luego se verifica la firma real del archivo.
+    parece_imagen = content_type.startswith("image/") or extension_original in _EXT_IMAGEN_NOMBRE
+    if not parece_imagen and not es_pdf and not es_audio and not es_documento:
         raise HTTPException(status_code=400, detail="Solo se permiten imágenes, PDF, audios, Excel, CSV o Word")
 
     contenido = await file.read()
@@ -314,12 +619,18 @@ async def upload(
         extension = extension_original
     else:
         extension = (file.filename or "").split(".")[-1] if "." in (file.filename or "") else ("pdf" if es_pdf else "jpg")
+    tipo_subida = tipo_documento if es_documento else file.content_type
+    if parece_imagen and not es_pdf and not es_audio and not es_documento:
+        norm = await asyncio.to_thread(_normalizar_imagen, contenido, content_type, nombre_original)
+        if norm is None:
+            raise HTTPException(status_code=400, detail="El archivo no es una imagen válida")
+        contenido, extension, tipo_subida = norm
     nombre_archivo = f"webchat/{uuid.uuid4()}.{extension}"
 
     client = storage.Client()
     bucket = client.bucket(os.environ["GCS_BUCKET"])
     blob = bucket.blob(nombre_archivo)
-    blob.upload_from_string(contenido, content_type=tipo_documento if es_documento else file.content_type)
+    blob.upload_from_string(contenido, content_type=tipo_subida)
 
     url = _generar_url_firmada(nombre_archivo, minutos=60)
     return {"url": url, "ruta": nombre_archivo}
@@ -344,7 +655,7 @@ def _verificar_staff_por_query(token: str | None) -> int:
 
 
 @app.get("/archivo-receta")
-async def ver_archivo_receta(ruta: str, token: str | None = None):
+async def ver_archivo_receta(ruta: str, token: str | None = None, descargar: bool = False):
     """
     Genera una URL firmada NUEVA (corta duración) para que un asesor o
     supervisor autenticado pueda ver un archivo que el paciente subió
@@ -363,7 +674,13 @@ async def ver_archivo_receta(ruta: str, token: str | None = None):
     if not ruta or ".." in ruta or not ruta.startswith("webchat/"):
         raise HTTPException(status_code=400, detail="Ruta inválida")
 
-    url = _generar_url_firmada(ruta, minutos=15)
+    nombre_descarga = None
+    if descargar:
+        # Nombre seguro (solo el último tramo de la ruta, sin comillas ni
+        # saltos de línea que rompan el header Content-Disposition).
+        base = os.path.basename(ruta)
+        nombre_descarga = re.sub(r"[^A-Za-z0-9._\-]", "_", base)[:120] or "imagen"
+    url = _generar_url_firmada(ruta, minutos=15, descargar_como=nombre_descarga)
     return RedirectResponse(url)
 
 
@@ -473,7 +790,10 @@ async def descargar_conversacion_pdf(conversacion_id: int, token: str | None = N
 
     Uso: <a href="{urlBase}/conversacion-pdf?conversacion_id=123&token={jwt}">
     """
-    _verificar_staff_por_query(token)
+    staff_id = _verificar_staff_por_query(token)
+    # Un supervisor de campaña solo descarga conversaciones de sus campañas.
+    if not supervisor.conversacion_en_alcance(conversacion_id, supervisor.obtener_alcance(staff_id)):
+        raise HTTPException(status_code=403, detail="Esa conversación es de una campaña que no tienes asignada")
 
     info = _obtener_info_conversacion(conversacion_id)
     if info is None:
@@ -499,6 +819,8 @@ class ConnectionManager:
         self.widget_connections: dict[int, WebSocket] = {}       # conversacion_id -> ws
         self.asesor_connections: dict[int, WebSocket] = {}       # asesor_id -> ws
         self.supervisor_connections: dict[int, WebSocket] = {}   # supervisor_id -> ws
+        # Alcance de cada supervisor (None = máximo, ve todo; si no, las campañas que puede ver).
+        self.supervisor_alcance: dict[int, dict | None] = {}
         self.escuchas: dict[int, set] = {}                       # conversacion_id -> {supervisor_id, ...}
         # Asesores que están "ayudando en el bot" a una conversación que todavía
         # no llega a un asesor (mismo concepto que `escuchas`, pero para asesores).
@@ -506,7 +828,17 @@ class ConnectionManager:
 
     async def connect_widget(self, conversacion_id: int, ws: WebSocket):
         await ws.accept()
+        anterior = self.widget_connections.get(conversacion_id)
         self.widget_connections[conversacion_id] = ws
+        if anterior is not None and anterior is not ws:
+            # La misma conversación se abrió en otro dispositivo o pestaña (p. ej. tras
+            # escanear el QR): la conexión vieja se cierra avisándole, para que no
+            # compitan por la conversación ni se reconecten una a la otra sin fin.
+            try:
+                await anterior.send_json({"type": "sesion_en_otro_dispositivo", "payload": {}})
+                await anterior.close(code=4000)
+            except Exception:
+                pass
 
     def reasignar_widget(self, conversacion_id: int, ws: WebSocket):
         """Igual que connect_widget pero SIN aceptar de nuevo — para cuando se
@@ -514,7 +846,11 @@ class ConnectionManager:
         (iniciar_nueva_conversacion / reiniciar_datos)."""
         self.widget_connections[conversacion_id] = ws
 
-    def disconnect_widget(self, conversacion_id: int):
+    def disconnect_widget(self, conversacion_id: int, ws: WebSocket = None):
+        """Con `ws`, solo quita el registro si esa sigue siendo LA conexión vigente
+        (una conexión desplazada por otro dispositivo no debe borrar a la nueva)."""
+        if ws is not None and self.widget_connections.get(conversacion_id) is not ws:
+            return
         self.widget_connections.pop(conversacion_id, None)
 
     async def connect_asesor(self, asesor_id: int, ws: WebSocket):
@@ -543,12 +879,19 @@ class ConnectionManager:
         for ayudando in self.escuchas_asesor.values():
             ayudando.discard(asesor_id)
 
-    async def connect_supervisor(self, supervisor_id: int, ws: WebSocket):
+    async def connect_supervisor(self, supervisor_id: int, ws: WebSocket, alcance: dict | None = None):
         await ws.accept()
         self.supervisor_connections[supervisor_id] = ws
+        self.supervisor_alcance[supervisor_id] = alcance
+
+    def es_conexion_vigente_supervisor(self, supervisor_id: int, ws: WebSocket) -> bool:
+        """True si `ws` sigue siendo LA conexión registrada de ese supervisor (el socket
+        viejo puede enterarse de su caída después de que el nuevo ya conectó)."""
+        return self.supervisor_connections.get(supervisor_id) is ws
 
     def disconnect_supervisor(self, supervisor_id: int):
         self.supervisor_connections.pop(supervisor_id, None)
+        self.supervisor_alcance.pop(supervisor_id, None)
         for escuchando in self.escuchas.values():
             escuchando.discard(supervisor_id)
 
@@ -562,6 +905,11 @@ class ConnectionManager:
         ws = self.widget_connections.get(conversacion_id)
         if ws:
             await ws.send_json(evento)
+        elif evento.get("type") in ("mensaje_asesor", "archivo_asesor"):
+            # El cliente cerró la ventana/app: le llega un aviso push (si activó avisos).
+            _lanzar_aviso_push(conversacion_id,
+                               "archivo" if evento.get("type") == "archivo_asesor" else "respuesta",
+                               {"asesor": (evento.get("payload") or {}).get("asesor_nombre")})
 
     async def enviar_a_asesor(self, asesor_id: int, evento: dict):
         ws = self.asesor_connections.get(asesor_id)
@@ -571,11 +919,16 @@ class ConnectionManager:
     async def enviar_a_supervisor(self, supervisor_id: int, evento: dict):
         ws = self.supervisor_connections.get(supervisor_id)
         if ws:
-            await ws.send_json(evento)
+            # Un supervisor de campaña solo recibe lo de sus campañas (ver supervisor.filtrar_evento).
+            evento = supervisor.filtrar_evento(evento, self.supervisor_alcance.get(supervisor_id))
+            if evento is not None:
+                await ws.send_json(evento)
 
     async def enviar_a_todos_supervisores(self, evento: dict):
-        for ws in self.supervisor_connections.values():
-            await ws.send_json(evento)
+        for supervisor_id, ws in list(self.supervisor_connections.items()):
+            e = supervisor.filtrar_evento(evento, self.supervisor_alcance.get(supervisor_id))
+            if e is not None:
+                await ws.send_json(e)
 
     async def enviar_a_todos_asesores(self, evento: dict):
         for ws in self.asesor_connections.values():
@@ -649,7 +1002,7 @@ def _crear_o_reanudar_conversacion(sesion_token: str):
         release_connection(conn)
 
 
-_ORIGENES_VALIDOS = {"burbuja", "invitacion_sms", "enlace_sms", "nueva_conversacion"}
+_ORIGENES_VALIDOS = {"burbuja", "invitacion_sms", "enlace_sms", "enlace_directo", "nueva_conversacion", "traspaso_qr"}
 
 
 def _registrar_origen(conversacion_id: int, origen, pagina=None):
@@ -736,7 +1089,12 @@ async def _procesar_eventos_bot(conversacion_id: int, websocket: WebSocket, even
     for evento in eventos:
         await websocket.send_json(evento)
         if evento.get("type") == "en_cola":
-            await asignacion.intentar_asignar_conversacion(conversacion_id, manager)
+            asignado = await asignacion.intentar_asignar_conversacion(conversacion_id, manager)
+            if asignado is None:
+                # Nadie disponible: queda esperando. Se le tranquiliza sobre cerrar la ventana.
+                texto = (supervisor.obtener_configuracion("mensaje_en_cola_guardado")
+                         or MENSAJES_AUTOMATICOS["mensaje_en_cola_guardado"]["default"])
+                await websocket.send_json({"type": "aviso_cola", "payload": {"texto": texto}})
 
 
 def _obtener_historial(conversacion_id: int) -> list:
@@ -787,6 +1145,92 @@ def _obtener_historial(conversacion_id: int) -> list:
             "respondido_a": _preview(meta.get("respondido_a_id")),
         })
     return resultado
+
+
+# --- Historial de conversaciones pasadas en el widget -----------------------
+HISTORIAL_PREVIO_DIAS = 90
+HISTORIAL_PREVIO_BLOQUE = 30
+_gcs_cliente = None
+
+
+def _archivo_existe(ruta: str) -> bool:
+    """True si el archivo todavía está en el bucket (puede haberse borrado por antigüedad)."""
+    global _gcs_cliente
+    if not ruta or ".." in ruta or not ruta.startswith("webchat/"):
+        return False
+    try:
+        if _gcs_cliente is None:
+            _gcs_cliente = storage.Client()
+        return _gcs_cliente.bucket(os.environ["GCS_BUCKET"]).blob(ruta).exists()
+    except Exception:
+        logger.warning("No se pudo comprobar si existe %s", ruta, exc_info=True)
+        return False
+
+
+def _historial_previo(sesion_token: str, conversacion_actual: int, antes_de_id) -> dict:
+    """Mensajes de conversaciones ANTERIORES de este mismo navegador (hasta 90 días, en bloques),
+    del más reciente hacia atrás. Solo si el celular está verificado; respeta la fecha de corte
+    'historial_desde' (se fija al usar "No soy yo / Cambiar mis datos")."""
+    vacio = {"disponible": False, "mensajes": [], "conversaciones": {}, "hay_mas": False}
+    try:
+        antes = int(antes_de_id) if antes_de_id not in (None, "", 0) else None
+    except (TypeError, ValueError):
+        antes = None
+    ahora = datetime.now(LIMA_TZ)
+    desde_tope = ahora - timedelta(days=HISTORIAL_PREVIO_DIAS)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, verificado_en IS NOT NULL AND telefono IS NOT NULL, historial_desde "
+                "FROM usuarios_webchat WHERE sesion_token = %s", (sesion_token,))
+            fila = cur.fetchone()
+            if not fila or not fila[1]:
+                conn.rollback()
+                return vacio
+            usuario_id, _, corte = fila
+            desde = max(desde_tope, corte) if corte else desde_tope
+            cur.execute(
+                """SELECT m.id, m.conversacion_id, m.emisor_tipo, m.tipo_contenido, m.contenido,
+                          m.metadata, m.enviado_en, c.iniciado_en, c.cerrado_en, cam.nombre
+                   FROM mensajes m
+                   JOIN conversaciones c ON c.id = m.conversacion_id
+                   LEFT JOIN campanas cam ON cam.id = c.campana_id
+                   WHERE c.usuario_id = %s AND c.id <> %s
+                     AND (%s::bigint IS NULL OR m.id < %s::bigint)
+                     AND m.enviado_en >= %s
+                     AND m.tipo_contenido IN ('texto', 'archivo', 'boton_click')
+                   ORDER BY m.id DESC LIMIT %s""",
+                (usuario_id, conversacion_actual, antes, antes, desde, HISTORIAL_PREVIO_BLOQUE + 1),
+            )
+            filas = cur.fetchall()
+        conn.rollback()
+    except Exception:
+        conn.rollback()
+        logger.exception("No se pudo leer el historial previo (¿falta migracion_historial_previo.sql?)")
+        return vacio
+    finally:
+        release_connection(conn)
+
+    hay_mas = len(filas) > HISTORIAL_PREVIO_BLOQUE
+    filas = list(reversed(filas[:HISTORIAL_PREVIO_BLOQUE]))  # de más antiguo a más reciente
+    mensajes, conversaciones = [], {}
+    for mid, conv_id, emisor, tipo, contenido, meta, ts, ini, cer, campana in filas:
+        meta = _parsear_metadata(meta)
+        eliminado = bool(meta.get("eliminado_en"))
+        item = {
+            "id": mid, "conversacion_id": conv_id, "emisor_tipo": emisor, "tipo_contenido": tipo,
+            "contenido": "" if eliminado else contenido, "enviado_en": ts.isoformat(),
+            "editado_en": meta.get("editado_en"), "eliminado_en": meta.get("eliminado_en"),
+        }
+        if tipo == "archivo" and not eliminado:
+            item["archivo_disponible"] = _archivo_existe(contenido)
+        mensajes.append(item)
+        conversaciones[str(conv_id)] = {
+            "iniciado_en": ini.isoformat() if ini else None,
+            "cerrado_en": cer.isoformat() if cer else None, "campana": campana,
+        }
+    return {"disponible": True, "mensajes": mensajes, "conversaciones": conversaciones, "hay_mas": hay_mas}
 
 
 def _obtener_info_conversacion(conversacion_id: int) -> dict | None:
@@ -923,28 +1367,106 @@ def _nombre_asesor_de_conversacion(conversacion_id: int):
 
 
 def _obtener_datos_usuario(sesion_token: str) -> dict:
+    """Datos recordados de este navegador. 'verificado' = el celular ya pasó el
+    código SMS alguna vez (sin vencimiento). Si la columna verificado_en aún no
+    existe (migración sin correr), se usa el criterio anterior: nombre + celular."""
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT nombre, telefono FROM usuarios_webchat WHERE sesion_token = %s",
-                (sesion_token,),
-            )
-            row = cur.fetchone()
-            return {"nombre": row[0], "telefono": row[1]} if row else {}
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT nombre, telefono, dni, verificado_en IS NOT NULL, ruc "
+                    "FROM usuarios_webchat WHERE sesion_token = %s",
+                    (sesion_token,),
+                )
+                row = cur.fetchone()
+                return ({"nombre": row[0], "telefono": row[1], "dni": row[2], "verificado": bool(row[3]),
+                         "ruc": row[4]} if row else {})
+        except Exception:
+            conn.rollback()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT nombre, telefono, dni FROM usuarios_webchat WHERE sesion_token = %s",
+                    (sesion_token,),
+                )
+                row = cur.fetchone()
+                return ({"nombre": row[0], "telefono": row[1], "dni": row[2],
+                         "verificado": bool(row[0] and row[1])} if row else {})
     finally:
         release_connection(conn)
 
 
+def _nombre_reconocido(sesion_token: str):
+    """Nombre a mostrar en 'No soy yo' (None si el visitante no está reconocido)."""
+    try:
+        datos = _obtener_datos_usuario(sesion_token)
+    except Exception:
+        return None
+    if datos and datos.get("telefono") and datos.get("verificado") and datos.get("nombre"):
+        return datos["nombre"]
+    return None
+
+
+def _nodo_inicio_visitante() -> str:
+    """Nodo donde arranca un visitante que todavía no conocemos.
+    Si existe y está activo "webchat_bienvenida" (saludo + menú, SIN pedir el
+    celular todavía), se usa ese. Si no existe o se desactiva, vuelve al flujo
+    anterior (pedir el celular primero) -- esto sirve de respaldo y de
+    "interruptor": basta con UPDATE bot_menus SET activo = FALSE WHERE
+    codigo = 'webchat_bienvenida' para revertir sin desplegar."""
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM bot_menus WHERE codigo = 'webchat_bienvenida' AND activo = TRUE")
+                if cur.fetchone():
+                    return "webchat_bienvenida"
+        finally:
+            release_connection(conn)
+    except Exception:
+        pass
+    return "webchat_pide_celular"
+
+
+def _campana_de_conversacion(conversacion_id):
+    """campana_id de la conversación (None si todavía no eligió campaña)."""
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT campana_id FROM conversaciones WHERE id = %s", (conversacion_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+        finally:
+            release_connection(conn)
+    except Exception:
+        return None
+
+
 def _limpiar_datos_usuario(sesion_token: str):
+    """'No soy yo' / 'Cambiar mis datos': olvida nombre, celular, DNI, RUC y verificación.
+    Si alguna columna nueva aún no existe, prueba con menos columnas."""
+    intentos = (
+        # historial_desde: lo anterior a este momento ya no se muestra como "conversaciones pasadas".
+        "nombre = NULL, telefono = NULL, dni = NULL, verificado_en = NULL, ruc = NULL, historial_desde = NOW()",
+        "nombre = NULL, telefono = NULL, dni = NULL, verificado_en = NULL, ruc = NULL",
+        "nombre = NULL, telefono = NULL, dni = NULL, verificado_en = NULL, historial_desde = NOW()",
+        "nombre = NULL, telefono = NULL, dni = NULL, verificado_en = NULL",
+        "nombre = NULL, telefono = NULL, dni = NULL",
+    )
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE usuarios_webchat SET nombre = NULL, telefono = NULL WHERE sesion_token = %s",
-                (sesion_token,),
-            )
-        conn.commit()
+        for i, sets in enumerate(intentos):
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"UPDATE usuarios_webchat SET {sets} WHERE sesion_token = %s", (sesion_token,))
+                conn.commit()
+                break
+            except Exception:
+                conn.rollback()
+                if i == len(intentos) - 1:
+                    raise
     finally:
         release_connection(conn)
 
@@ -1000,7 +1522,40 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
 
     # El conteo "Atendidas hoy" de la cabecera del asesor sube con cada cierre.
     asesor_de_la_conversacion = _obtener_asesor_actual(conversacion_id)
+
+    # Quien esté ESCUCHANDO esta conversación (supervisor, o asesor que ayuda) debe enterarse del cierre:
+    # si no, la pantalla se queda quieta y parece que algo falló.
+    try:
+        if cerrado_por == "asesor":
+            quien = "el asesor"
+            if asesor_de_la_conversacion:
+                quien = f"el asesor {await asyncio.to_thread(_nombre_display, asesor_de_la_conversacion)}"
+        elif cerrado_por == "supervisor":
+            quien = "un supervisor"
+        else:
+            quien = "el sistema"
+        aviso = f"🔒 Esta conversación fue cerrada por {quien}. Ya no recibirá más mensajes."
+        await manager.notificar_escuchas(conversacion_id, {
+            "type": "mensaje_conversacion",
+            "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "sistema", "texto": aviso},
+        })
+        await manager.notificar_escuchas(conversacion_id, {
+            "type": "conversacion_cerrada",
+            "payload": {"conversacion_id": conversacion_id, "cerrado_por": cerrado_por, "texto": aviso},
+        })
+    except Exception:
+        logger.warning("No se pudo avisar el cierre a quienes escuchaban la conversación %s", conversacion_id, exc_info=True)
     if asesor_de_la_conversacion:
+        if cerrado_por != "asesor":
+            # Cerrada por un supervisor: se la quita de la consola del asesor y del tablero.
+            try:
+                await manager.enviar_a_asesor(asesor_de_la_conversacion, {
+                    "type": "conversacion_removida",
+                    "payload": {"conversacion_id": conversacion_id, "motivo": "cerrada", "cerrado_por": cerrado_por},
+                })
+                await supervisor.notificar_cambio_asesor(asesor_de_la_conversacion, manager)
+            except Exception:
+                logger.warning("No se pudo avisar el cierre al asesor", exc_info=True)
         try:
             await supervisor.enviar_mis_estadisticas(asesor_de_la_conversacion, manager)
         except Exception:
@@ -1059,7 +1614,8 @@ def _obtener_estado_conversacion(conversacion_id: int):
 # código. Por eso el botón de reenvío/llamada se maneja directo acá, al
 # margen del árbol de bot_menus, leyendo y escribiendo variables_sesion a mano.
 
-LIMITE_REENVIOS_SMS_ANTES_DE_LLAMADA = 2  # al 2do reenvío, se habilita también la opción de llamada
+LIMITE_REENVIOS_SMS_ANTES_DE_LLAMADA = 2  # (ya no condiciona el botón de llamada, que está siempre disponible)
+MAX_LLAMADAS_OTP = 3  # llamadas con el token por conversación (cada una tiene costo)
 
 
 def _obtener_nodo_y_variables(conversacion_id: int):
@@ -1138,9 +1694,15 @@ def _solicitar_llamada_otp(conversacion_id: int) -> dict:
     if not celular or not codigo:
         return {"ok": False, "motivo": "sin_datos"}
 
+    llamadas = int(variables.get("OTP_LLAMADAS") or 0)
+    if llamadas >= MAX_LLAMADAS_OTP:
+        return {"ok": False, "motivo": "limite_llamadas"}
+
     if not enviar_llamada_otp(celular, codigo):
         return {"ok": False, "motivo": "error_llamada"}
 
+    variables["OTP_LLAMADAS"] = llamadas + 1
+    _guardar_variables_sesion(conversacion_id, variables)
     return {"ok": True, "reenvios": reenvios}
 
 
@@ -1439,6 +2001,186 @@ async def _difundir_mensaje_modificado(evento_type: str, conversacion_id: int, p
     await manager.notificar_escuchas(conversacion_id, {"type": evento_type, "payload": payload})
 
 
+
+# ---------------------------------------------------------------------------
+# Traspaso de la conversación a otro dispositivo (laptop -> celular) por QR.
+# El QR NO lleva la llave de la sesión: lleva un código de un solo uso que vence
+# a los 5 minutos y que el celular canjea por la llave. Si alguien fotografía el
+# QR después de usado o vencido, no sirve.
+# ---------------------------------------------------------------------------
+TRASPASO_VIGENCIA_SEG = 300
+
+
+def _crear_traspaso(sesion_token: str, url_cliente) -> dict:
+    widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
+    if not widget_url and isinstance(url_cliente, str) and url_cliente.startswith(("https://", "http://")):
+        widget_url = url_cliente.strip()[:500]
+    if not widget_url:
+        return {"ok": False, "motivo": "No se pudo determinar la página del chat."}
+    try:
+        import segno
+    except ImportError:
+        logger.exception("Falta la librería segno para generar el QR")
+        return {"ok": False, "motivo": "No se pudo generar el código QR por ahora."}
+
+    codigo = secrets.token_urlsafe(24)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM usuarios_webchat WHERE sesion_token = %s", (sesion_token,))
+            fila = cur.fetchone()
+            if not fila:
+                return {"ok": False, "motivo": "Sesión no encontrada."}
+            # Solo el último código sirve: los anteriores sin usar se invalidan.
+            cur.execute("DELETE FROM traspasos_sesion WHERE usuario_id = %s AND usado_en IS NULL", (fila[0],))
+            cur.execute(
+                "INSERT INTO traspasos_sesion (codigo, usuario_id, creado_en, expira_en) VALUES (%s, %s, %s, %s)",
+                (codigo, fila[0], datetime.now(LIMA_TZ),
+                 datetime.now(LIMA_TZ) + timedelta(seconds=TRASPASO_VIGENCIA_SEG)),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.exception("No se pudo crear el traspaso (¿falta migracion_traspaso_qr.sql?)")
+        return {"ok": False, "motivo": "No se pudo generar el código QR por ahora."}
+    finally:
+        release_connection(conn)
+
+    separador = "&" if "?" in widget_url else "?"
+    enlace = f"{widget_url}{separador}wct={codigo}"
+    qr = segno.make(enlace, error="m")
+    return {"ok": True, "qr": qr.svg_data_uri(scale=6, border=2, dark="#0A2540"),
+            "expira_seg": TRASPASO_VIGENCIA_SEG}
+
+
+# --- Verificación inversa por WhatsApp (respaldo del SMS) -------------------
+WHATSAPP_VERIFICACION_NUMERO_DEFECTO = "51955973936"
+
+
+def _numero_whatsapp_verificacion() -> str:
+    try:
+        valor = (supervisor.obtener_configuracion("whatsapp_verificacion_numero") or "").strip()
+    except Exception:
+        valor = ""
+    digitos = "".join(c for c in valor if c.isdigit())
+    return digitos or WHATSAPP_VERIFICACION_NUMERO_DEFECTO
+
+
+class VerificacionWhatsapp(BaseModel):
+    celular: str
+    mensaje: str
+
+
+_MENSAJES_VERIFICACION = {
+    "ok": "✅ Listo, tu celular quedó verificado. Vuelve a la pestaña del chat de Sanitas.",
+    "ya_verificado": "✅ Tu celular ya está verificado. Vuelve a la pestaña del chat de Sanitas.",
+    "formato": "No pudimos leer el código. Envía el mensaje tal como aparece en el chat de Sanitas (VERIFICAR-123456).",
+    "no_existe": "Ese código no es válido. Genera uno nuevo desde el chat de Sanitas.",
+    "vencido": "Ese código venció. Genera uno nuevo desde el chat de Sanitas.",
+    "celular_distinto": "Debes enviar el código desde el mismo celular que registraste en el chat.",
+    "ya_usado": "Ese código ya fue utilizado. Genera uno nuevo desde el chat de Sanitas.",
+    "bloqueado": "Demasiados intentos. Espera unos minutos y vuelve a intentarlo desde el chat de Sanitas.",
+    "error": "No pudimos verificar en este momento. Inténtalo de nuevo desde el chat de Sanitas.",
+}
+
+
+@app.post("/verificacion/whatsapp")
+async def verificacion_whatsapp_endpoint(datos: VerificacionWhatsapp, authorization: str = Header(None)):
+    """Lo llama el bot de Chattigo (nodo CONNECTOR_SERVICE) con el número REAL del remitente
+    (USER_IDENTIFIER) y el texto que escribió. Siempre responde 200 con {verificado, motivo, mensaje}
+    para que el bot pueda mostrar el mensaje adecuado; solo la ApiKey inválida da 401."""
+    esperado = os.environ.get("SOFI_APIS_KEY") or ""
+    recibido = (authorization or "").strip()
+    if recibido.lower().startswith("apikey "):
+        recibido = recibido[7:].strip()
+    if not esperado or not secrets.compare_digest(recibido.encode(), esperado.encode()):
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    resultado = await asyncio.to_thread(
+        verificacion_whatsapp.confirmar, datos.celular[:30], datos.mensaje[:200])
+    if resultado.get("verificado") and resultado.get("conversacion_id"):
+        try:  # Si el widget está en esta misma instancia, se entera al instante (si no, lo consulta él).
+            await manager.enviar_a_widget(resultado["conversacion_id"],
+                                          {"type": "verificacion_whatsapp_ok", "payload": {}})
+        except Exception:
+            pass
+    motivo = resultado.get("motivo") or "error"
+    return {"verificado": bool(resultado.get("verificado")), "motivo": motivo,
+            "mensaje": _MENSAJES_VERIFICACION.get(motivo, _MENSAJES_VERIFICACION["error"])}
+
+
+async def _aplicar_verificacion_whatsapp(conversacion_id: int, websocket: WebSocket, codigo: str):
+    """El código de WhatsApp ya está verificado en la base: se hace avanzar el bot exactamente
+    como si la persona hubiera escrito el código del SMS (un solo uso)."""
+    nodo_actual, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+    if nodo_actual != "webchat_valida_pide_codigo":
+        return
+    if not await asyncio.to_thread(verificacion_whatsapp.consumir, conversacion_id, codigo):
+        return
+    variables["ENVIO_SMS"] = {"status": 200, "response": {"enviado": True, "codigo": codigo}}
+    variables["OTP_METODO"] = "whatsapp"
+    await asyncio.to_thread(_guardar_variables_sesion, conversacion_id, variables)
+    desde_mensaje_id = _ultimo_mensaje_id(conversacion_id) if _hay_escuchas(conversacion_id) else None
+    eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id, texto=codigo)
+    await websocket.send_json({"type": "verificacion_whatsapp_completada", "payload": {}})
+    await _procesar_eventos_bot(conversacion_id, websocket, eventos)
+    if desde_mensaje_id is not None:
+        await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
+
+
+class CanjearTraspaso(BaseModel):
+    codigo: str
+
+
+@app.post("/widget/traspaso/canjear")
+def canjear_traspaso(datos: CanjearTraspaso):
+    """El celular entrega el código del QR y recibe la llave de la sesión. Un solo uso."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE traspasos_sesion SET usado_en = %s
+                   WHERE codigo = %s AND usado_en IS NULL AND expira_en > %s
+                   RETURNING usuario_id""",
+                (datetime.now(LIMA_TZ), datos.codigo[:100], datetime.now(LIMA_TZ)),
+            )
+            fila = cur.fetchone()
+            if not fila:
+                conn.commit()
+                raise HTTPException(status_code=410, detail="El código venció o ya se usó")
+            cur.execute("SELECT sesion_token FROM usuarios_webchat WHERE id = %s", (fila[0],))
+            token = cur.fetchone()[0]
+        conn.commit()
+        return {"sesion_token": token}
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        logger.exception("Error canjeando el traspaso")
+        raise HTTPException(status_code=500, detail="No se pudo continuar la conversación")
+    finally:
+        release_connection(conn)
+
+
+_TIPOS_FIABLES = {"mensaje_usuario", "click_opcion", "archivo_subido", "formulario_completado"}
+_TIPOS_FIABLES_STAFF = {"mensaje_asesor", "mensaje_asesor_archivo", "responder_directo", "responder_directo_archivo"}
+_cids_widget: dict = {}
+
+
+def _registrar_cid_widget(token: str, cid: str) -> bool:
+    """True si el cid es nuevo (hay que procesarlo); False si ya se procesó (reenvío tras un corte de red)."""
+    vistos = _cids_widget.setdefault(token, [])
+    if cid in vistos:
+        return False
+    vistos.append(cid)
+    if len(vistos) > 200:
+        del vistos[:100]
+    if len(_cids_widget) > 5000:
+        for k in list(_cids_widget)[:2500]:
+            _cids_widget.pop(k, None)
+    return True
+
+
 @app.websocket("/ws/widget")
 async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
     """
@@ -1455,14 +2197,26 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
     async def arrancar(conv_id: int, es_nueva_flag: bool, estado: str, forzar_pedir_datos: bool = False):
         if es_nueva_flag:
             datos = None if forzar_pedir_datos else _obtener_datos_usuario(nuevo_token)
-            if datos and datos.get("nombre") and datos.get("telefono"):
-                # Ya conocemos a esta persona (mismo navegador) — se salta
-                # las preguntas de celular/nombre e inicia directo en el menú.
-                variables_iniciales = {"CELULAR": datos["telefono"], "NOMBRE_USUARIO": datos["nombre"]}
-                eventos = iniciar_conversacion(conv_id, nodo_inicial="webchat_menu_principal",
+            if datos and datos.get("telefono") and datos.get("verificado"):
+                # Celular ya verificado en este navegador (no vence): no se
+                # vuelve a pedir ni a mandar SMS. También se recuerda el DNI.
+                variables_iniciales = {"CELULAR": datos["telefono"]}
+                if datos.get("dni"):
+                    variables_iniciales["DNI"] = datos["dni"]
+                    variables_iniciales["DOI"] = datos["dni"]
+                if datos.get("ruc"):
+                    variables_iniciales["RUC_RECORDADO"] = datos["ruc"]
+                if datos.get("nombre"):
+                    variables_iniciales["NOMBRE_USUARIO"] = datos["nombre"]
+                    nodo_ini = "webchat_menu_principal"
+                else:
+                    # Falta solo el nombre: sigue desde ahí, sin repetir celular/SMS.
+                    nodo_ini = ("webchat_bienvenida" if _nodo_inicio_visitante() == "webchat_bienvenida"
+                                else "webchat_pide_nombre")
+                eventos = iniciar_conversacion(conv_id, nodo_inicial=nodo_ini,
                                                 variables_iniciales=variables_iniciales)
             else:
-                eventos = iniciar_conversacion(conv_id, nodo_inicial="webchat_pide_celular")
+                eventos = iniciar_conversacion(conv_id, nodo_inicial=_nodo_inicio_visitante())
             await _procesar_eventos_bot(conv_id, websocket, eventos)
         else:
             # Reanudando: manda el historial para reconstruir la pantalla,
@@ -1490,10 +2244,21 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
     try:
         await websocket.send_json({
             "type": "sesion_iniciada",
-            "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id},
+            "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
+                        "reconocido": _nombre_reconocido(nuevo_token)},
         })
         try:
-            await arrancar(conversacion_id, es_nueva, estado_actual)
+            try:
+                modo_directo, datos_directo = await _decidir_enlace_directo(conversacion_id, estado_actual, es_nueva, websocket)
+            except Exception:
+                logger.exception("Error evaluando el enlace directo de la conversación %s", conversacion_id)
+                modo_directo, datos_directo = None, None
+            if modo_directo == "directo" and es_nueva:
+                pass  # no arranca el bot: la deriva _derivar_enlace_directo
+            else:
+                await arrancar(conversacion_id, es_nueva, estado_actual)
+            if modo_directo == "directo":
+                await _derivar_enlace_directo(conversacion_id, datos_directo, es_nueva, websocket)
         except Exception:
             logger.exception("Error en el arranque inicial de la conversación %s", conversacion_id)
             await websocket.send_json({
@@ -1502,10 +2267,25 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
             })
             await websocket.send_json({"type": "conversacion_cerrada", "payload": {"motivo": "error"}})
 
+        try:
+            await _entregar_archivos_pendientes(conversacion_id, websocket)
+        except Exception:
+            logger.exception("Error entregando archivos pendientes de la conversación %s", conversacion_id)
+
         while True:
             data = await websocket.receive_json()
             tipo = data.get("type")
             payload = data.get("payload", {}) or {}
+
+            # Envío fiable: el widget guarda lo que escribe sin red y lo reenvía al volver, con un
+            # identificador (cid). Si ya lo habíamos procesado, solo se confirma (no se duplica).
+            cid_actual = None
+            if tipo in _TIPOS_FIABLES and payload.get("cid"):
+                cid_actual = str(payload.get("cid"))[:64]
+                if not _registrar_cid_widget(nuevo_token, cid_actual):
+                    await websocket.send_json({"type": "mensaje_recibido_servidor",
+                                               "payload": {"cid": cid_actual, "dup": True}})
+                    continue
 
             try:
                 if tipo == "iniciar_nueva_conversacion":
@@ -1518,13 +2298,29 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         await asyncio.to_thread(_registrar_origen, conversacion_id, "nueva_conversacion")
                     await websocket.send_json({
                         "type": "sesion_iniciada",
-                        "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id},
+                        "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
+                        "reconocido": _nombre_reconocido(nuevo_token)},
                     })
                     await arrancar(conversacion_id, es_nueva, estado_actual)
                     continue
 
                 if tipo == "ping":
                     continue  # latido del widget: mantiene viva la conexión, no hace nada más
+
+                if tipo == "generar_traspaso":
+                    resultado = await asyncio.to_thread(_crear_traspaso, nuevo_token, payload.get("url"))
+                    if resultado.get("ok"):
+                        await websocket.send_json({"type": "traspaso_listo", "payload": resultado})
+                    else:
+                        await websocket.send_json({"type": "traspaso_error",
+                                                   "payload": {"motivo": resultado.get("motivo")}})
+                    continue
+
+                if tipo == "cargar_historial_previo":
+                    resultado = await asyncio.to_thread(
+                        _historial_previo, nuevo_token, conversacion_id, payload.get("antes_de"))
+                    await websocket.send_json({"type": "historial_previo", "payload": resultado})
+                    continue
 
                 if tipo == "registrar_origen":
                     await asyncio.to_thread(
@@ -1538,7 +2334,8 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     manager.reasignar_widget(conversacion_id, websocket)
                     await websocket.send_json({
                         "type": "sesion_iniciada",
-                        "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id},
+                        "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
+                        "reconocido": _nombre_reconocido(nuevo_token)},
                     })
                     await arrancar(conversacion_id, es_nueva, estado_actual, forzar_pedir_datos=True)
                     continue
@@ -1584,6 +2381,44 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                             "texto": "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar."}})
                     continue
 
+                if estado == "bot" and tipo == "iniciar_verificacion_whatsapp":
+                    nodo_actual, variables = _obtener_nodo_y_variables(conversacion_id)
+                    celular = (variables.get("CELULAR") or "").strip()
+                    if nodo_actual != "webchat_valida_pide_codigo" or not celular:
+                        await websocket.send_json({"type": "verificacion_whatsapp_error",
+                                                   "payload": {"motivo": "fuera_de_flujo"}})
+                        continue
+                    res = await asyncio.to_thread(verificacion_whatsapp.iniciar, conversacion_id, celular)
+                    if not res.get("ok"):
+                        await websocket.send_json({"type": "verificacion_whatsapp_error",
+                                                   "payload": {"motivo": res.get("motivo")}})
+                        continue
+                    texto_wa = f"VERIFICAR-{res['codigo']}"
+                    numero = _numero_whatsapp_verificacion()
+                    enlace_wa = f"https://wa.me/{numero}?text={texto_wa}"
+                    qr_wa = None
+                    if payload.get("con_qr"):  # en computador la persona necesita escanearlo con su teléfono
+                        try:
+                            import segno
+                            qr_wa = segno.make(enlace_wa, error="m").svg_data_uri(
+                                scale=6, border=2, dark="#0A2540")
+                        except Exception:
+                            logger.exception("No se pudo generar el QR de WhatsApp")
+                    await websocket.send_json({"type": "verificacion_whatsapp_lista", "payload": {
+                        "codigo": res["codigo"], "texto": texto_wa, "numero": numero,
+                        "enlace": enlace_wa, "qr": qr_wa, "expira_seg": res["expira_seg"]}})
+                    continue
+
+                if estado == "bot" and tipo == "consultar_verificacion_whatsapp":
+                    codigo_wa = "".join(c for c in str(payload.get("codigo") or "") if c.isdigit())[:6]
+                    est = await asyncio.to_thread(verificacion_whatsapp.estado, conversacion_id, codigo_wa)
+                    if est == "verificado":
+                        await _aplicar_verificacion_whatsapp(conversacion_id, websocket, codigo_wa)
+                    elif est in ("vencido", "desconocido"):
+                        await websocket.send_json({"type": "verificacion_whatsapp_error",
+                                                   "payload": {"motivo": "vencido"}})
+                    continue
+
                 if estado == "bot" and tipo == "solicitar_llamada_otp":
                     resultado = _solicitar_llamada_otp(conversacion_id)
                     if resultado["ok"]:
@@ -1597,12 +2432,51 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                             },
                         })
                     else:
+                        texto_err = ("⚠️ Ya solicitaste varias llamadas. Usa el código del SMS o verifica con WhatsApp."
+                                     if resultado.get("motivo") == "limite_llamadas" else
+                                     "⚠️ No pudimos iniciar la llamada en este momento. Inténtalo de nuevo en unos segundos.")
                         await websocket.send_json({"type": "mensaje_bot", "payload": {
-                            "texto": "⚠️ No pudimos iniciar la llamada en este momento. Inténtalo de nuevo en unos segundos."}})
+                            "texto": texto_err, "otp_reenvios": int(_obtener_nodo_y_variables(conversacion_id)[1].get("OTP_REENVIOS") or 0),
+                            "otp_puede_llamar": True}})
                     continue
 
+                # --- Agente de IA oculto: entrada (palabra clave + lista blanca) -----------------
+                en_ia = False
+                if tipo == "mensaje_usuario" and estado == "bot":
+                    if _es_palabra_clave_ia(payload.get("texto"), "MAD_PALABRA_CLAVE"):
+                        celular_mad = await asyncio.to_thread(_celular_tester_de_sesion, nuevo_token, "MAD_TESTERS")
+                        if celular_mad:
+                            eventos_mad = await asyncio.to_thread(
+                                entrar_a_nodo, conversacion_id, NODO_MAD, {"CELULAR": celular_mad})
+                            if eventos_mad is not None:   # None = el nodo no existe: sigue como texto normal
+                                await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                                await _procesar_eventos_bot(conversacion_id, websocket, eventos_mad)
+                                continue
+                    if _es_palabra_clave_ia(payload.get("texto")):
+                        celular_tester = await asyncio.to_thread(_celular_tester_de_sesion, nuevo_token)
+                        if celular_tester:
+                            eventos_ia = await asyncio.to_thread(
+                                entrar_a_nodo, conversacion_id, NODO_IA, {"CELULAR": celular_tester})
+                            if eventos_ia is not None:   # None = el nodo no existe: sigue como texto normal
+                                await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                                await _procesar_eventos_bot(conversacion_id, websocket, eventos_ia)
+                                continue
+                    en_ia = await asyncio.to_thread(conversacion_en_ia, conversacion_id)
+                elif tipo == "click_opcion" and estado == "bot":
+                    en_ia = await asyncio.to_thread(conversacion_en_ia, conversacion_id)
+                    if en_ia and payload.get("opcion_codigo") == "ia_menu":
+                        # Botón "Menú principal" del modo IA = escribir "menu"
+                        tipo = "mensaje_usuario"
+                        payload = {**payload, "texto": "menu"}
+
+                texto_comando = (payload.get("texto") or "").strip().lower()
+                if en_ia:
+                    # Dentro del modo IA el agente le sugiere "Escribe *menu*": se aceptan los
+                    # asteriscos y signos de puntuación alrededor. Fuera de IA no cambia nada.
+                    texto_comando = texto_comando.strip(" *_.,;:!¡¿?\"'")
+
                 if (tipo == "mensaje_usuario" and estado in ("cerrada", "bot")
-                        and (payload.get("texto") or "").strip().lower() in ("hola", "inicio", "menu", "menú")):
+                        and texto_comando in ("hola", "inicio", "menu", "menú")):
                     # Mismo mecanismo que el botón "Iniciar nueva conversación" —
                     # esta es la palabra clave que en WhatsApp manejaba Chattigo.
                     # Funciona en cualquier punto del bot (no solo cerrada), pero
@@ -1613,7 +2487,8 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         manager.reasignar_widget(conversacion_id, websocket)
                         await websocket.send_json({
                             "type": "sesion_iniciada",
-                            "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id},
+                            "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
+                        "reconocido": _nombre_reconocido(nuevo_token)},
                         })
                         await arrancar(conversacion_id, es_nueva, estado_actual)
                     else:
@@ -1630,6 +2505,11 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         await manager.enviar_a_asesor(asesor_id, {
                             "type": "mensajes_leidos", "payload": {"conversacion_id": conversacion_id},
                         })
+                    # Supervisores que están viendo la conversación: el cliente leyó (✓✓).
+                    await manager.notificar_escuchas(conversacion_id, {
+                        "type": "mensajes_leidos",
+                        "payload": {"conversacion_id": conversacion_id, "lector": "usuario"},
+                    })
                     continue
 
                 if estado == "bot":
@@ -1640,10 +2520,31 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     # Se marca el último mensaje ANTES de procesar para saber
                     # cuáles son nuevos después.
                     desde_mensaje_id = _ultimo_mensaje_id(conversacion_id) if _hay_escuchas(conversacion_id) else None
-                    if tipo == "mensaje_usuario":
+                    ya_confirmado = False
+                    if en_ia and (tipo == "mensaje_usuario"
+                                  or (tipo == "click_opcion"
+                                      and str(payload.get("opcion_codigo") or "").startswith("ia_q:"))):
+                        # Turno con el agente de IA: tarda 5-15 s (hasta 45). Se confirma la recepción,
+                        # se muestra "escribiendo…" y la llamada corre en un hilo aparte para no
+                        # congelar el servidor (el resto de clientes y asesores siguen normales).
+                        await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                        await websocket.send_json({"type": "escribiendo", "payload": {}})
+                        ya_confirmado = True
+                        eventos = await asyncio.to_thread(
+                            recibir_entrada_usuario, conversacion_id, texto=payload.get("texto"),
+                            opcion_id=payload.get("opcion_codigo") if tipo == "click_opcion" else None)
+                    elif tipo == "mensaje_usuario":
                         eventos = recibir_entrada_usuario(conversacion_id, texto=payload.get("texto"))
                     elif tipo == "click_opcion":
                         eventos = recibir_entrada_usuario(conversacion_id, opcion_id=payload.get("opcion_codigo"))
+                    elif tipo == "ubicacion_compartida":
+                        # Solo se pasan los 3 campos esperados (lat, lng, precisión), nada más del navegador.
+                        eventos = recibir_entrada_usuario(conversacion_id, ubicacion={
+                            "lat": payload.get("lat"), "lng": payload.get("lng"), "precision": payload.get("precision"),
+                            "origen": "mapa" if payload.get("origen") == "mapa" else None})
+                    elif tipo == "ubicacion_error":
+                        eventos = recibir_entrada_usuario(
+                            conversacion_id, ubicacion_error=str(payload.get("motivo") or "")[:40])
                     elif tipo == "archivo_subido":
                         eventos = recibir_entrada_usuario(
                             conversacion_id, archivo_url=payload.get("url"), archivo_ruta=payload.get("ruta"))
@@ -1651,8 +2552,10 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         eventos = recibir_entrada_usuario(conversacion_id, valores=payload.get("valores"))
                     else:
                         eventos = []
-                    if tipo in ("mensaje_usuario", "click_opcion", "archivo_subido", "formulario_completado"):
-                        await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {}})
+                    if (not ya_confirmado
+                            and tipo in ("mensaje_usuario", "click_opcion", "archivo_subido", "formulario_completado",
+                                 "ubicacion_compartida", "ubicacion_error")):
+                        await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
                     await _procesar_eventos_bot(conversacion_id, websocket, eventos)
                     if desde_mensaje_id is not None:
                         await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
@@ -1684,7 +2587,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     # después editar/eliminar/responder este mismo mensaje.
                     await websocket.send_json({
                         "type": "mensaje_recibido_servidor",
-                        "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id)},
+                        "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id), "cid": cid_actual},
                     })
                     await manager.notificar_escuchas(conversacion_id, {
                         "type": "mensaje_conversacion",
@@ -1715,7 +2618,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         })
                     await websocket.send_json({
                         "type": "mensaje_recibido_servidor",
-                        "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id)},
+                        "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id), "cid": cid_actual},
                     })
                     await manager.notificar_escuchas(conversacion_id, {
                         "type": "mensaje_conversacion",
@@ -1759,7 +2662,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                 await websocket.send_json({"type": "conversacion_cerrada", "payload": {"motivo": "error"}})
 
     except WebSocketDisconnect:
-        manager.disconnect_widget(conversacion_id)
+        manager.disconnect_widget(conversacion_id, websocket)
 
 
 def _marcar_conectado(asesor_id: int):
@@ -2252,7 +3155,20 @@ def _texto_sms_invitacion() -> str:
     return plantilla.replace("{{LINK}}", SMS_INVITACION_LINK)
 
 
-def _enviar_sms_invitacion(celular_crudo, remitente_id: int, texto=None) -> dict:
+def _campanas_permitidas_para_sms(usuario_id: int):
+    """Campañas que puede elegir al mandar un enlace directo: un asesor, las suyas; un supervisor, las de su
+    alcance (None = todas)."""
+    if _obtener_rol(usuario_id) == "supervisor":
+        alcance = supervisor.obtener_alcance(usuario_id)
+        return None if alcance is None else set(alcance["ids"])
+    return set(enlaces_directos.campanas_del_asesor(usuario_id))
+
+
+def _destinos_sms_directo(usuario_id: int) -> dict:
+    return {"campanas": enlaces_directos.destinos(_campanas_permitidas_para_sms(usuario_id))}
+
+
+def _enviar_sms_invitacion(celular_crudo, remitente_id: int, texto=None, campana_id=None, asesor_id=None) -> dict:
     """Manda un SMS que INVITA a un número nuevo a escribirnos por el webchat
     (a diferencia de _enviar_sms_saliente, que es para un cliente que ya tiene
     una conversación). El enlace es la URL pública del widget, sin sesión: al
@@ -2278,14 +3194,357 @@ def _enviar_sms_invitacion(celular_crudo, remitente_id: int, texto=None) -> dict
     if SMS_INVITACION_LINK not in mensaje:
         return {"ok": False, "motivo": f"El mensaje debe incluir el enlace {SMS_INVITACION_LINK}."}
 
+    token_directo, destino_nombre = None, None
+    if campana_id not in (None, "", 0, "0"):
+        # Enlace DIRECTO: lleva a la campaña (y al asesor, si se eligió). Solo de las campañas del que envía.
+        token_directo, destino_nombre = enlaces_directos.crear_enlace(
+            celular, campana_id, asesor_id, remitente_id, _obtener_rol(remitente_id) or "asesor",
+            _campanas_permitidas_para_sms(remitente_id))
+        if token_directo is None:
+            return {"ok": False, "motivo": destino_nombre}
+        mensaje = mensaje.replace(SMS_INVITACION_LINK, f"{SMS_INVITACION_LINK.split('?')[0]}?ad={token_directo}")
+        if len(mensaje) > SMS_INVITACION_MAX_CARACTERES:
+            enlaces_directos.borrar_enlace(token_directo)
+            return {"ok": False, "motivo": f"Con el enlace directo el mensaje tiene {len(mensaje)} caracteres; el máximo es {SMS_INVITACION_MAX_CARACTERES}. Acórtalo un poco."}
+
     if not enviar_sms_danaconnect(celular, mensaje):
+        if token_directo:
+            enlaces_directos.borrar_enlace(token_directo)
         return {"ok": False, "motivo": "Danaconnect no pudo enviar el SMS. Intenta de nuevo en un momento."}
 
     _sms_invitacion_por_numero[celular] = ahora
     _sms_invitacion_por_remitente[remitente_id] = recientes + [ahora]
     # Auditoría en el log (la tabla de intervenciones exige una conversación).
-    logger.info("SMS de invitación enviado por usuario %s a ***%s", remitente_id, celular[-3:])
+    logger.info("SMS de invitación enviado por usuario %s a ***%s%s", remitente_id, celular[-3:],
+                f" (enlace directo a {destino_nombre})" if token_directo else "")
+    return {"ok": True, "motivo": None, "destino": destino_nombre}
+
+
+# ---------------------------------------------------------------------
+# Enviar un archivo (PDF/imagen) al cliente por SMS: el asesor o supervisor lo sube y al
+# cliente le llega un enlace ÚNICO (un solo uso, vence a los 7 días) que abre el webchat ya
+# con el archivo dentro de la conversación.
+# ---------------------------------------------------------------------
+_ARCHIVO_SMS_VIGENCIA_DIAS = 7
+_ARCHIVO_SMS_MISMO_NUMERO_SEG = 60
+_ARCHIVO_SMS_MAX_POR_HORA = 30
+_archivo_sms_por_numero: dict[str, float] = {}
+_archivo_sms_por_remitente: dict[int, list] = {}
+_EXTENSIONES_ARCHIVO_SMS = {"pdf", "jpg", "jpeg", "png", "webp", "gif", "heic"}
+TEXTO_SMS_ARCHIVO = "Sanitas: te enviamos un archivo. Ábrelo aquí y te atendemos: {{LINK}}"
+
+
+def _enviar_archivo_sms(celular_crudo, remitente_id: int, rol: str, ruta, nombre_archivo=None) -> dict:
+    """Crea el enlace único del archivo y lo manda por SMS. 'ruta' es el objeto ya subido al
+    bucket (POST /upload con el login del asesor/supervisor). Devuelve {"ok": bool, "motivo": str|None}."""
+    celular = _normalizar_celular_pe(celular_crudo)
+    if not celular:
+        return {"ok": False, "motivo": "Celular no válido. Escribe 9 dígitos que empiecen con 9 (ejemplo: 987654321)."}
+    ruta = str(ruta or "")
+    extension = ruta.rsplit(".", 1)[-1].lower() if "." in ruta else ""
+    if not ruta.startswith("webchat/") or ".." in ruta or extension not in _EXTENSIONES_ARCHIVO_SMS:
+        return {"ok": False, "motivo": "Solo se puede enviar un PDF o una imagen."}
+
+    ahora = time.time()
+    ultimo = _archivo_sms_por_numero.get(celular)
+    if ultimo and ahora - ultimo < _ARCHIVO_SMS_MISMO_NUMERO_SEG:
+        return {"ok": False, "motivo": "A ese número se le acaba de enviar un archivo. Espera un minuto."}
+    recientes = [x for x in _archivo_sms_por_remitente.get(remitente_id, []) if ahora - x < 3600]
+    if len(recientes) >= _ARCHIVO_SMS_MAX_POR_HORA:
+        return {"ok": False, "motivo": f"Llegaste al máximo de {_ARCHIVO_SMS_MAX_POR_HORA} archivos por hora."}
+
+    base = (supervisor.obtener_configuracion("widget_url") or "").strip() or SMS_INVITACION_LINK.split("?")[0]
+    token = secrets.token_urlsafe(16)
+    separador = "&" if "?" in base else "?"
+    link = f"{base}{separador}af={token}"
+    mensaje = TEXTO_SMS_ARCHIVO.replace("{{LINK}}", link)
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO envios_archivo (token, celular, ruta, nombre_archivo, enviado_por, rol_emisor, expira_en)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (token, celular, ruta, (nombre_archivo or "")[:200] or None, remitente_id,
+                 "supervisor" if rol == "supervisor" else "asesor",
+                 datetime.now(LIMA_TZ) + timedelta(days=_ARCHIVO_SMS_VIGENCIA_DIAS)),
+            )
+            envio_id = cur.fetchone()[0]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.exception("No se pudo registrar el envío de archivo (¿falta migracion_envio_archivo_sms.sql?)")
+        return {"ok": False, "motivo": "No se pudo preparar el envío. Avisa al administrador (falta la migración de envío de archivos)."}
+    finally:
+        release_connection(conn)
+
+    if not enviar_sms_danaconnect(celular, mensaje):
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM envios_archivo WHERE id = %s", (envio_id,))
+            conn.commit()
+        finally:
+            release_connection(conn)
+        return {"ok": False, "motivo": "Danaconnect no pudo enviar el SMS. Intenta de nuevo en un momento."}
+
+    _archivo_sms_por_numero[celular] = ahora
+    _archivo_sms_por_remitente[remitente_id] = recientes + [ahora]
+    logger.info("Archivo por SMS enviado por usuario %s a ***%s (envío %s)", remitente_id, celular[-3:], envio_id)
     return {"ok": True, "motivo": None}
+
+
+class CanjearArchivoSms(BaseModel):
+    token: str
+    sesion_token: str | None = None
+
+
+@app.post("/widget/archivo-enlace/canjear")
+def canjear_archivo_sms(datos: CanjearArchivoSms):
+    """El cliente abre el enlace del SMS: se canjea el token (un solo uso) y se le entrega la sesión
+    del webchat de ESE celular. El archivo se muestra al conectarse el chat (ver _entregar_archivos_pendientes)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE envios_archivo SET canjeado_en = %s
+                   WHERE token = %s AND canjeado_en IS NULL AND expira_en > %s
+                   RETURNING id, celular""",
+                (datetime.now(LIMA_TZ), (datos.token or "")[:64], datetime.now(LIMA_TZ)),
+            )
+            fila = cur.fetchone()
+            if not fila:
+                conn.commit()
+                raise HTTPException(status_code=410, detail="El enlace venció o ya se usó")
+            envio_id, celular = fila
+
+            usuario_id, sesion = None, None
+            if datos.sesion_token:
+                cur.execute("SELECT id, telefono, sesion_token FROM usuarios_webchat WHERE sesion_token = %s",
+                            (datos.sesion_token[:100],))
+                u = cur.fetchone()
+                if u:
+                    tel = _normalizar_celular_pe(u[1])
+                    if not u[1] or tel == celular:
+                        usuario_id, sesion = u[0], u[2]
+            if usuario_id is None:
+                # Sin sesión, o la sesión de este navegador es de OTRA persona: sesión nueva de este celular.
+                sesion = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
+                    (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)),
+                )
+                usuario_id = cur.fetchone()[0]
+            # Recibió el SMS en este celular = celular comprobado.
+            cur.execute("UPDATE usuarios_webchat SET telefono = %s WHERE id = %s AND COALESCE(telefono, '') = ''",
+                        (celular, usuario_id))
+            try:
+                cur.execute("SAVEPOINT sp_verif")
+                cur.execute("UPDATE usuarios_webchat SET verificado_en = %s WHERE id = %s AND verificado_en IS NULL",
+                            (datetime.now(LIMA_TZ), usuario_id))
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_verif")
+            cur.execute("UPDATE envios_archivo SET usuario_id = %s WHERE id = %s", (usuario_id, envio_id))
+        conn.commit()
+        return {"sesion_token": sesion}
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        logger.exception("Error canjeando el enlace de archivo")
+        raise HTTPException(status_code=500, detail="No se pudo abrir el archivo")
+    finally:
+        release_connection(conn)
+
+
+class CanjearEnlaceDirecto(BaseModel):
+    token: str
+    sesion_token: str | None = None
+
+
+@app.post("/widget/enlace-directo/canjear")
+def canjear_enlace_directo(datos: CanjearEnlaceDirecto):
+    """El cliente abre el SMS con enlace directo (?ad=): se canjea el token (un solo uso) y se le entrega la
+    sesión del webchat de ESE celular. Al conectarse el chat, ws_widget lo deriva a la campaña/asesor elegido."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE enlaces_directos SET canjeado_en = %s
+                   WHERE token = %s AND canjeado_en IS NULL AND expira_en > %s
+                   RETURNING id, celular""",
+                (datetime.now(LIMA_TZ), (datos.token or "")[:64], datetime.now(LIMA_TZ)),
+            )
+            fila = cur.fetchone()
+            if not fila:
+                conn.commit()
+                raise HTTPException(status_code=410, detail="El enlace venció o ya se usó")
+            envio_id, celular = fila
+
+            usuario_id, sesion = None, None
+            if datos.sesion_token:
+                cur.execute("SELECT id, telefono, sesion_token FROM usuarios_webchat WHERE sesion_token = %s",
+                            (datos.sesion_token[:100],))
+                u = cur.fetchone()
+                if u:
+                    tel = _normalizar_celular_pe(u[1])
+                    if not u[1] or tel == celular:
+                        usuario_id, sesion = u[0], u[2]
+            if usuario_id is None:
+                sesion = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
+                    (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)),
+                )
+                usuario_id = cur.fetchone()[0]
+            cur.execute("UPDATE usuarios_webchat SET telefono = %s WHERE id = %s AND COALESCE(telefono, '') = ''",
+                        (celular, usuario_id))
+            try:
+                cur.execute("SAVEPOINT sp_verif")
+                cur.execute("UPDATE usuarios_webchat SET verificado_en = %s WHERE id = %s AND verificado_en IS NULL",
+                            (datetime.now(LIMA_TZ), usuario_id))
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_verif")
+            cur.execute("UPDATE enlaces_directos SET usuario_id = %s WHERE id = %s", (usuario_id, envio_id))
+        conn.commit()
+        return {"sesion_token": sesion}
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        logger.exception("Error canjeando el enlace directo")
+        raise HTTPException(status_code=500, detail="No se pudo abrir el enlace")
+    finally:
+        release_connection(conn)
+
+
+TEXTO_ENLACE_DIRECTO_CONECTANDO = "Te estamos comunicando con un asesor de *{campana}*. Un momento, por favor 🙌"
+
+
+def _guardar_mensaje_bot_texto(conversacion_id: int, texto: str):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                   VALUES (%s, 'bot', 'texto', %s, %s)""",
+                (conversacion_id, texto, datetime.now(LIMA_TZ)),
+            )
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+
+def _poner_en_cola_directo(conversacion_id: int, campana_id: int) -> bool:
+    """Deja la conversación en la cola de la campaña elegida (si aún no la atiende un asesor)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE conversaciones SET estado = 'en_cola', campana_id = %s, nodo_actual = NULL, entrada_cola = %s
+                   WHERE id = %s AND estado IN ('bot', 'en_cola')""",
+                (campana_id, datetime.now(LIMA_TZ), conversacion_id),
+            )
+            ok = cur.rowcount > 0
+        conn.commit()
+        return ok
+    finally:
+        release_connection(conn)
+
+
+async def _decidir_enlace_directo(conversacion_id: int, estado_actual: str, es_nueva: bool, websocket: WebSocket):
+    """Revisa si el cliente llegó por un SMS con enlace directo. Devuelve (modo, datos):
+    (None, None) -> flujo normal; ("fuera", d) -> fuera de horario; ("directo", d) -> derivar a la campaña/asesor.
+    El mensaje de fuera de horario se guarda aquí (y se muestra en vivo si la conversación es nueva)."""
+    d = await asyncio.to_thread(enlaces_directos.tomar_pendiente, conversacion_id)
+    if not d:
+        return None, None
+    if estado_actual == "asignada":
+        await asyncio.to_thread(enlaces_directos.registrar_resultado, d["id"], "ya_atendido")
+        return None, None
+    try:
+        hor = await asyncio.to_thread(validar_horario_consultas, {"campana_codigo": d["campana_codigo"]}, {})
+        resp = hor.get("response") or {}
+        fuera = bool(resp.get("outOfTime"))
+        texto_fuera = resp.get("messageOutOfTime") or "En este momento estamos fuera de horario de atención."
+    except Exception:
+        logger.exception("No se pudo validar el horario de la campaña %s", d["campana_codigo"])
+        fuera, texto_fuera = False, ""
+    if fuera:
+        await asyncio.to_thread(_guardar_mensaje_bot_texto, conversacion_id, texto_fuera)
+        if es_nueva:
+            await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto_fuera}})
+        await asyncio.to_thread(enlaces_directos.registrar_resultado, d["id"], "fuera_horario")
+        return "fuera", d
+    return "directo", d
+
+
+async def _derivar_enlace_directo(conversacion_id: int, d: dict, es_nueva: bool, websocket: WebSocket):
+    """Pone la conversación en la campaña elegida y la asigna: primero al asesor elegido (si está disponible),
+    luego a otro de la MISMA campaña, y si nadie está disponible queda en cola con el aviso habitual."""
+    if es_nueva:
+        texto = TEXTO_ENLACE_DIRECTO_CONECTANDO.replace("{campana}", d["campana_nombre"])
+        await asyncio.to_thread(_guardar_mensaje_bot_texto, conversacion_id, texto)
+        await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+    if not await asyncio.to_thread(_poner_en_cola_directo, conversacion_id, d["campana_id"]):
+        return
+    await websocket.send_json({"type": "en_cola", "payload": {}})
+    resultado = "en_cola"
+    if d.get("asesor_id"):
+        r = await asignacion.asignar_manual(conversacion_id, d["asesor_id"], manager)
+        if r.get("ok"):
+            resultado = "asignado_directo"
+    if resultado == "en_cola":
+        asignado = await asignacion.intentar_asignar_conversacion(conversacion_id, manager)
+        if asignado is not None:
+            resultado = "asignado_otro" if d.get("asesor_id") else "asignado_directo"
+        else:
+            texto = (supervisor.obtener_configuracion("mensaje_en_cola_guardado")
+                     or MENSAJES_AUTOMATICOS["mensaje_en_cola_guardado"]["default"])
+            await websocket.send_json({"type": "aviso_cola", "payload": {"texto": texto}})
+    await asyncio.to_thread(enlaces_directos.registrar_resultado, d["id"], resultado)
+
+
+async def _entregar_archivos_pendientes(conversacion_id: int, websocket: WebSocket):
+    """Pone en la conversación (y en el widget) los archivos que el staff le envió por SMS a este
+    cliente y que ya abrió desde su enlace. Se llama al conectarse el widget."""
+    def _tomar():
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT e.id, e.ruta, e.enviado_por, e.rol_emisor
+                       FROM envios_archivo e JOIN conversaciones c ON c.usuario_id = e.usuario_id
+                       WHERE c.id = %s AND e.canjeado_en IS NOT NULL AND e.entregado_en IS NULL
+                       ORDER BY e.id FOR UPDATE OF e SKIP LOCKED""",
+                    (conversacion_id,),
+                )
+                filas = cur.fetchall()
+                if filas:
+                    cur.execute("UPDATE envios_archivo SET entregado_en = %s, conversacion_id = %s WHERE id = ANY(%s)",
+                                (datetime.now(LIMA_TZ), conversacion_id, [f[0] for f in filas]))
+            conn.commit()
+            return filas
+        except Exception:
+            conn.rollback()
+            logger.warning("No se pudieron consultar los archivos pendientes", exc_info=True)
+            return []
+        finally:
+            release_connection(conn)
+
+    for _, ruta, enviado_por, rol_emisor in await asyncio.to_thread(_tomar):
+        texto = "📎 Aquí tienes el archivo que te enviamos:"
+        await asyncio.to_thread(_guardar_mensaje_sistema, conversacion_id, texto)
+        mensaje_id = await asyncio.to_thread(_guardar_mensaje_staff_archivo, conversacion_id, ruta, rol_emisor, enviado_por)
+        await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+        await websocket.send_json({"type": "archivo_asesor", "payload": {"ruta": ruta, "asesor_nombre": "Sanitas", "mensaje_id": mensaje_id}})
+        try:
+            await manager.notificar_escuchas(conversacion_id, {
+                "type": "mensaje_conversacion",
+                "payload": {"conversacion_id": conversacion_id, "emisor_tipo": rol_emisor,
+                            "texto": "📎 Archivo enviado por SMS", "ruta": ruta, "mensaje_id": mensaje_id}})
+        except Exception:
+            pass
 
 
 def _enviar_sms_saliente(conversacion_id: int, remitente_id: int) -> dict:
@@ -2368,6 +3627,7 @@ def _nombre_display(asesor_id: int) -> str:
 class LoginRequest(BaseModel):
     usuario: str
     password: str
+    activar_2fa: bool = False   # la persona pidió configurar su verificación en dos pasos
 
 
 @app.post("/login")
@@ -2401,10 +3661,108 @@ def login(datos: LoginRequest):
         auth.registrar_intento_fallido(datos.usuario)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
 
-    auth.registrar_login_exitoso(datos.usuario)
     asesor_id, _, nombre_display, rol = row
-    token = auth.crear_token(asesor_id)
-    return {"token": token, "asesor_id": asesor_id, "nombre_display": nombre_display, "rol": rol}
+
+    # Verificación en dos pasos. Mientras falte el segundo paso NO se borran los
+    # fallos acumulados (si no, quien conoce la contraseña podría probar códigos sin límite).
+    estado_2fa = totp.obtener_estado(asesor_id)
+    if estado_2fa["disponible"]:
+        if estado_2fa["activo"]:
+            return {"requiere_2fa": True, "pre_token": auth.crear_token_pre2fa(asesor_id, "verificar")}
+        if datos.activar_2fa or _dosfa_obligatorio_para(rol):
+            return {"requiere_enrolar": True, "pre_token": auth.crear_token_pre2fa(asesor_id, "enrolar"),
+                    "obligatorio": _dosfa_obligatorio_para(rol)}
+
+    return _sesion_completa(datos.usuario, asesor_id, nombre_display, rol)
+
+
+def _sesion_completa(usuario: str, asesor_id: int, nombre_display: str, rol: str) -> dict:
+    auth.registrar_login_exitoso(usuario)
+    return {"token": auth.crear_token(asesor_id), "asesor_id": asesor_id,
+            "nombre_display": nombre_display, "rol": rol}
+
+
+def _dosfa_obligatorio_para(rol: str) -> bool:
+    """Política en configuracion_global['dosfa_obligatorio']: 'no' | 'supervisor' | 'todos'."""
+    try:
+        politica = (supervisor.obtener_configuracion("dosfa_obligatorio") or "no").strip().lower()
+    except Exception:
+        return False
+    if politica == "todos":
+        return True
+    return politica == "supervisor" and rol in ("supervisor", "editor")
+
+
+# ---------------------------------------------------------------- 2FA (TOTP)
+class Dosfa(BaseModel):
+    pre_token: str
+    codigo: str = ""
+
+
+def _dosfa_contexto(pre_token: str, fase_esperada: str):
+    """Valida el token intermedio y el bloqueo; devuelve (asesor_id, usuario, nombre, rol)."""
+    dec = auth.decodificar_pre2fa(pre_token)
+    if dec is None or dec[1] != fase_esperada:
+        raise HTTPException(status_code=401, detail="La sesión de verificación venció. Ingresa de nuevo.")
+    asesor_id = dec[0]
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT usuario, nombre_display, rol FROM asesores WHERE id = %s AND activo = TRUE",
+                        (asesor_id,))
+            fila = cur.fetchone()
+    finally:
+        release_connection(conn)
+    if not fila:
+        raise HTTPException(status_code=401, detail="La sesión de verificación venció. Ingresa de nuevo.")
+    espera = auth.segundos_bloqueo_restante(fila[0])
+    if espera > 0:
+        raise HTTPException(status_code=429, detail=f"Demasiados intentos fallidos. Intenta de nuevo en {max(1, espera // 60)} minuto(s).")
+    return asesor_id, fila[0], fila[1], fila[2]
+
+
+@app.post("/auth/2fa/verificar")
+def dosfa_verificar(datos: Dosfa):
+    asesor_id, usuario, nombre, rol = _dosfa_contexto(datos.pre_token, "verificar")
+    estado = totp.obtener_estado(asesor_id)
+    codigo = (datos.codigo or "").strip()
+    ok = False
+    if estado["activo"]:
+        paso = totp.verificar_codigo(estado["secreto"], codigo, estado["ultimo_paso"])
+        if paso is not None:
+            ok = totp.marcar_paso(asesor_id, paso)
+        elif len(codigo.replace("-", "").replace(" ", "")) == 10:
+            ok = totp.consumir_respaldo(asesor_id, codigo)
+    if not ok:
+        auth.registrar_intento_fallido(usuario)
+        raise HTTPException(status_code=401, detail="Código incorrecto o ya usado")
+    return _sesion_completa(usuario, asesor_id, nombre, rol)
+
+
+@app.post("/auth/2fa/iniciar")
+def dosfa_iniciar(datos: Dosfa):
+    """Genera el secreto y el QR para vincular la app autenticadora (aún sin activar)."""
+    asesor_id, usuario, _, _ = _dosfa_contexto(datos.pre_token, "enrolar")
+    secreto = totp.generar_secreto()
+    totp.guardar_pendiente(asesor_id, secreto)
+    uri = totp.uri_otpauth(secreto, usuario)
+    return {"secreto": secreto, "uri": uri, "qr": totp.qr_data_uri(uri)}
+
+
+@app.post("/auth/2fa/activar")
+def dosfa_activar(datos: Dosfa):
+    asesor_id, usuario, nombre, rol = _dosfa_contexto(datos.pre_token, "enrolar")
+    estado = totp.obtener_estado(asesor_id)
+    if not estado["secreto"] or estado["activo"]:
+        raise HTTPException(status_code=409, detail="Primero genera el código QR")
+    paso = totp.verificar_codigo(estado["secreto"], datos.codigo)
+    if paso is None:
+        auth.registrar_intento_fallido(usuario)
+        raise HTTPException(status_code=401, detail="Código incorrecto. Revisa la hora de tu celular.")
+    codigos = totp.activar(asesor_id, paso)
+    sesion = _sesion_completa(usuario, asesor_id, nombre, rol)
+    sesion["codigos_respaldo"] = codigos
+    return sesion
 
 
 @app.get("/staff/token-archivo")
@@ -2449,6 +3807,61 @@ def _verificar_editor(authorization: str | None) -> int:
     if rol not in ("editor", "supervisor"):
         raise HTTPException(status_code=403, detail="No tienes permiso para editar contenido")
     return asesor_id
+
+
+def _verificar_supervisor(authorization: str | None) -> int:
+    """Como _verificar_editor, pero SOLO rol 'supervisor' (el reporte incluye datos de clientes)."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Falta el token")
+    asesor_id = auth.decodificar_token(authorization[len("Bearer "):])
+    if asesor_id is None:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    if _obtener_rol(asesor_id) != "supervisor":
+        raise HTTPException(status_code=403, detail="Solo un supervisor puede descargar este reporte")
+    return asesor_id
+
+
+@app.get("/supervisor/reporte-opciones")
+def opciones_reporte_conversaciones(authorization: str | None = Header(None)):
+    """Asesores y campañas para los filtros del reporte de conversaciones."""
+    alcance = supervisor.obtener_alcance(_verificar_supervisor(authorization))
+    asesores = [{"id": a["asesor_id"], "nombre": a["nombre_display"] or a["nombre"], "activo": a["activo"],
+                 "campana_ids": a["campana_ids"]}
+                for a in supervisor.listar_asesores_admin() if a["rol"] != "editor"]
+    campanas = supervisor.obtener_campanas()
+    if alcance is not None:
+        asesores = [a for a in asesores if set(a["campana_ids"]) & set(alcance["ids"])]
+        campanas = [c for c in campanas if c["id"] in alcance["ids"]]
+    for a in asesores:
+        a.pop("campana_ids", None)
+    return {"asesores": asesores, "campanas": campanas}
+
+
+@app.get("/supervisor/reporte-conversaciones")
+def reporte_conversaciones(rango: str = "hoy", desde: str | None = None, hasta: str | None = None,
+                           asesor_id: int | None = None, campana_id: int | None = None,
+                           incluir_bot: bool = False, transcripcion: bool = True,
+                           authorization: str | None = Header(None)):
+    """Excel de conversaciones por asesor para auditoría de calidad (ver reportes.py)."""
+    supervisor_id = _verificar_supervisor(authorization)
+    alcance = supervisor.obtener_alcance(supervisor_id)
+    campanas_reporte = supervisor.campanas_efectivas(alcance, campana_id)
+    if alcance is not None and asesor_id and not supervisor.asesor_en_alcance(asesor_id, alcance):
+        raise HTTPException(status_code=403, detail="Ese asesor no atiende ninguna de tus campañas")
+    try:
+        d1, d2, etiqueta = reportes.resolver_rango(rango, desde, hasta)
+        contenido = reportes.generar_reporte(
+            d1, d2, etiqueta, _nombre_display(supervisor_id), asesor_id=asesor_id, campana_id=campana_id,
+            incluir_solo_bot=incluir_bot, incluir_transcripcion=transcripcion,
+            campana_ids=campanas_reporte if alcance is not None else None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    nombre = f"reporte_conversaciones_{d1.isoformat()}_a_{d2.isoformat()}.xlsx"
+    return Response(
+        content=contenido,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"},
+    )
 
 
 class NodoUpdate(BaseModel):
@@ -2621,6 +4034,117 @@ def _verificar_staff(authorization: str | None) -> int:
     return asesor_id
 
 
+# ---------------------------------------------------------------------------
+# Recordatorios SMS para recetas extendidas (ver recordatorios.py)
+# ---------------------------------------------------------------------------
+
+class RecordatoriosCrear(BaseModel):
+    celular: str
+    dias_receta: int
+    fechas: list[str]            # 'YYYY-MM-DD', una por cada entrega posterior a la primera
+    mensaje: str | None = None   # admite {{NOMBRE}}, {{ENTREGA}}, {{TOTAL}}
+
+
+def _recordatorios_503():
+    return HTTPException(status_code=503, detail="Falta ejecutar migracion_recordatorios_receta.sql en la base de datos.")
+
+
+@app.get("/recordatorios-receta/{conversacion_id}")
+def listar_recordatorios_receta(conversacion_id: int, authorization: str | None = Header(None)):
+    _verificar_staff(authorization)
+    ctx = recordatorios.contexto_conversacion(conversacion_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+    try:
+        items = recordatorios.listar(ctx["usuario_id"])
+    except recordatorios.TablaNoExiste:
+        raise _recordatorios_503()
+    return {"nombre": ctx["nombre"], "celular": _normalizar_celular_pe(ctx["telefono"]),
+            "documento": ctx["dni"], "hoy": recordatorios.hoy_lima().isoformat(),
+            "mensaje_defecto": recordatorios.MENSAJE_DEFECTO, "max_recordatorios": recordatorios.MAX_RECORDATORIOS,
+            "items": items}
+
+
+@app.post("/recordatorios-receta/{conversacion_id}")
+def crear_recordatorios_receta(conversacion_id: int, body: RecordatoriosCrear,
+                                authorization: str | None = Header(None)):
+    asesor_id = _verificar_staff(authorization)
+    ctx = recordatorios.contexto_conversacion(conversacion_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+    celular = _normalizar_celular_pe(body.celular)
+    if not celular:
+        raise HTTPException(status_code=400, detail="El celular no es válido (9 dígitos, empieza con 9).")
+    if not 1 <= len(body.fechas) <= recordatorios.MAX_RECORDATORIOS:
+        raise HTTPException(status_code=400, detail=f"Programa entre 1 y {recordatorios.MAX_RECORDATORIOS} recordatorios.")
+    hoy = recordatorios.hoy_lima()
+    fechas = []
+    for f in body.fechas:
+        try:
+            d = datetime.strptime(f.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Fecha inválida: {f}")
+        if d <= hoy:
+            raise HTTPException(status_code=400, detail="Las fechas deben ser posteriores a hoy.")
+        if (d - hoy).days > recordatorios.MAX_DIAS_ADELANTE:
+            raise HTTPException(status_code=400, detail="Una fecha está demasiado lejos (máximo 200 días).")
+        fechas.append(d)
+    if len(set(fechas)) != len(fechas):
+        raise HTTPException(status_code=400, detail="Hay fechas repetidas.")
+    fechas.sort()
+    plantilla = (body.mensaje or "").strip() or recordatorios.MENSAJE_DEFECTO
+    if len(recordatorios.armar_mensaje(plantilla, ctx["nombre"], 9, 9)) > recordatorios.MAX_CARACTERES_SMS:
+        raise HTTPException(status_code=400, detail=f"El mensaje es muy largo (máximo {recordatorios.MAX_CARACTERES_SMS} caracteres).")
+    if not 1 <= body.dias_receta <= 400:
+        raise HTTPException(status_code=400, detail="Días de receta inválidos.")
+    try:
+        ids = recordatorios.crear(conversacion_id, ctx["usuario_id"], ctx["dni"], ctx["nombre"], celular,
+                                  body.dias_receta, fechas, plantilla, asesor_id)
+    except recordatorios.TablaNoExiste:
+        raise _recordatorios_503()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "creados": len(ids)}
+
+
+@app.delete("/recordatorios-receta/{recordatorio_id}")
+def cancelar_recordatorio_receta(recordatorio_id: int, authorization: str | None = Header(None)):
+    asesor_id = _verificar_staff(authorization)
+    try:
+        ok = recordatorios.cancelar(recordatorio_id, asesor_id)
+    except recordatorios.TablaNoExiste:
+        raise _recordatorios_503()
+    if not ok:
+        raise HTTPException(status_code=404, detail="El recordatorio no existe o ya no se puede cancelar.")
+    return {"ok": True}
+
+
+def _push_entrega(usuario_id, info: dict | None = None):
+    """Además del SMS, aviso push (gratis) a quien tenga el app con avisos activos.
+    `info`: nombre del paciente y número de entrega, para personalizar el texto."""
+    info = info or {}
+    try:
+        push.avisar_usuario(usuario_id, "entrega", respetar_pausa=False,
+                            ctx={"nombre": info.get("nombre"), "n": info.get("entrega_n"), "total": info.get("entregas_total")})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.post("/internal/recordatorios/procesar")
+async def procesar_recordatorios_receta(authorization: str = Header(None)):
+    """Lo llama Cloud Scheduler (cada hora, de 9 a 17 h Lima) con 'Authorization: ApiKey <SOFI_APIS_KEY>'."""
+    esperado = os.environ.get("SOFI_APIS_KEY") or ""
+    recibido = (authorization or "").strip()
+    if recibido.lower().startswith("apikey "):
+        recibido = recibido[7:].strip()
+    if not esperado or not secrets.compare_digest(recibido.encode(), esperado.encode()):
+        raise HTTPException(status_code=401, detail="No autorizado")
+    try:
+        return await asyncio.to_thread(recordatorios.procesar_pendientes, enviar_sms_danaconnect, _push_entrega)
+    except recordatorios.TablaNoExiste:
+        raise _recordatorios_503()
+
+
 class NotaClienteUpdate(BaseModel):
     nota: str
     documento: str | None = None  # para forzar el documento a mano (ej. RUC que no se detectó solo)
@@ -2699,6 +4223,18 @@ def guardar_nota_cliente(conversacion_id: int, body: NotaClienteUpdate,
 # ---------------------------------------------------------------------------
 
 MENSAJES_AUTOMATICOS = {
+    "banner_login": {
+        "etiqueta": "Aviso en la barra superior de la pantalla de login de las consolas (asesor, supervisor, editor y dashboard). Déjalo vacío para no mostrar ningún aviso. Quien lo ve puede cerrarlo con la ✕",
+        "default": "",
+    },
+    "mensaje_feriado": {
+        "etiqueta": "Mensaje por defecto cuando una campaña no atiende por feriado (se usa si el feriado no trae mensaje propio). Puedes usar {{FECHA}} (ej. jueves 8 de octubre) y {{FERIADO}} (nombre del feriado)",
+        "default": "Hoy {{FECHA}} es feriado ({{FERIADO}}) y en este momento no estamos atendiendo por este canal. Retomaremos la atención en nuestro próximo día hábil. ¡Gracias por tu comprensión!",
+    },
+    "mensaje_en_cola_guardado": {
+        "etiqueta": "Aviso al cliente cuando queda en cola esperando un asesor (le explica que su conversación queda guardada si cierra la ventana)",
+        "default": "💾 Tu conversación queda guardada. Si prefieres, puedes cerrar esta ventana y volver más tarde: al abrir el chat en este mismo navegador retomarás donde quedaste.",
+    },
     "mensaje_subiendo_archivo": {
         "etiqueta": "Mensaje mientras se sube un archivo",
         "default": "Espere un momento por favor !!!",
@@ -2777,6 +4313,8 @@ def actualizar_configuracion_editor(clave: str, cambios: ConfiguracionUpdate, au
 # --- Detalle del dashboard: qué hay detrás de "Sin cerrar" y "Sin opción" ---
 # nodo del bot donde quedó la conversación -> etiqueta legible
 _PASOS_BOT = {
+    "webchat_bienvenida": "Vio el saludo y no eligió una opción",
+    "webchat_gate": "Eligió una opción y no avanzó",
     "webchat_pide_celular": "No ingresó el celular",
     "webchat_pide_nombre": "Se quedó en la validación (token)",
     "webchat_valida_pide_codigo": "Se quedó en la validación (token)",
@@ -2786,11 +4324,13 @@ _FLUJOS_BOT = (
     ("consultas_", "Consultas generales"),
     ("sctr_", "Venta de SCTR"),
     ("pases_", "Pase de atención"),
+    ("mad_", "Médico a domicilio / Ambulancia"),
     ("med_", "Medicamentos"),
     ("medicamentos_", "Medicamentos"),
 )
 # Por qué cerró el bot (según su último mensaje) -> (patrón SQL ILIKE, etiqueta)
 _MOTIVOS_CIERRE_BOT = (
+    ("%es feriado%", "Feriado (sin atención)"),
     ("%fuera de nue%", "Fuera de horario"),
     ("%no estamos disponibles%", "Fuera de horario"),
     ("%no eres cliente%", "No es cliente de Sanitas"),
@@ -2818,8 +4358,11 @@ def _sql_motivo_cierre_bot() -> str:
     return f"CASE {despedida} {casos} ELSE 'Otro cierre del bot' END"
 
 
-def _categoria_conversacion(estado, cerrado_por, nodo, motivo, sin_escribir=False):
+def _categoria_conversacion(estado, cerrado_por, nodo, motivo, sin_escribir=False, eligio_opcion=False):
     """Devuelve (grupo, categoría) para una conversación sin etiqueta/campaña."""
+    if estado == "bot" and nodo == "webchat_pide_celular" and eligio_opcion:
+        # Flujo nuevo: ya vio el saludo y eligió una opción; el celular se le pidió después.
+        return "Abandonó", "Eligió una opción pero no ingresó el celular"
     if estado == "bot" and nodo == "webchat_pide_celular":
         return "Abandonó", ("Abrió el chat y no escribió nada" if sin_escribir
                             else "Escribió algo y no completó el celular")
@@ -2848,6 +4391,7 @@ def _detalle_conversaciones(cur, desde, hasta, condicion: str):
                    (c.estado = 'bot' AND c.nodo_actual = 'webchat_pide_celular'
                     AND NOT EXISTS (SELECT 1 FROM mensajes mu
                                     WHERE mu.conversacion_id = c.id AND mu.emisor_tipo = 'usuario')) AS sin_escribir,
+                   (c.variables_sesion->>'DESTINO' IS NOT NULL) AS eligio_opcion,
                    COUNT(*)
             FROM conversaciones c
             LEFT JOIN LATERAL (
@@ -2861,13 +4405,13 @@ def _detalle_conversaciones(cur, desde, hasta, condicion: str):
                 ORDER BY id DESC LIMIT 1
             ) u ON c.estado = 'cerrada' AND c.cerrado_por = 'sistema'
             WHERE c.iniciado_en >= %s AND c.iniciado_en < %s AND {condicion}
-            GROUP BY 1, 2, 3, 4, 5""",
+            GROUP BY 1, 2, 3, 4, 5, 6""",
         (desde, hasta),
     )
     categorias: dict = {}
     pasos: dict = {}
-    for estado, cerrado_por, nodo, motivo, sin_escribir, cantidad in cur.fetchall():
-        grupo, categoria = _categoria_conversacion(estado, cerrado_por, nodo, motivo, sin_escribir)
+    for estado, cerrado_por, nodo, motivo, sin_escribir, eligio_opcion, cantidad in cur.fetchall():
+        grupo, categoria = _categoria_conversacion(estado, cerrado_por, nodo, motivo, sin_escribir, eligio_opcion)
         clave = (grupo, categoria)
         categorias[clave] = categorias.get(clave, 0) + cantidad
         if estado == "bot" and nodo:
@@ -2884,6 +4428,7 @@ _ETIQUETAS_ORIGEN = {
     "burbuja": "Clic en la burbuja del sitio",
     "invitacion_sms": "SMS de invitación (?ac=1)",
     "enlace_sms": "SMS para volver a su conversación",
+    "enlace_directo": "SMS con enlace directo a campaña/asesor",
     "nueva_conversacion": "Volvió a empezar tras cerrar",
     "otro": "Otro",
 }
@@ -2927,8 +4472,58 @@ def _estadisticas_origen(conn, cur, desde, hasta):
         return [], []
 
 
+@app.get("/dashboard/app")
+def estadisticas_app(authorization: str | None = Header(None)):
+    """Cuántos clientes instalaron el app y cuántos aceptaron los avisos."""
+    _verificar_editor(authorization)
+    return push.estadisticas()
+
+
+class _CursorFiltroCampana:
+    """Envuelve un cursor y agrega `AND c.campana_id IN (...)` a toda consulta del
+    dashboard que filtre por fecha de inicio (`c.iniciado_en < %s`). Los ids son
+    ints ya validados, nunca texto del usuario. Así el filtro por campaña (y el
+    alcance de un supervisor de campaña) se aplica igual a todos los gráficos sin
+    tocar cada consulta. Lista vacía = ninguna campaña = cero filas."""
+
+    _FECHA = "c.iniciado_en < %s"
+
+    def __init__(self, cur, campana_ids):
+        self._cur = cur
+        self._extra = " AND " + _sql_campanas(campana_ids)
+
+    def execute(self, sql, params=None):
+        if self._FECHA in sql:
+            sql = sql.replace(self._FECHA, self._FECHA + self._extra)
+        return self._cur.execute(sql, params)
+
+    def __getattr__(self, nombre):
+        return getattr(self._cur, nombre)
+
+
+def _sql_campanas(campana_ids) -> str:
+    ids = [int(i) for i in campana_ids]
+    return "c.campana_id IN (" + ",".join(str(i) for i in ids) + ")" if ids else "FALSE"
+
+
+@app.get("/dashboard/campanas")
+def campanas_dashboard(authorization: str | None = Header(None)):
+    """Campañas para el filtro del dashboard (opciones del menú principal)."""
+    alcance = supervisor.obtener_alcance(_verificar_editor(authorization))
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, nombre FROM campanas ORDER BY nombre")
+            filas = [{"id": i, "nombre": n} for i, n in cur.fetchall()
+                     if alcance is None or i in alcance["ids"]]
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    return filas
+
+
 @app.get("/dashboard/estadisticas")
-def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = Header(None)):
+def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
     """Estadísticas de conversaciones para el dashboard: por día, por asesor,
     por etiqueta de cierre (clasificación: atendido/error/fuera de horario/
     pruebas, según lo que haya configurado en "Etiquetas de cierre") y por
@@ -2940,7 +4535,8 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
     conversación — así que una conversación que sigue abierta también cuenta
     en el día que empezó, aunque todavía no tenga etiqueta de cierre (esas
     caen en el grupo "Sin cerrar")."""
-    _verificar_editor(authorization)
+    alcance = supervisor.obtener_alcance(_verificar_editor(authorization))
+    campanas_filtro = supervisor.campanas_efectivas(alcance, campana_id)
     try:
         fecha_desde = datetime.strptime(desde, "%Y-%m-%d").replace(tzinfo=LIMA_TZ)
         fecha_hasta = datetime.strptime(hasta, "%Y-%m-%d").replace(tzinfo=LIMA_TZ) + timedelta(days=1)
@@ -2951,7 +4547,8 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
 
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
+        with conn.cursor() as _cur_real:
+            cur = _CursorFiltroCampana(_cur_real, campanas_filtro) if campanas_filtro is not None else _cur_real
             cur.execute(
                 """SELECT (c.iniciado_en AT TIME ZONE 'America/Lima')::date AS dia, COUNT(*)
                    FROM conversaciones c
@@ -2960,6 +4557,33 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
                 (fecha_desde, fecha_hasta),
             )
             por_dia = [{"fecha": dia.isoformat(), "cantidad": cantidad} for dia, cantidad in cur.fetchall()]
+
+            # Celulares únicos (personas distintas, por número de celular; las conversaciones sin
+            # celular no cuentan). Por día, por mes y el total del período — se respeta el filtro de campaña.
+            _cel = "regexp_replace(COALESCE(u.telefono, ''), '[^0-9]', '', 'g')"
+            cur.execute(
+                f"""SELECT (c.iniciado_en AT TIME ZONE 'America/Lima')::date AS dia, COUNT(DISTINCT {_cel})
+                   FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.iniciado_en >= %s AND c.iniciado_en < %s AND {_cel} <> ''
+                   GROUP BY dia ORDER BY dia""",
+                (fecha_desde, fecha_hasta),
+            )
+            celulares_por_dia = [{"fecha": d.isoformat(), "cantidad": n} for d, n in cur.fetchall()]
+            cur.execute(
+                f"""SELECT to_char(c.iniciado_en AT TIME ZONE 'America/Lima', 'YYYY-MM') AS mes, COUNT(DISTINCT {_cel})
+                   FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.iniciado_en >= %s AND c.iniciado_en < %s AND {_cel} <> ''
+                   GROUP BY mes ORDER BY mes""",
+                (fecha_desde, fecha_hasta),
+            )
+            celulares_por_mes = [{"mes": mes, "cantidad": n} for mes, n in cur.fetchall()]
+            cur.execute(
+                f"""SELECT COUNT(DISTINCT {_cel})
+                   FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.iniciado_en >= %s AND c.iniciado_en < %s AND {_cel} <> ''""",
+                (fecha_desde, fecha_hasta),
+            )
+            celulares_unicos_total = cur.fetchone()[0]
 
             cur.execute(
                 """SELECT COALESCE(a.nombre_display, 'Sin asignar'), COUNT(*)
@@ -2999,40 +4623,168 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
             )
             total, total_atendidas = cur.fetchone()
 
+            # Detalle por hora del día (hora de Lima): total y atendidas por un asesor.
+            cur.execute(
+                """SELECT EXTRACT(HOUR FROM c.iniciado_en AT TIME ZONE 'America/Lima')::int AS hora,
+                          COUNT(*), COUNT(*) FILTER (WHERE c.asesor_id IS NOT NULL)
+                   FROM conversaciones c
+                   WHERE c.iniciado_en >= %s AND c.iniciado_en < %s
+                   GROUP BY hora""",
+                (fecha_desde, fecha_hasta),
+            )
+            _h = {hora: (t, a) for hora, t, a in cur.fetchall()}
+            por_hora = [{"hora": h, "cantidad": _h.get(h, (0, 0))[0], "atendidas": _h.get(h, (0, 0))[1]}
+                        for h in range(24)]
+
+            # Mapa día × hora (solo si el período es de hasta 31 días, para que se pueda leer).
+            por_dia_hora = []
+            if (fecha_hasta - fecha_desde).days <= 31:
+                cur.execute(
+                    """SELECT (c.iniciado_en AT TIME ZONE 'America/Lima')::date AS dia,
+                              EXTRACT(HOUR FROM c.iniciado_en AT TIME ZONE 'America/Lima')::int AS hora,
+                              COUNT(*)
+                       FROM conversaciones c
+                       WHERE c.iniciado_en >= %s AND c.iniciado_en < %s
+                       GROUP BY dia, hora ORDER BY dia, hora""",
+                    (fecha_desde, fecha_hasta),
+                )
+                por_dia_hora = [{"fecha": d.isoformat(), "hora": h, "cantidad": n} for d, h, n in cur.fetchall()]
+
             por_origen, por_pagina = _estadisticas_origen(conn, cur, fecha_desde, fecha_hasta)
+
+            por_metodo_token = []
+            try:
+                cur.execute("SAVEPOINT sp_metodo")
+                cur.execute(
+                    """SELECT h.hito, COUNT(*) FROM conversacion_hitos h
+                       JOIN conversaciones c ON c.id = h.conversacion_id
+                       WHERE h.hito IN ('metodo_sms', 'metodo_sms_reenviado', 'metodo_llamada', 'metodo_whatsapp')
+                         AND c.iniciado_en >= %s AND c.iniciado_en < %s
+                       GROUP BY h.hito""",
+                    (fecha_desde, fecha_hasta),
+                )
+                cuentas = {h[len("metodo_"):]: n for h, n in cur.fetchall()}
+                cur.execute("RELEASE SAVEPOINT sp_metodo")
+                por_metodo_token = [
+                    {"metodo": etiqueta, "cantidad": cuentas.get(clave, 0)}
+                    for clave, etiqueta in (("sms", "SMS (primer envío)"), ("sms_reenviado", "SMS reenviado"),
+                                            ("llamada", "Llamada"), ("whatsapp", "WhatsApp"))
+                ]
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_metodo")
 
             sin_cerrar_detalle, sin_cerrar_pasos = _detalle_conversaciones(
                 cur, fecha_desde, fecha_hasta, "c.etiqueta_cierre_id IS NULL")
             sin_opcion_detalle, sin_opcion_pasos = _detalle_conversaciones(
                 cur, fecha_desde, fecha_hasta, "c.campana_id IS NULL")
 
-            # Embudo aproximado según dónde quedó parada cada conversación del
-            # bot (el nodo actual se conserva solo mientras sigue en el bot).
-            cur.execute(
-                """SELECT COUNT(*),
-                          COUNT(*) FILTER (WHERE c.estado = 'bot' AND c.nodo_actual = 'webchat_pide_celular'),
-                          COUNT(*) FILTER (WHERE c.estado = 'bot'
-                                           AND c.nodo_actual IN ('webchat_pide_nombre', 'webchat_valida_pide_codigo')),
-                          COUNT(*) FILTER (WHERE c.estado = 'bot' AND c.nodo_actual = 'webchat_menu_principal'),
-                          COUNT(*) FILTER (WHERE c.campana_id IS NOT NULL),
-                          COUNT(*) FILTER (WHERE NOT EXISTS (
-                              SELECT 1 FROM mensajes mu
-                              WHERE mu.conversacion_id = c.id AND mu.emisor_tipo = 'usuario'))
-                   FROM conversaciones c
-                   WHERE c.iniciado_en >= %s AND c.iniciado_en < %s""",
-                (fecha_desde, fecha_hasta),
-            )
-            f_total, f_celular, f_token, f_menu, f_derivadas, f_sin_escribir = cur.fetchone()
-            paso2 = f_total - f_celular
-            paso3 = paso2 - f_token
-            paso4 = paso3 - f_menu
-            embudo = [
-                {"paso": "Abrió el chat", "cantidad": f_total, "nota": f"{f_sin_escribir} no escribieron nada"},
-                {"paso": "Ingresó su celular", "cantidad": paso2},
-                {"paso": "Superó la validación (token)", "cantidad": paso3},
-                {"paso": "Eligió una opción del menú", "cantidad": paso4},
-                {"paso": "Llegó a un asesor", "cantidad": f_derivadas},
-            ]
+            # Embudo. Si existe la tabla de hitos (migracion_hitos_embudo.sql) se
+            # calcula con lo que realmente ocurrió en cada conversación, desde la
+            # fecha en que se empezó a registrar. Si no, se usa la aproximación
+            # por el nodo donde quedó parada cada conversación.
+            embudo = None
+            embudo_desde = None
+            try:
+                cur.execute("SAVEPOINT sp_embudo")
+                cur.execute("SELECT MIN(creado_en) FROM conversacion_hitos")
+                primero = cur.fetchone()[0]
+                if primero is not None:
+                    desde_e = max(fecha_desde, primero)
+                    cur.execute(
+                        """SELECT COUNT(*),
+                                  COUNT(*) FILTER (WHERE h.vio_menu),
+                                  COUNT(*) FILTER (WHERE h.eligio_opcion),
+                                  COUNT(*) FILTER (WHERE h.verificado OR h.reconocido),
+                                  COUNT(*) FILTER (WHERE h.verificado),
+                                  COUNT(*) FILTER (WHERE h.reconocido),
+                                  COUNT(*) FILTER (WHERE h.pidio_codigo),
+                                  COUNT(*) FILTER (WHERE h.entro_flujo),
+                                  COUNT(*) FILTER (WHERE h.asesor),
+                                  COUNT(*) FILTER (WHERE h.cierre_bot),
+                                  COUNT(*) FILTER (WHERE NOT EXISTS (
+                                      SELECT 1 FROM mensajes mu
+                                      WHERE mu.conversacion_id = c.id AND mu.emisor_tipo = 'usuario')
+                                      AND NOT h.eligio_opcion)
+                           FROM conversaciones c
+                           LEFT JOIN LATERAL (
+                               SELECT bool_or(hito = 'vio_menu') AS vio_menu,
+                                      bool_or(hito = 'eligio_opcion') AS eligio_opcion,
+                                      bool_or(hito = 'verificado') AS verificado,
+                                      bool_or(hito = 'reconocido') AS reconocido,
+                                      bool_or(hito = 'pidio_codigo') AS pidio_codigo,
+                                      bool_or(hito = 'entro_flujo') AS entro_flujo,
+                                      bool_or(hito = 'asesor') AS asesor,
+                                      bool_or(hito = 'cierre_bot') AS cierre_bot
+                               FROM conversacion_hitos x WHERE x.conversacion_id = c.id
+                           ) h0 ON TRUE
+                           CROSS JOIN LATERAL (SELECT COALESCE(h0.vio_menu, FALSE) AS vio_menu,
+                                      COALESCE(h0.eligio_opcion, FALSE) AS eligio_opcion,
+                                      COALESCE(h0.verificado, FALSE) AS verificado,
+                                      COALESCE(h0.reconocido, FALSE) AS reconocido,
+                                      COALESCE(h0.pidio_codigo, FALSE) AS pidio_codigo,
+                                      COALESCE(h0.entro_flujo, FALSE) AS entro_flujo,
+                                      COALESCE(h0.asesor, FALSE) AS asesor,
+                                      COALESCE(h0.cierre_bot, FALSE) AS cierre_bot) h
+                           WHERE c.iniciado_en >= %s AND c.iniciado_en < %s""",
+                        (desde_e, fecha_hasta),
+                    )
+                    (e_total, e_menu, e_eligio, e_ident, e_sms, e_recon, e_pidio_cod,
+                     e_flujo, e_asesor, e_cierre, e_sin_hacer) = cur.fetchone()
+                    embudo_desde = desde_e.date().isoformat() if hasattr(desde_e, "date") else str(desde_e)
+                    embudo = [
+                        {"paso": "Abrió el chat", "cantidad": e_total,
+                         "nota": f"{e_sin_hacer} no hicieron nada"},
+                        {"paso": "Vio el saludo / menú", "cantidad": e_menu},
+                        {"paso": "Eligió una opción", "cantidad": e_eligio},
+                        {"paso": "Quedó identificado", "cantidad": e_ident,
+                         "nota": f"{e_sms} con código SMS · {e_recon} ya reconocidos (sin pedir datos)"},
+                        {"paso": "Entró a un flujo", "cantidad": e_flujo},
+                        {"paso": "Llegó a un asesor", "cantidad": e_asesor, "sin_caida": True},
+                        {"paso": "Terminó dentro del bot", "cantidad": e_cierre, "sin_caida": True,
+                         "nota": f"{e_pidio_cod} conversaciones recibieron SMS"},
+                    ]
+                cur.execute("RELEASE SAVEPOINT sp_embudo")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_embudo")
+                embudo = None
+
+            if embudo is None:
+                cur.execute(
+                    """SELECT COUNT(*),
+                              COUNT(*) FILTER (WHERE c.estado = 'bot' AND c.nodo_actual = 'webchat_pide_celular'),
+                              COUNT(*) FILTER (WHERE c.estado = 'bot'
+                                               AND c.nodo_actual IN ('webchat_pide_nombre', 'webchat_valida_pide_codigo')),
+                              COUNT(*) FILTER (WHERE c.estado = 'bot' AND c.nodo_actual = 'webchat_menu_principal'),
+                              COUNT(*) FILTER (WHERE c.campana_id IS NOT NULL),
+                              COUNT(*) FILTER (WHERE NOT EXISTS (
+                                  SELECT 1 FROM mensajes mu
+                                  WHERE mu.conversacion_id = c.id AND mu.emisor_tipo = 'usuario')),
+                              COUNT(*) FILTER (WHERE c.estado = 'bot'
+                                               AND c.nodo_actual IN ('webchat_bienvenida', 'webchat_gate'))
+                       FROM conversaciones c
+                       WHERE c.iniciado_en >= %s AND c.iniciado_en < %s""",
+                    (fecha_desde, fecha_hasta),
+                )
+                (f_total, f_celular, f_token, f_menu, f_derivadas,
+                 f_sin_escribir, f_bienvenida) = cur.fetchone()
+                # Flujo nuevo: saludo con menú -> (al elegir una opción) celular +
+                # código -> flujo elegido. Flujo anterior: celular -> código -> menú.
+                # Los pasos son acumulativos, así que sirven para los dos (y para
+                # periodos que mezclan ambos); "Vio el saludo y eligió" solo resta
+                # a quienes se quedaron en la bienvenida.
+                paso1b = f_total - f_bienvenida
+                paso2 = paso1b - f_celular
+                paso3 = paso2 - f_token
+                paso4 = paso3 - f_menu
+                embudo = [
+                    {"paso": "Abrió el chat", "cantidad": f_total, "nota": f"{f_sin_escribir} no hicieron nada"},
+                    {"paso": "Eligió una opción del saludo", "cantidad": paso1b,
+                     "nota": "solo aplica desde que se activó el saludo con menú"},
+                    {"paso": "Ingresó su celular", "cantidad": paso2},
+                    {"paso": "Superó la validación (token)", "cantidad": paso3},
+                    {"paso": "Entró a un flujo / eligió del menú", "cantidad": paso4},
+                    {"paso": "Llegó a un asesor", "cantidad": f_derivadas},
+                ]
 
             # Tiempo promedio de respuesta por asesor y por campaña.
             #
@@ -3049,8 +4801,9 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
             # estaba asignada (mensaje_usuario.enviado_en >= c.asignado_en) —
             # así no se le carga al asesor el tiempo que la conversación
             # esperó en cola antes de que alguien la tomara.
+            filtro_campana = ("AND " + _sql_campanas(campanas_filtro)) if campanas_filtro is not None else ""
             cur.execute(
-                """
+                f"""
                 WITH pares AS (
                     SELECT
                         m.conversacion_id,
@@ -3075,6 +4828,7 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
                   AND c.asignado_en IS NOT NULL
                   AND p.anterior_en >= c.asignado_en
                   AND p.respuesta_en >= %s AND p.respuesta_en < %s
+                  {filtro_campana}
                 GROUP BY a.nombre_display, cam.nombre
                 ORDER BY promedio_segundos DESC
                 """,
@@ -3095,6 +4849,11 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
         "total": total,
         "total_atendidas": total_atendidas,
         "por_dia": por_dia,
+        "celulares_por_dia": celulares_por_dia,
+        "celulares_por_mes": celulares_por_mes,
+        "celulares_unicos_total": celulares_unicos_total,
+        "por_hora": por_hora,
+        "por_dia_hora": por_dia_hora,
         "por_asesor": por_asesor,
         "por_etiqueta": por_etiqueta,
         "por_campana": por_campana,
@@ -3104,9 +4863,92 @@ def estadisticas_dashboard(desde: str, hasta: str, authorization: str | None = H
         "sin_opcion_detalle": sin_opcion_detalle,
         "sin_opcion_pasos": sin_opcion_pasos,
         "embudo": embudo,
+        "embudo_desde": embudo_desde,
         "por_origen": por_origen,
+        "por_metodo_token": por_metodo_token,
         "por_pagina": por_pagina,
     }
+
+
+@app.get("/dashboard/consultas")
+def consultas_dashboard(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
+    """Qué es lo que más consultan: (1) botones del menú más tocados, (2) último botón
+    que tocaron las conversaciones que NO llegaron a un asesor ("Sin opción") y
+    (3) temas de lo que escriben, clasificados por palabras clave (temas_consulta.py).
+    Va aparte de /dashboard/estadisticas para que, si falla o tarda, no afecte al resto."""
+    alcance = supervisor.obtener_alcance(_verificar_editor(authorization))
+    campanas_filtro = supervisor.campanas_efectivas(alcance, campana_id)
+    try:
+        d_desde = datetime.strptime(desde, "%Y-%m-%d").date()
+        d_hasta = datetime.strptime(hasta, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fechas inválidas (usar YYYY-MM-DD)")
+    if d_hasta < d_desde:
+        raise HTTPException(status_code=400, detail="'hasta' debe ser igual o posterior a 'desde'")
+    f_desde = datetime.combine(d_desde, datetime.min.time()).replace(tzinfo=LIMA_TZ)
+    f_hasta = datetime.combine(d_hasta, datetime.min.time()).replace(tzinfo=LIMA_TZ) + timedelta(days=1)
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as _cur_real:
+            cur = _CursorFiltroCampana(_cur_real, campanas_filtro) if campanas_filtro is not None else _cur_real
+            # (1)+(2) Clics en botones. Cada clic se guarda con el ID de la opción; se traduce al
+            # texto del botón con la lista de opciones que el bot mostró justo antes.
+            cur.execute(
+                """SELECT m.conversacion_id, m.contenido, prev.contenido, (c.campana_id IS NULL)
+                   FROM mensajes m
+                   JOIN conversaciones c ON c.id = m.conversacion_id
+                   LEFT JOIN LATERAL (
+                       SELECT contenido FROM mensajes
+                       WHERE conversacion_id = m.conversacion_id AND id < m.id
+                         AND emisor_tipo = 'bot' AND tipo_contenido = 'opciones'
+                       ORDER BY id DESC LIMIT 1) prev ON TRUE
+                   WHERE m.tipo_contenido = 'boton_click' AND m.contenido <> ''
+                     AND c.iniciado_en >= %s AND c.iniciado_en < %s
+                   ORDER BY m.conversacion_id, m.id
+                   LIMIT 80000""",
+                (f_desde, f_hasta),
+            )
+            filas_clics = cur.fetchall()
+            cur.execute(
+                """SELECT COUNT(*) FROM conversaciones c
+                   WHERE c.iniciado_en >= %s AND c.iniciado_en < %s AND c.campana_id IS NULL
+                     AND NOT EXISTS (SELECT 1 FROM mensajes m WHERE m.conversacion_id = c.id
+                                     AND m.tipo_contenido = 'boton_click' AND m.contenido <> '')""",
+                (f_desde, f_hasta),
+            )
+            sin_clic = cur.fetchone()[0]
+
+            # (3) Lo que escriben (solo texto libre; se descartan números/códigos en temas_consulta)
+            cur.execute(
+                """SELECT m.conversacion_id, m.contenido, (m.enviado_en AT TIME ZONE 'America/Lima')::date
+                   FROM mensajes m JOIN conversaciones c ON c.id = m.conversacion_id
+                   WHERE m.emisor_tipo = 'usuario' AND m.tipo_contenido = 'texto'
+                     AND c.iniciado_en >= %s AND c.iniciado_en < %s
+                   ORDER BY m.id LIMIT 60000""",
+                (f_desde, f_hasta),
+            )
+            filas = cur.fetchall()
+        conn.rollback()
+    finally:
+        release_connection(conn)
+
+    resultado = temas_consulta.clasificar(filas, d_desde, d_hasta)
+    resultado.update(temas_consulta.resumir_botones(filas_clics, sin_clic))
+    resultado["truncado"] = len(filas) >= 60000
+    return resultado
+
+
+@app.get("/consola/aviso")
+def aviso_consola():
+    """Público (se consulta antes de iniciar sesión): texto del aviso superior del login
+    (la ruta NO empieza con /login a propósito: Cloud Armor limita /login a 5 peticiones/min por IP)
+    de las consolas, editable desde /editor (clave banner_login). Vacío = sin aviso."""
+    try:
+        texto = (supervisor.obtener_configuracion("banner_login") or "").strip()
+    except Exception:
+        texto = ""
+    return JSONResponse({"texto": texto[:600]}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/widget/textos")
@@ -3151,6 +4993,45 @@ def sonido_widget_por_archivo(archivo: str):
     )
 
 
+# --- Selector de lugar en el mapa (SERVICIO PROGRAMADO de Médico a domicilio / Ambulancia) -----------------
+# /mapa/mapa.html es una página con Leaflet (copia local en static/mapa/) + mosaicos de OpenStreetMap. El widget la abre
+# en un iframe y recibe lat/lng por postMessage. Solo se sirven estos archivos (nada de rutas libres).
+_DIR_MAPA = "static/mapa"
+_ARCHIVOS_MAPA = {"mapa.html": "text/html; charset=utf-8", "leaflet.js": "application/javascript",
+                  "leaflet.css": "text/css"}
+_IMG_MAPA = {"layers.png", "layers-2x.png", "marker-icon.png", "marker-icon-2x.png", "marker-shadow.png"}
+
+
+def _headers_mapa() -> dict:
+    # Solo las páginas de ALLOWED_ORIGINS (el sitio donde vive el widget) pueden incrustarla.
+    ancestros = " ".join(allowed_origins) or "'none'"
+    return {
+        "Cache-Control": "public, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Content-Security-Policy": (
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; object-src 'none'; "
+            f"base-uri 'self'; frame-ancestors {ancestros}"),
+    }
+
+
+@app.get("/mapa/img/{archivo}")
+def mapa_imagen(archivo: str):
+    if archivo not in _IMG_MAPA:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    return FileResponse(os.path.join(_DIR_MAPA, "img", archivo), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/mapa/{archivo}")
+def mapa_archivo(archivo: str):
+    tipo = _ARCHIVOS_MAPA.get(archivo)
+    if tipo is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    return FileResponse(os.path.join(_DIR_MAPA, archivo), media_type=tipo, headers=_headers_mapa())
+
+
 _DIR_IMAGENES = "static/imagenes"
 _TIPOS_IMAGEN = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                   ".svg": "image/svg+xml", ".webp": "image/webp", ".woff2": "font/woff2"}
@@ -3186,7 +5067,7 @@ def _reenviar_asignaciones_activas(asesor_id: int) -> list:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT c.id, c.campana_id, u.nombre, u.telefono, u.dni, c.entrada_cola, c.asignado_en,
+                """SELECT c.id, c.campana_id, COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en,
                           c.pausada_en, c.bandera, c.aviso_inactividad_activo
                    FROM conversaciones c
                    JOIN usuarios_webchat u ON u.id = c.usuario_id
@@ -3242,16 +5123,29 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
     try:
         await supervisor.enviar_etiquetas(asesor_id, manager, a_asesor=True)
         await supervisor.enviar_respuestas_rapidas(asesor_id, manager, a_asesor=True)
-        for asignacion_activa in _reenviar_asignaciones_activas(asesor_id):
+        activas_conexion = _reenviar_asignaciones_activas(asesor_id)
+        for asignacion_activa in activas_conexion:
             await manager.enviar_a_asesor(asesor_id, {
                 "type": "nueva_asignacion", "payload": asignacion_activa,
             })
+        await manager.enviar_a_asesor(asesor_id, {
+            "type": "conversaciones_vigentes",
+            "payload": {"ids": [a["conversacion_id"] for a in activas_conexion]},
+        })
         await asignacion.asignar_desde_cola_para_asesor(asesor_id, manager)
 
         while True:
             data = await websocket.receive_json()
             tipo = data.get("type")
             payload = data.get("payload", {}) or {}
+
+            # Envío fiable de la consola: lo escrito sin red se reenvía al reconectar con el mismo cid;
+            # si ya lo procesamos solo se confirma (no se duplica).
+            if tipo in _TIPOS_FIABLES_STAFF and payload.get("cid"):
+                if not _registrar_cid_widget(f"asesor:{asesor_id}", str(payload["cid"])[:64]):
+                    await websocket.send_json({"type": "mensaje_propio_guardado", "payload": {
+                        "conversacion_id": payload.get("conversacion_id"), "cid": payload.get("cid"), "dup": True}})
+                    continue
 
             if tipo == "mensaje_asesor":
                 conversacion_id = payload.get("conversacion_id")
@@ -3266,7 +5160,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 })
                 await websocket.send_json({
                     "type": "mensaje_propio_guardado",
-                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id},
+                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id, "cid": payload.get("cid")},
                 })
                 await manager.notificar_escuchas(conversacion_id, {
                     "type": "mensaje_conversacion",
@@ -3287,7 +5181,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 })
                 await websocket.send_json({
                     "type": "mensaje_propio_guardado",
-                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id},
+                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id, "cid": payload.get("cid")},
                 })
                 await manager.notificar_escuchas(conversacion_id, {
                     "type": "mensaje_conversacion",
@@ -3334,8 +5228,18 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 })
 
             elif tipo == "enviar_sms_invitacion":
-                resultado = await asyncio.to_thread(_enviar_sms_invitacion, payload.get("celular"), asesor_id, payload.get("texto"))
+                resultado = await asyncio.to_thread(_enviar_sms_invitacion, payload.get("celular"), asesor_id, payload.get("texto"),
+                                                    payload.get("campana_id"), payload.get("asesor_destino_id"))
                 await manager.enviar_a_asesor(asesor_id, {"type": "resultado_sms_invitacion", "payload": resultado})
+
+            elif tipo == "enviar_archivo_sms":
+                resultado = await asyncio.to_thread(_enviar_archivo_sms, payload.get("celular"), asesor_id, "asesor",
+                                                    payload.get("ruta"), payload.get("nombre"))
+                await manager.enviar_a_asesor(asesor_id, {"type": "resultado_archivo_sms", "payload": resultado})
+
+            elif tipo == "destinos_sms_directo":
+                await manager.enviar_a_asesor(asesor_id, {"type": "destinos_sms_directo",
+                                                          "payload": await asyncio.to_thread(_destinos_sms_directo, asesor_id)})
 
             elif tipo == "texto_sms_invitacion":
                 texto = await asyncio.to_thread(_texto_sms_invitacion)
@@ -3389,14 +5293,26 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 await manager.enviar_a_widget(conversacion_id, {
                     "type": "mensajes_leidos", "payload": {"conversacion_id": conversacion_id},
                 })
+                # Supervisores que están viendo la conversación: el asesor leyó (✓✓).
+                await manager.notificar_escuchas(conversacion_id, {
+                    "type": "mensajes_leidos",
+                    "payload": {"conversacion_id": conversacion_id, "lector": "asesor"},
+                })
 
             elif tipo == "refrescar_conversaciones":
                 # Vuelve a mandar el estado autoritativo de todas las conversaciones
                 # asignadas — por si el asesor siente que algo no cargó bien.
-                for asignacion_activa in _reenviar_asignaciones_activas(asesor_id):
+                activas = _reenviar_asignaciones_activas(asesor_id)
+                for asignacion_activa in activas:
                     await manager.enviar_a_asesor(asesor_id, {
                         "type": "nueva_asignacion", "payload": asignacion_activa,
                     })
+                # Lista autoritativa: la consola quita las que ya no están asignadas a este asesor
+                # (cerradas por un supervisor, transferidas, etc.).
+                await manager.enviar_a_asesor(asesor_id, {
+                    "type": "conversaciones_vigentes",
+                    "payload": {"ids": [a["conversacion_id"] for a in activas]},
+                })
 
             elif tipo == "obtener_historial_usuario":
                 conversacion_id_actual = payload.get("conversacion_id")
@@ -3634,7 +5550,7 @@ def _registrar_escucha_db(conversacion_id: int, supervisor_id: int, tipo: str):
         release_connection(conn)
 
 
-def _buscar_conversaciones(query: str) -> list:
+def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
     """Busca conversaciones (de cualquier estado: bot, en_cola, asignada o
     cerrada) por celular, DNI o nombre del cliente — usa ILIKE (contiene, sin
     importar mayúsculas) para no obligar a escribir el dato exacto completo."""
@@ -3652,11 +5568,12 @@ def _buscar_conversaciones(query: str) -> list:
                 LEFT JOIN campanas cam ON cam.id = c.campana_id
                 LEFT JOIN asesores a ON a.id = c.asesor_id
                 LEFT JOIN etiquetas_cierre et ON et.id = c.etiqueta_cierre_id
-                WHERE u.nombre ILIKE %s OR u.telefono ILIKE %s OR u.dni ILIKE %s
+                WHERE (u.nombre ILIKE %s OR u.telefono ILIKE %s OR u.dni ILIKE %s)
+                  AND (%s::int[] IS NULL OR c.campana_id = ANY(%s::int[]))
                 ORDER BY c.iniciado_en DESC
                 LIMIT 50
                 """,
-                (comodin, comodin, comodin),
+                (comodin, comodin, comodin, campana_ids, campana_ids),
             )
             resultado = []
             for (conv_id, nombre, telefono, dni, estado, campana, iniciado_en, cerrado_en,
@@ -3680,7 +5597,7 @@ def _buscar_conversaciones(query: str) -> list:
         release_connection(conn)
 
 
-def _buscar_conversaciones_bot(telefono: str) -> list:
+def _buscar_conversaciones_bot(telefono: str, campana_ids: list | None = None) -> list:
     """Busca, SOLO por celular, conversaciones que TODAVÍA no llegan a un
     asesor (siguen en el flujo del bot o esperando en cola) — para que un
     supervisor pueda encontrar a alguien que está atorado navegando el
@@ -3696,10 +5613,11 @@ def _buscar_conversaciones_bot(telefono: str) -> list:
                 FROM conversaciones c
                 JOIN usuarios_webchat u ON u.id = c.usuario_id
                 WHERE c.estado IN ('bot', 'en_cola') AND u.telefono ILIKE %s
+                  AND (%s::int[] IS NULL OR c.campana_id = ANY(%s::int[]))
                 ORDER BY c.iniciado_en DESC
                 LIMIT 50
                 """,
-                (comodin,),
+                (comodin, campana_ids, campana_ids),
             )
             resultado = []
             for conv_id, nombre, telefono_u, dni, estado, iniciado_en, entrada_cola in cur.fetchall():
@@ -3729,7 +5647,7 @@ def _obtener_conversacion_ayuda_bot(conversacion_id) -> dict | None:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT c.estado, u.nombre, u.telefono, u.dni
+                """SELECT c.estado, COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO'), COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR'), COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI')
                    FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
                    WHERE c.id = %s""",
                 (conversacion_id,),
@@ -3743,6 +5661,18 @@ def _obtener_conversacion_ayuda_bot(conversacion_id) -> dict | None:
     return {"conversacion_id": conversacion_id, "estado": estado,
             "usuario_nombre": nombre or f"Usuario {conversacion_id}",
             "telefono": telefono, "dni": dni}
+
+
+async def _payload_permisos_supervisor(supervisor_id: int, alcance) -> dict:
+    """Permisos que ve la consola. Si es máximo real, también el catálogo para «Ver como»."""
+    real = await asyncio.to_thread(supervisor.obtener_alcance, supervisor_id, True)
+    p = {"maximo": alcance is None,
+         "campanas": [] if alcance is None else alcance["nombres"]}
+    if real is None:
+        p["puede_ver_como"] = True
+        p["campanas_todas"] = await asyncio.to_thread(supervisor.obtener_campanas)
+        p["ver_como"] = [] if alcance is None else list(alcance["ids"])
+    return {"type": "permisos_supervisor", "payload": p}
 
 
 @app.websocket("/ws/supervisor")
@@ -3765,8 +5695,10 @@ async def ws_supervisor(websocket: WebSocket, token: str):
         await websocket.close(code=4403)  # autenticado, pero no es supervisor
         return
 
-    await manager.connect_supervisor(supervisor_id, websocket)
+    alcance = supervisor.obtener_alcance(supervisor_id)
+    await manager.connect_supervisor(supervisor_id, websocket, alcance)
     try:
+        await manager.enviar_a_supervisor(supervisor_id, await _payload_permisos_supervisor(supervisor_id, alcance))
         await supervisor.enviar_estado_global(supervisor_id, manager)
         await supervisor.enviar_etiquetas(supervisor_id, manager, a_asesor=False)
         await supervisor.enviar_configuracion(supervisor_id, manager)
@@ -3778,12 +5710,51 @@ async def ws_supervisor(websocket: WebSocket, token: str):
             payload = data.get("payload", {}) or {}
             conversacion_id = payload.get("conversacion_id")
 
+            # El alcance se vuelve a leer en cada acción: si el supervisor máximo le cambia las
+            # campañas a alguien, vale desde su siguiente clic (sin esperar a que reconecte).
+            alcance = await asyncio.to_thread(supervisor.obtener_alcance, supervisor_id)
+            manager.supervisor_alcance[supervisor_id] = alcance
+
+            if tipo == "ver_como":
+                # Solo el supervisor máximo REAL puede simular el alcance de un supervisor de campaña.
+                real = await asyncio.to_thread(supervisor.obtener_alcance, supervisor_id, True)
+                if real is not None:
+                    await websocket.send_json({"type": "error_permiso", "payload": {
+                        "motivo": "Solo el supervisor máximo puede usar «Ver como».", "accion": tipo}})
+                    continue
+                ids = [i for i in (payload.get("campana_ids") or []) if isinstance(i, int)]
+                supervisor.fijar_ver_como(supervisor_id, ids)
+                alcance = await asyncio.to_thread(supervisor.obtener_alcance, supervisor_id)
+                manager.supervisor_alcance[supervisor_id] = alcance
+                await manager.enviar_a_supervisor(supervisor_id, await _payload_permisos_supervisor(supervisor_id, alcance))
+                await supervisor.enviar_estado_global(supervisor_id, manager)
+                await supervisor.enviar_etiquetas(supervisor_id, manager, a_asesor=False)
+                await supervisor.enviar_configuracion(supervisor_id, manager)
+                await supervisor.enviar_respuestas_rapidas(supervisor_id, manager, a_asesor=False)
+                continue
+
+            if alcance is not None:
+                motivo = await asyncio.to_thread(supervisor.motivo_denegado, tipo, payload, alcance)
+                if motivo:
+                    await websocket.send_json({"type": "error_permiso",
+                                               "payload": {"motivo": motivo, "accion": tipo,
+                                                           "conversacion_id": conversacion_id}})
+                    continue
+
+            if tipo in _TIPOS_FIABLES_STAFF and payload.get("cid"):
+                if not _registrar_cid_widget(f"supervisor:{supervisor_id}", str(payload["cid"])[:64]):
+                    await websocket.send_json({"type": "mensaje_propio_guardado", "payload": {
+                        "conversacion_id": conversacion_id, "cid": payload.get("cid"), "dup": True}})
+                    continue
+
             if tipo == "escuchar_conversacion":
                 manager.registrar_escucha(supervisor_id, conversacion_id)
-                _registrar_escucha_db(conversacion_id, supervisor_id, "escucha_inicio")
+                if not payload.get("reconexion"):  # re-enganche tras caída: no es una escucha nueva
+                    _registrar_escucha_db(conversacion_id, supervisor_id, "escucha_inicio")
                 await manager.enviar_a_supervisor(supervisor_id, {
                     "type": "historial_conversacion",
                     "payload": {"conversacion_id": conversacion_id, "historial": _obtener_historial(conversacion_id),
+                                "campana_id": _campana_de_conversacion(conversacion_id),
                                 "bandera": _obtener_bandera(conversacion_id),
                                 "aviso_inactividad_activo": _obtener_aviso_inactividad_activo(conversacion_id)},
                 })
@@ -3819,12 +5790,14 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 respondido_a = _obtener_preview_mensaje(respondido_a_id)
                 await manager.enviar_a_widget(conversacion_id, {
                     "type": "mensaje_asesor",
-                    "payload": {"texto": texto, "asesor_nombre": _nombre_display(supervisor_id),
+                    "payload": {"texto": texto,
+                                # Sin nombre si el supervisor apagó "Nombre visible": el widget no pone prefijo.
+                                "asesor_nombre": _nombre_display(supervisor_id) if payload.get("mostrar_nombre", True) else "",
                                 "mensaje_id": mensaje_id, "respondido_a": respondido_a},
                 })
                 await websocket.send_json({
                     "type": "mensaje_propio_guardado",
-                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id},
+                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id, "cid": payload.get("cid")},
                 })
                 await manager.notificar_escuchas(conversacion_id, {
                     "type": "mensaje_conversacion",
@@ -3852,7 +5825,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 })
                 await websocket.send_json({
                     "type": "mensaje_propio_guardado",
-                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id},
+                    "payload": {"conversacion_id": conversacion_id, "mensaje_id": mensaje_id, "cid": payload.get("cid")},
                 })
                 await manager.notificar_escuchas(conversacion_id, {
                     "type": "mensaje_conversacion",
@@ -3911,12 +5884,12 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 await supervisor.notificar_cambio_asesor(asesor_id_objetivo, manager)
 
             elif tipo == "crear_etiqueta":
-                supervisor.crear_etiqueta(payload.get("nombre"))
+                supervisor.crear_etiqueta(payload.get("nombre"), campana_ids=payload.get("campana_ids"))
                 await supervisor.notificar_etiquetas_a_todos(manager)
 
             elif tipo == "editar_etiqueta":
                 supervisor.editar_etiqueta(payload.get("id"), nombre=payload.get("nombre"),
-                                            activo=payload.get("activo"))
+                                            activo=payload.get("activo"), campana_ids=payload.get("campana_ids"))
                 await supervisor.notificar_etiquetas_a_todos(manager)
 
             elif tipo == "eliminar_etiqueta":
@@ -3994,6 +5967,10 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 await supervisor.notificar_asesores_admin_a_todos(manager)
                 await supervisor.notificar_estado_global_a_todos(manager)
 
+            elif tipo == "quitar_2fa_asesor":
+                totp.desactivar(payload.get("asesor_id"))
+                await supervisor.notificar_asesores_admin_a_todos(manager)
+
             elif tipo == "resetear_password_asesor":
                 supervisor.resetear_password_asesor(payload.get("asesor_id"), payload.get("password"))
 
@@ -4006,7 +5983,8 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 consulta = (payload.get("query") or "").strip()
                 await manager.enviar_a_supervisor(supervisor_id, {
                     "type": "resultados_busqueda",
-                    "payload": {"query": consulta, "resultados": _buscar_conversaciones(consulta) if consulta else []},
+                    "payload": {"query": consulta, "resultados": _buscar_conversaciones(
+                        consulta, None if alcance is None else alcance["ids"]) if consulta else []},
                 })
 
             elif tipo == "buscar_conversaciones_bot":
@@ -4015,7 +5993,8 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                     "type": "resultados_busqueda_bot",
                     "payload": {
                         "telefono": telefono,
-                        "resultados": _buscar_conversaciones_bot(telefono) if telefono else [],
+                        "resultados": _buscar_conversaciones_bot(
+                            telefono, None if alcance is None else alcance["ids"]) if telefono else [],
                     },
                 })
 
@@ -4033,11 +6012,57 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 # Para el selector de "Transferir a..." desde el panel de escucha.
                 await supervisor.enviar_lista_asesores(supervisor_id, manager, a_asesor=False)
 
+            elif tipo in ("listar_campanas_admin", "crear_campana", "editar_campana"):
+                # Solo el supervisor máximo (el resto ya fue rechazado arriba).
+                resultado = {"ok": True}
+                if tipo == "crear_campana":
+                    resultado = await asyncio.to_thread(
+                        supervisor.crear_campana, payload.get("nombre"),
+                        payload.get("mensaje_fuera_horario"), payload.get("dias"))
+                elif tipo == "editar_campana":
+                    resultado = await asyncio.to_thread(
+                        supervisor.editar_campana, payload.get("id"),
+                        payload.get("nombre"), payload.get("activo"))
+                if not resultado.get("ok"):
+                    await manager.enviar_a_supervisor(supervisor_id, {
+                        "type": "error_campanas", "payload": {"motivo": resultado.get("motivo")}})
+                else:
+                    await manager.enviar_a_supervisor(supervisor_id, {
+                        "type": "campanas_admin",
+                        "payload": {"campanas": await asyncio.to_thread(supervisor.listar_campanas_admin),
+                                    "creada": resultado.get("codigo")}})
+                    if tipo != "listar_campanas_admin":
+                        # Que el resto de pantallas (asesores, horarios, feriados, reporte) vean la campaña ya.
+                        await supervisor.notificar_asesores_admin_a_todos(manager)
+                        await manager.enviar_a_todos_supervisores({
+                            "type": "horarios_actuales",
+                            "payload": {"campanas": await asyncio.to_thread(supervisor.listar_horarios)}})
+                        await supervisor.notificar_estado_global_a_todos(manager)
+
             elif tipo == "listar_horarios":
                 await manager.enviar_a_supervisor(supervisor_id, {
                     "type": "horarios_actuales",
                     "payload": {"campanas": supervisor.listar_horarios()},
                 })
+
+            elif tipo in ("listar_feriados", "crear_feriado", "eliminar_feriados"):
+                if tipo == "crear_feriado":
+                    resultado = supervisor.crear_feriado(
+                        payload.get("fecha"), payload.get("descripcion"), payload.get("mensaje"),
+                        payload.get("campana_ids") or [], supervisor_id)
+                elif tipo == "eliminar_feriados":
+                    resultado = supervisor.eliminar_feriados(payload.get("ids") or [])
+                else:
+                    resultado = {"ok": True}
+                if resultado.get("ok"):
+                    await manager.enviar_a_supervisor(supervisor_id, {
+                        "type": "feriados_actuales",
+                        "payload": {"feriados": supervisor.listar_feriados(),
+                                    "campanas": supervisor.obtener_campanas()},
+                    })
+                else:
+                    await manager.enviar_a_supervisor(supervisor_id, {
+                        "type": "error_feriados", "payload": {"motivo": resultado.get("motivo")}})
 
             elif tipo == "guardar_horarios":
                 resultado = supervisor.guardar_horarios(
@@ -4065,6 +6090,19 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                         "payload": {"conversacion_id": conversacion_id, "motivo": resultado.get("motivo")},
                     })
 
+            elif tipo in ("pausar_conversacion", "reanudar_conversacion"):
+                # El supervisor pasa la conversación a la bandeja "Pausados" del asesor que la
+                # atiende (o la devuelve). No cambia estado ni asesor, igual que la pausa del asesor.
+                pausar = tipo == "pausar_conversacion"
+                dueno = _obtener_asesor_actual(conversacion_id)
+                cambio = _set_pausa_conversacion(conversacion_id, dueno, pausar) if dueno else False
+                if cambio:
+                    await manager.enviar_a_asesor(dueno, {
+                        "type": "conversacion_pausada" if pausar else "conversacion_reactivada",
+                        "payload": {"conversacion_id": conversacion_id, "ok": True},
+                    })
+                    await supervisor.notificar_cambio_asesor(dueno, manager)
+
             elif tipo == "asignar_conversacion_manual":
                 # Desde el panel de "Sin asignar" — conversaciones en_cola que
                 # ningún asesor había tomado (por ejemplo, porque nadie de esa
@@ -4088,8 +6126,18 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 await manager.enviar_a_supervisor(supervisor_id, {"type": "resultado_guardar_usuario_sofi", "payload": resultado})
 
             elif tipo == "enviar_sms_invitacion":
-                resultado = await asyncio.to_thread(_enviar_sms_invitacion, payload.get("celular"), supervisor_id, payload.get("texto"))
+                resultado = await asyncio.to_thread(_enviar_sms_invitacion, payload.get("celular"), supervisor_id, payload.get("texto"),
+                                                    payload.get("campana_id"), payload.get("asesor_destino_id"))
                 await manager.enviar_a_supervisor(supervisor_id, {"type": "resultado_sms_invitacion", "payload": resultado})
+
+            elif tipo == "enviar_archivo_sms":
+                resultado = await asyncio.to_thread(_enviar_archivo_sms, payload.get("celular"), supervisor_id, "supervisor",
+                                                    payload.get("ruta"), payload.get("nombre"))
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "resultado_archivo_sms", "payload": resultado})
+
+            elif tipo == "destinos_sms_directo":
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "destinos_sms_directo",
+                                                                  "payload": await asyncio.to_thread(_destinos_sms_directo, supervisor_id)})
 
             elif tipo == "texto_sms_invitacion":
                 texto = await asyncio.to_thread(_texto_sms_invitacion)
@@ -4103,4 +6151,8 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 })
 
     except WebSocketDisconnect:
-        manager.disconnect_supervisor(supervisor_id)
+        # Solo si este socket sigue vigente: si el supervisor ya reconectó, el viejo
+        # no debe borrar la conexión ni las escuchas del nuevo.
+        if manager.es_conexion_vigente_supervisor(supervisor_id, websocket):
+            manager.disconnect_supervisor(supervisor_id)
+            supervisor.fijar_ver_como(supervisor_id, None)  # "Ver como" no sobrevive a la sesión

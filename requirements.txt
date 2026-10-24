@@ -5,6 +5,9 @@ redis==5.0.8
 python-multipart==0.0.9
 google-cloud-storage==2.18.2
 bcrypt==4.2.0
+cryptography==46.0.7
 pyjwt==2.9.0
 requests==2.32.3
 reportlab==4.2.5
+segno==1.6.1
+openpyxl==3.1.5

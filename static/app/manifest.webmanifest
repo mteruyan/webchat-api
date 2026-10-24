@@ -1,0 +1,19 @@
+{
+  "name": "Sanitas Perú — Sofi",
+  "short_name": "Sofi",
+  "description": "Tu asistente de Sanitas Perú: consultas y solicitudes por chat.",
+  "id": "/app",
+  "start_uri": "/app",
+  "start_url": "/app",
+  "scope": "/app",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A4C8C",
+  "theme_color": "#0A4C8C",
+  "lang": "es-PE",
+  "icons": [
+    { "src": "/app/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/app/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

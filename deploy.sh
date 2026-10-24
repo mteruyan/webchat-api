@@ -1,7 +1,10 @@
 #!/bin/bash
 # Deploy de webchat-api — usar SIEMPRE este script completo, nunca gcloud run
 # services update por separado para secretos: cada deploy resetea las variables
-# a lo que traiga este comando, así que los 4 secretos deben ir siempre juntos.
+# a lo que traiga este comando, así que los 5 secretos deben ir siempre juntos.
+#
+# VAPID_PRIVATE_KEY (avisos push): el secreto "webchat-vapid-private" debe existir ANTES del
+# deploy (ver generar_vapid.py). Si no existe, este comando falla.
 #
 # DANACONNECT_AUTH usa el secreto "webchat-danaconnect-auth" (Secret Manager).
 # Si necesitas corregir su valor más adelante, NO uses "gcloud secrets create"
@@ -10,9 +13,26 @@
 # Como este script referencia ":latest", el próximo deploy toma la versión
 # nueva automáticamente.
 #
+# AGENTE DE IA OCULTO (modo experimental): IA_PALABRA_CLAVE es la palabra secreta que se escribe en el
+# chat y IA_TESTERS la lista blanca de celulares de prueba (51XXXXXXXXX, separados por comas; deben
+# haber pasado antes la verificación por código SMS). CAMBIA los valores de ejemplo por los tuyos.
+# Para apagar el modo IA sin desplegar de nuevo: UPDATE bot_menus SET activo = FALSE WHERE codigo = 'ia_conversacion';
+# Para apagarlo desplegando: deja IA_PALABRA_CLAVE vacía (IA_PALABRA_CLAVE=) o quita IA_TESTERS.
+#
+# MEDICO A DOMICILIO / AMBULANCIA OCULTO (prueba): MAD_PALABRA_CLAVE es su palabra secreta y MAD_TESTERS su lista
+# blanca PROPIA (a proposito separada de IA_TESTERS: este flujo despacha profesionales de verdad y manda SMS reales).
+# Mismo formato (51XXXXXXXXX separados por comas, celulares ya verificados por SMS en el webchat).
+# Para apagarlo sin desplegar: UPDATE bot_menus SET activo = FALSE WHERE codigo = 'mad_inicio';
+#
 # ALLOWED_ORIGINS incluye "https://marketeru.pe" SOLO mientras se prueba ahí
 # (galería de dentista) — cuando el widget quede embebido en www.sanitasperu.com
 # hay que QUITAR marketeru.pe de esta lista y volver a desplegar.
+
+# UNA SOLA INSTANCIA (--max-instances=1, --concurrency=400): el estado de los WebSockets (quién esta conectado,
+# quién escucha cada conversación) vive en la memoria del proceso. Con 2+ instancias, el cliente puede quedar en
+# una y el asesor en otra y los mensajes no se entregan. No subir max-instances hasta migrar ese estado a Redis.
+# --no-cpu-throttling: la CPU queda siempre asignada (el aviso de inactividad corre en segundo plano).
+# El límite de conexiones de Cloud SQL (db-f1-micro = 25) es compartido con sofi-apis y otros: ver los pools en db.py.
 
 # Nota sobre --set-env-vars: usamos el delimitador alterno "^;^" (en vez del
 # "," por defecto) precisamente para que ALLOWED_ORIGINS pueda llevar varias
@@ -23,6 +43,6 @@
 gcloud run deploy webchat-api --source . \
   --project=sanitas-recetas-prod --region=us-central1 \
   --add-cloudsql-instances=sanitas-recetas-prod:us-central1:sanitas-recetas-db \
-  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com,https://marketeru.pe" \
-  --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest \
-  --min-instances=1 --max-instances=3 --allow-unauthenticated
+  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com,https://marketeru.pe;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483" \
+  --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest,VAPID_PRIVATE_KEY=webchat-vapid-private:latest \
+  --min-instances=1 --max-instances=1 --concurrency=400 --no-cpu-throttling --timeout=3600 --allow-unauthenticated

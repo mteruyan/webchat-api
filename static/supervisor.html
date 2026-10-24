@@ -2,7 +2,9 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Consola de Supervisor — Sanitas</title>
+<script src="/static/supervisor_resumen.js"></script>
 <style>
   :root {
     --azul: #0A4C8C; --azul-oscuro: #073A6B; --verde: #2FB88B;
@@ -71,6 +73,29 @@
   #badgeCola { background: #e05252; color: white; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; margin-left: 4px; }
 
   /* ---- Modal de horarios de atención ---- */
+  /* ---- Modal de reporte de conversaciones ---- */
+  #modalReporteOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1002; align-items: center; justify-content: center; }
+  #modalReporteOverlay.activa { display: flex; }
+  #modalReporte { background: white; border-radius: 14px; padding: 22px; width: 520px; max-width: calc(100vw - 32px); max-height: 90vh; overflow-y: auto; }
+  #modalReporte h3 { margin: 0 0 4px; font-size: 16px; }
+  #modalReporte .sub { font-size: 12.5px; color: var(--texto-suave); margin-bottom: 14px; line-height: 1.45; }
+  #modalReporte .etq { font-size: 12px; font-weight: 700; color: var(--texto-suave); margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .03em; }
+  .rep-periodos { display: flex; flex-wrap: wrap; gap: 6px; }
+  .rep-periodos button { background: white; color: var(--azul); border: 1.5px solid var(--borde); border-radius: 999px; padding: 6px 13px; font-size: 13px; cursor: pointer; min-height: 0; }
+  .rep-periodos button.sel { background: var(--azul); color: #fff; border-color: var(--azul); }
+  #repRangoTexto { font-size: 12.5px; color: var(--texto-suave); margin-top: 8px; }
+  #repPersonalizado { display: none; gap: 8px; align-items: center; margin-top: 8px; font-size: 13px; }
+  #repPersonalizado.visible { display: flex; }
+  #modalReporte select, #modalReporte input[type=date] { padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13px; font-family: inherit; }
+  #modalReporte select { width: 100%; }
+  .rep-fila { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rep-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-top: 10px; cursor: pointer; line-height: 1.35; }
+  #repError { display: none; margin-top: 12px; padding: 9px 12px; border-radius: 8px; background: #FDECEA; color: #8A1C14; font-size: 13px; }
+  #repError.visible { display: block; }
+  .rep-acciones { display: flex; gap: 8px; margin-top: 16px; }
+  .rep-acciones button { flex: 1; }
+  #btnDescargarReporte { background: var(--azul); color: #fff; border: 0; }
+  #btnCerrarModalReporte { background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
   #modalHorariosOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1002; align-items: center; justify-content: center; }
   #modalHorariosOverlay.activa { display: flex; }
   #modalHorarios { background: white; border-radius: 14px; padding: 22px; width: 560px; max-height: 85vh; overflow-y: auto; }
@@ -83,6 +108,23 @@
   .horario-campana .dia-fila input[type="time"]:disabled { opacity: .4; }
   .horario-campana textarea { width: 100%; margin-top: 8px; padding: 7px 9px; border: 1px solid var(--borde); border-radius: 7px; font-size: 12.5px; font-family: inherit; resize: vertical; min-height: 44px; box-sizing: border-box; }
   .horario-campana .fila-guardar { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .feriados-box { border: 1px solid var(--borde); border-radius: 10px; padding: 12px; margin-bottom: 14px; background: #FBFCFE; }
+  .feriados-box .titulo { font-weight: 700; font-size: 13.5px; }
+  .feriados-ayuda { font-size: 12px; color: var(--texto-suave); margin: 2px 0 10px; }
+  .feriado-item { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--borde); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: white; font-size: 12.5px; }
+  .feriado-item .info { flex: 1; min-width: 0; }
+  .feriado-item .fecha { font-weight: 700; }
+  .feriado-item .camps { color: var(--texto-suave); margin-top: 2px; }
+  .feriado-item .msg { color: var(--texto-suave); font-style: italic; margin-top: 2px; white-space: pre-wrap; }
+  .feriado-item button { background: white; color: #B3261E; border: 1px solid var(--borde); border-radius: 7px; padding: 4px 9px; font-size: 12px; cursor: pointer; }
+  .feriado-nuevo { border-top: 1px dashed var(--borde); margin-top: 10px; padding-top: 10px; }
+  .feriado-nuevo .fila { display: flex; gap: 8px; margin-bottom: 8px; }
+  .feriado-nuevo input[type=text] { flex: 1; }
+  .feriado-nuevo input, .feriado-nuevo textarea { padding: 7px 9px; border: 1px solid var(--borde); border-radius: 7px; font-size: 12.5px; font-family: inherit; box-sizing: border-box; }
+  .feriado-nuevo textarea { width: 100%; margin-top: 8px; min-height: 52px; resize: vertical; }
+  .feriado-campanas { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; }
+  .feriado-campanas label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .feriado-nuevo .fila-guardar { display: flex; justify-content: flex-end; margin-top: 8px; }
   #btnCerrarModalHorarios { width: 100%; margin-top: 6px; background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
 
   /* ---- Modal de conversaciones sin asignar (en cola) ---- */
@@ -99,6 +141,25 @@
   #btnCerrarModalCola { width: 100%; margin-top: 6px; background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
 
   /* ---- Modal de mantenimiento de asesores ---- */
+  /* Opciones solo del supervisor máximo: un supervisor de campaña no las ve */
+  body.sup-limitado .solo-maximo { display: none !important; }
+  #modalCampanasOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1002; align-items: center; justify-content: center; }
+  #modalCampanasOverlay.activa { display: flex; }
+  #modalCampanas { background: white; border-radius: 14px; padding: 22px; width: 520px; max-width: calc(100vw - 24px); max-height: 85vh; overflow-y: auto; }
+  #modalCampanas h3 { margin: 0 0 4px; font-size: 16px; }
+  #modalCampanas .sub { font-size: 12.5px; color: var(--texto-suave); margin-bottom: 12px; }
+  #modalCampanas .camp-fila { display: flex; align-items: center; gap: 8px; border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+  #modalCampanas .camp-fila.inactiva { opacity: .6; }
+  #modalCampanas .camp-fila input[type=text] { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13px; font-family: inherit; }
+  #modalCampanas .camp-fila small { color: var(--texto-suave); font-size: 11px; display: block; }
+  #modalCampanas .camp-nueva { border-top: 1px solid var(--borde); margin-top: 14px; padding-top: 14px; }
+  #modalCampanas .camp-nueva input[type=text], #modalCampanas .camp-nueva textarea, #modalCampanas .camp-nueva input[type=time] { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13px; font-family: inherit; margin-bottom: 8px; }
+  #modalCampanas .camp-nueva textarea { min-height: 54px; resize: vertical; }
+  #modalCampanas .camp-horario { display: grid; grid-template-columns: 130px 1fr 1fr; gap: 6px; align-items: center; margin-bottom: 4px; font-size: 12.5px; }
+  #modalCampanas .camp-horario input[type=time] { margin: 0; width: auto; padding: 5px 7px; }
+  #modalCampanas .camp-acciones { display: flex; gap: 8px; margin-top: 12px; }
+  #modalCampanas .camp-acciones button { flex: 1; }
+  .nota-nivel { font-size: 11.5px; color: var(--texto-suave); margin: 2px 0 4px; }
   #modalAsesoresOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1002; align-items: center; justify-content: center; }
   #modalAsesoresOverlay.activa { display: flex; }
   #modalAsesores { background: white; border-radius: 14px; padding: 22px; width: 460px; max-height: 85vh; overflow-y: auto; }
@@ -121,6 +182,11 @@
   #modalOverlay.activa { display: flex; }
   #modalEtiquetas { background: white; border-radius: 14px; padding: 22px; width: 360px; max-height: 80vh; overflow-y: auto; }
   #modalEtiquetas h3 { margin: 0 0 14px; font-size: 16px; }
+  .etiqueta-bloque { margin-bottom: 10px; }
+  .etiqueta-bloque .etiqueta-fila { margin-bottom: 4px; }
+  .etiqueta-campanas { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11.5px; color: var(--texto-suave); padding-left: 2px; }
+  .etiqueta-campanas label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+  .etiqueta-campanas .todas { font-style: italic; }
   .etiqueta-fila { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .etiqueta-fila input[type="text"] { flex: 1; padding: 7px 10px; border: 1px solid var(--borde); border-radius: 7px; font-size: 13.5px; font-family: inherit; }
   .etiqueta-fila.inactiva input[type="text"] { color: var(--texto-suave); text-decoration: line-through; }
@@ -181,6 +247,7 @@
   .conv-mini .t { font-size: 11px; color: var(--texto-suave); }
   .conv-mini .ultima-hora { font-size: 10.5px; color: var(--texto-suave); flex-shrink: 0; margin-left: 6px; }
   .conv-mini.pausada { opacity: .72; }
+  #btnMostrarNombre.pausada-activa, #btnPausarConv.pausada-activa { background: #FFF3CD; border-color: #E0B400; color: #8a6d00; }
   .grupo-pausados { margin-top: 4px; }
   .grupo-pausados summary { list-style: none; cursor: pointer; font-size: 11.5px; font-weight: 700; color: #8a6d00; background: #FFF3CD; border-radius: 6px; padding: 5px 8px; }
   .grupo-pausados summary::-webkit-details-marker { display: none; }
@@ -255,6 +322,11 @@
   .sistema { background: transparent; color: var(--texto-suave); font-size: 12px; text-align: center; margin: 10px auto; max-width: 100%; }
 
   /* ---- Editar / Responder / Eliminar mensajes (escucha) ---- */
+  .check-esc { font-size: 11px; margin-left: 4px; opacity: .6; letter-spacing: -1px; }
+  .check-esc.leido { opacity: 1; font-weight: 700; }
+  .usuario .check-esc.leido { color: #2B9BD6; }
+  .asesor .check-esc.leido { color: #BFE9FF; }
+  .supervisor .check-esc.leido { color: #FFFFFF; }
   .msg.eliminado { font-style: italic; opacity: .7; }
   .msg .editado-tag { font-size: 10.5px; opacity: .65; margin-left: 5px; }
   .msg-cita { display: block; border-left: 3px solid rgba(10,20,30,.25); background: rgba(10,20,30,.05); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; font-size: 12px; opacity: .85; }
@@ -302,13 +374,20 @@
   .msg-imagen { display: block; max-width: 240px; width: 100%; border-radius: 10px; cursor: pointer; }
   #lightboxOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.85); z-index: 2000; align-items: center; justify-content: center; padding: 24px; }
   #lightboxOverlay.activa { display: flex; }
-  #lightboxOverlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  #lightboxOverlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); transform-origin: center center; user-select: none; -webkit-user-drag: none; touch-action: none; cursor: zoom-in; }
+  #lightboxOverlay img.zoom { cursor: grab; }
+  #lightboxOverlay img.arrastrando { cursor: grabbing; }
+  #lightboxOverlay .lb-barra { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; background: rgba(20,30,45,.88); border-radius: 999px; padding: 6px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #lightboxOverlay .lb-barra button { background: none; border: none; color: white; font-size: 20px; line-height: 1; min-width: 38px; height: 38px; border-radius: 999px; cursor: pointer; font-family: inherit; }
+  #lightboxOverlay .lb-barra button:hover { background: rgba(255,255,255,.18); }
+  #lightboxOverlay .lb-barra .lb-pct { color: white; font-size: 13px; min-width: 48px; text-align: center; }
+  #lightboxOverlay .lb-barra .lb-sep { width: 1px; height: 22px; background: rgba(255,255,255,.3); margin: 0 4px; }
   #lightboxOverlay .cerrar { position: absolute; top: 16px; right: 20px; color: white; font-size: 32px; line-height: 1; cursor: pointer; background: none; border: none; opacity: .85; }
   #lightboxOverlay .cerrar:hover { opacity: 1; }
 
   #acciones { display: none; gap: 8px; padding: 12px 16px; background: white; border-top: 1px solid var(--borde); }
-  #acciones.activa { display: flex; }
-  #accionTexto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 999px; font-size: 14px; font-family: inherit; }
+  #acciones.activa { display: flex; align-items: flex-end; }
+  #accionTexto { flex: 1; padding: 10px 14px; border: 1px solid var(--borde); border-radius: 20px; font-size: 14px; font-family: inherit; resize: none; overflow-y: hidden; line-height: 1.4; min-height: 40px; max-height: 140px; box-sizing: border-box; }
   #btnAdjuntarDirecto { background: #EEF3F8; color: var(--azul); border: none; border-radius: 50%; width: 40px; height: 40px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   #btnAdjuntarDirecto:hover { background: #E1EBF5; }
   #btnAdjuntarDirecto:disabled { opacity: .5; cursor: default; }
@@ -547,9 +626,9 @@ body.sofi th { font-weight: 700; color: var(--texto-suave); }
 .sofi-card, body.sofi .panel, body.sofi .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 16px; }
 
 /* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
-body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnAyudarBot,
+body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
 body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
-body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi { display: none !important; }
+body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnUsuariosSofi, body.sofi #barraConectado #btnCampanas { display: none !important; }
 body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
 body.sofi-conectado #barraConectado:not(.activa) { }
 body.sofi { word-spacing: .06em; }
@@ -621,9 +700,60 @@ body.sofi .conv-item .badge { background: var(--coral); }
 .acciones-conv { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
 .acciones-asesor { max-width: 344px; }              /* 3 + 3, ordenados */
 @media (min-width: 1700px) { .acciones-asesor { max-width: none; } }
-.acciones-supervisor { max-width: 456px; }          /* 4 + 3 */
+.acciones-supervisor { max-width: 456px; }          /* 4 + 4 */
 @media (min-width: 1560px) { .acciones-supervisor { max-width: none; } }
 
+/* Cabecera de la conversación más compacta en pantallas grandes (deja más alto para el chat) */
+@media (min-width: 901px) {
+  body.sofi #panel .chat-header, body.sofi #panel .panel-header { padding: 6px 16px; gap: 4px 10px; }
+  body.sofi #panel .chat-header .avatar, body.sofi #panel .panel-header .avatar { width: 32px; height: 32px; font-size: 12px; }
+  body.sofi #panel .chat-header .nombre, body.sofi #panel .panel-header .nombre { font-size: 14.5px; line-height: 1.25; }
+  #panel .chat-header .telefono, #panel .panel-header .telefono { display: inline-block; margin-right: 10px; font-size: 12px; line-height: 1.3; }
+  #panel .chat-header .codigo-sesion { font-size: 11px; line-height: 1.2; }
+  #panel .cab-info { flex: 0 0 auto; }
+  #panel .cab-info .nombre { white-space: nowrap; }
+  #panel .chat-header .bandera-selector, #panel .panel-header .bandera-selector { align-self: center; }
+  #panel .tiempos-cab { display: flex; gap: 12px; margin-left: 4px !important; font-size: 11.5px; line-height: 1.3 !important; white-space: nowrap; }
+  #panel .chat-header .btn-datos-afiliado { padding: 4px 10px; font-size: 12px; }
+  #panel .acciones-top { flex: 1 1 auto; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+  body.sofi #panel .acciones-conv { flex: 0 1 auto; max-width: none !important; gap: 5px; justify-content: flex-end; }
+  body.sofi #panel .acciones-conv > * {
+    width: auto !important; min-width: 0 !important; max-width: none !important;
+    height: 28px !important; min-height: 28px !important; padding: 0 9px !important;
+    font-size: 12px !important; border-radius: 8px !important; gap: 3px !important; }
+}
+
+.sofi-banner-login { position: absolute; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 11px 52px 11px 18px; background: #FFF1CC; color: #4D3800; border-bottom: 2px solid #F5A524; font-size: 14px; font-weight: 600; line-height: 1.4; text-align: center; box-shadow: 0 2px 8px rgba(10,30,50,.12); }
+.sofi-banner-login span { white-space: pre-line; }
+.sofi-banner-login button { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: 0; min-height: 0; padding: 4px 8px; font-size: 16px; line-height: 1; color: #4D3800; cursor: pointer; border-radius: 6px; }
+.sofi-banner-login button:hover { background: rgba(0,0,0,.08); }
+</style>
+<style id="sofi-nav-compacta">
+/* Barra lateral: botón para adelgazarla (solo iconos) y volver al tamaño normal */
+.sofi-nav .nav-logo .nav-toggle { margin-left: auto; width: 28px; height: 28px; flex: none; padding: 0; border: 0; border-radius: 8px; background: rgba(255,255,255,.10); color: #B9CDE2; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+.sofi-nav .nav-logo .nav-toggle:hover { background: rgba(255,255,255,.22); color: #fff; }
+.sofi-nav .nav-logo .nav-toggle:focus-visible { outline: 2px solid var(--turquesa, #1AA6B7); outline-offset: 2px; }
+.sofi-nav .nav-logo .nav-toggle svg { transition: transform .2s; }
+body.sofi { transition: grid-template-columns .2s ease; }
+body.sofi.nav-compacta { grid-template-columns: 72px minmax(0, 1fr); }
+body.sofi.nav-compacta .sofi-nav { padding: 16px 10px; align-items: center; gap: 16px; overflow-x: hidden; scrollbar-width: none; }
+body.sofi.nav-compacta .sofi-nav::-webkit-scrollbar { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-links { gap: 2px; }
+body.sofi.nav-compacta .sofi-nav .nav-logo { flex-direction: column; gap: 12px; padding: 0; }
+body.sofi.nav-compacta .sofi-nav .nav-logo b { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-logo .nav-toggle { margin-left: 0; }
+body.sofi.nav-compacta .sofi-nav .nav-logo .nav-toggle svg { transform: rotate(180deg); }
+body.sofi.nav-compacta .sofi-nav .nav-links { align-items: center; }
+body.sofi.nav-compacta .sofi-nav .nav-links a { position: relative; width: 44px; height: 40px; padding: 0; gap: 0; justify-content: center; }
+body.sofi.nav-compacta .sofi-nav .nav-links a > span:not(.insignia) { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-links a .insignia { position: absolute; top: 1px; right: 1px; margin: 0; min-width: 18px; height: 18px; padding: 0 4px; font-size: 11px; border-radius: 9px; }
+body.sofi.nav-compacta .sofi-nav .nav-seccion { width: 28px; height: 1px; padding: 0; margin: 0; font-size: 0; background: rgba(255,255,255,.18); }
+body.sofi.nav-compacta .sofi-nav .nav-usuario { padding: 10px 6px; align-items: center; gap: 10px; background: none; border-color: transparent; }
+body.sofi.nav-compacta .sofi-nav .nav-usuario .fila > div:last-child { display: none; }
+body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir { font-size: 0; width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.08); }
+body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir::before { content: ""; width: 18px; height: 18px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/%3E%3Cpath d='m16 17 5-5-5-5'/%3E%3Cpath d='M21 12H9'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'/%3E%3Cpath d='m16 17 5-5-5-5'/%3E%3Cpath d='M21 12H9'/%3E%3C/svg%3E") center / contain no-repeat; }
+body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgba(255,255,255,.18); }
+@media (prefers-reduced-motion: reduce) { body.sofi, .sofi-nav .nav-logo .nav-toggle svg { transition: none; } }
 </style>
 </head>
 <body>
@@ -639,14 +769,15 @@ body.sofi .conv-item .badge { background: var(--coral); }
       <div class="campo"><label for="usuario">Usuario</label><input id="usuario" type="text" placeholder="ej. vcapia" autocomplete="username" /></div>
       <div class="campo"><label for="password">Contraseña</label><div class="campo-clave"><input id="password" type="password" placeholder="Tu contraseña" autocomplete="current-password" />
         <button type="button" class="ver-clave" id="btnVerClave" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#5b6b7b;margin:2px 0 10px;cursor:pointer"><input type="checkbox" id="activar2fa" style="width:16px;height:16px;min-width:16px;padding:0;margin:0;flex:none" /> Configurar verificación en dos pasos</label>
       <button id="btnConectar">Ingresar</button>
       <details class="avanzado"><summary>Opciones avanzadas</summary><input id="urlBase" placeholder="https://webchat-api-xxxxx-uc.a.run.app" /></details>
       <div class="login-pie">¿Problemas para ingresar? Contacta a tu supervisor.</div>
     </div></section>
   </div>
   <nav class="sofi-nav" aria-label="Menú principal">
-    <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b></div>
-    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Equipo en vivo</span></a><a href="#" data-click="btnCola"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Sin asignar</span></a><a href="#" data-click="btnAsesoresAdmin"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg><span>Asesores</span></a><a href="#" data-click="btnEtiquetas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13 13 20a2 2 0 0 1-2.8 0L3 12.8V3h9.8L20 10.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span>Etiquetas</span></a><a href="#" data-click="btnRespuestasRapidas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span>Respuestas rápidas</span></a><a href="#" data-click="btnHorarios"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Horarios</span></a><a href="#" data-click="btnUsuariosSofi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Usuarios</span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
+    <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b><button type="button" class="nav-toggle" id="navToggle" aria-expanded="true" aria-label="Reducir barra lateral" title="Reducir barra lateral"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></button></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Equipo en vivo</span></a><a href="#" data-click="btnCola"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Sin asignar</span></a><a href="#" data-click="btnAsesoresAdmin" class="solo-maximo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg><span>Asesores</span></a><a href="#" data-click="btnCampanas" class="solo-maximo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg><span>Campañas</span></a><a href="#" data-click="btnEtiquetas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13 13 20a2 2 0 0 1-2.8 0L3 12.8V3h9.8L20 10.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span>Etiquetas</span></a><a href="#" data-click="btnRespuestasRapidas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span>Respuestas rápidas</span></a><a href="#" data-click="btnHorarios"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Horarios</span></a><a href="#" data-click="btnReporte"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 17v-3"/><path d="M12 17v-5"/><path d="M15 17v-2"/></svg><span>Reporte</span></a><a href="#" data-click="btnUsuariosSofi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Usuarios</span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
     <div class="nav-seccion">Ir a</div>
     <div class="nav-links"><a href="/asesor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><span>Asesor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a><a href="/dashboard" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
     <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Supervisor</small></div></div>
@@ -660,12 +791,17 @@ body.sofi .conv-item .badge { background: var(--coral); }
     <button class="gris chico" id="btnUsuariosSofi" title="Mantenimiento de datos personales de pacientes (tabla sofi_usuarios)">👤 Usuarios</button>
     <button class="gris chico" id="btnBuscar">🔎 Buscar</button>
     <button class="gris chico" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
+    <button class="gris chico" id="btnArchivoSms" title="Subir un PDF o imagen y enviarle al cliente un enlace único por SMS">📎 Enviar archivo</button>
     <button class="gris chico" id="btnAyudarBot">🧭 Ayudar en el bot</button>
     <button id="btnEtiquetas">🏷️ Etiquetas</button>
     <button id="btnRespuestasRapidas">⚡ Respuestas rápidas</button>
-    <button id="btnAsesoresAdmin">👥 Asesores</button>
+    <button id="btnAsesoresAdmin" class="solo-maximo">👥 Asesores</button>
+    <button id="btnCampanas" class="solo-maximo">📣 Campañas</button>
     <button class="gris chico" id="btnHorarios">🕓 Horarios</button>
+    <button class="gris chico" id="btnReporte">📊 Reporte</button>
     <button class="gris chico" id="btnCola">📥 Sin asignar <span id="badgeCola" style="display:none;"></span></button>
+    <label id="lblVerComo" style="display:none;font-size:12px;align-items:center;gap:4px" title="Simula lo que ve un supervisor de una campaña. Solo restringe; no cambia datos.">👁 Ver como
+      <select id="selVerComo" style="font-size:12px;padding:3px 4px"></select></label>
     <button class="gris chico" id="btnSalir">Cerrar sesión</button>
   </div>
   <div id="main">
@@ -676,12 +812,12 @@ body.sofi .conv-item .badge { background: var(--coral); }
     <div id="panel">
       <div id="panelVacio">Haz clic en "👂 Escuchar" sobre cualquier conversación del tablero para empezar a supervisarla.</div>
       <div class="panel-header" id="panelHeader">
-        <div>
+        <div class="cab-info">
           <div class="nombre" id="phNombre"></div>
           <div class="telefono" id="phTelefono"></div>
           <div class="telefono" id="phDni"></div>
         </div>
-        <div style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
+        <div class="tiempos-cab" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
           <div>⏱ Esperó: <b id="phTiempoEspera">--</b></div>
           <div>🕐 En atención: <b id="phTiempoAtencion">--</b></div>
         </div>
@@ -701,6 +837,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
           <div class="acciones-conv acciones-supervisor"><a class="chico gris" id="btnDescargarPdf" title="Descargar la conversación en PDF" target="_blank" rel="noopener">📄 PDF</a>
           <button class="chico gris" id="btnEnviarSms" title="Manda un SMS al cliente con un enlace directo a esta conversación, por si cerró el chat">📲 SMS</button>
           <button class="chico gris" id="btnAvisoInactividadEscucha" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
+          <button class="chico gris" id="btnPausarConv" title="Pausar o reanudar: la pasa a la bandeja 'Pausados' del asesor que la atiende">⏸ Pausar</button>
           <button class="chico gris" id="btnTransferir" title="Transferir esta conversación a otro asesor">🔀 Transf.</button>
           <button class="chico gris" id="btnDejarEscuchar" title="Dejar de escuchar esta conversación">🔇 Dejar</button>
           <button class="chico rojo" id="btnControl" title="Tomar control de la conversación">✋ Control</button>
@@ -718,7 +855,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
         <button id="btnCancelarResponder" type="button" aria-label="Cancelar respuesta">✕</button>
       </div>
       <div id="acciones">
-        <input id="accionTexto" placeholder="Mensaje..." spellcheck="true" lang="es" />
+        <textarea id="accionTexto" rows="1" placeholder="Mensaje..." spellcheck="true" lang="es"></textarea>
         <div id="emojiWrap">
           <button id="btnEmoji" type="button" title="Emojis">😊</button>
           <div id="emojiPopover"></div>
@@ -730,6 +867,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
         </button>
         <input id="archivoInputDirecto" type="file" accept="image/*,application/pdf,.xls,.xlsx,.csv,.doc,.docx" style="display:none" />
         <button class="naranja" id="btnSusurro">🤫 Susurrar</button>
+        <button class="chico gris" id="btnMostrarNombre" title="Si lo apagas, el cliente verá tu respuesta sin tu nombre">👁 Nombre visible</button>
         <button id="btnDirecto">Responder directo</button>
       </div>
     </div>
@@ -737,6 +875,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
 
   <div id="modalOverlay">
     <div id="modalEtiquetas">
+      <div class="solo-maximo">
       <h3>Minutos de inactividad</h3>
       <p style="margin:0 0 8px;font-size:12.5px;color:var(--texto-suave);">Si una conversación asignada o en cola pasa este tiempo sin mensajes del usuario ni del asesor, se envía automáticamente el mensaje de "gracias por la espera" (configurable en el Editor).</p>
       <div style="display:flex;align-items:center;gap:8px;">
@@ -755,12 +894,15 @@ body.sofi .conv-item .badge { background: var(--coral); }
       <textarea id="mensajeCierreInput" rows="3" style="width:100%;padding:9px 10px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;"></textarea>
       <button id="btnGuardarMensajeCierre" style="margin-top:8px;width:100%;">Guardar mensaje</button>
 
+      </div>
+
       <h3 style="margin-top:22px;">Etiquetas de cierre</h3>
       <div id="listaEtiquetas"></div>
       <div id="nuevaEtiquetaFila">
         <input id="nuevaEtiquetaInput" placeholder="Nueva etiqueta..." />
         <button id="btnAgregarEtiqueta">Agregar</button>
       </div>
+      <div class="etiqueta-campanas" id="nuevaEtiquetaCampanas" style="margin-top:6px;"></div>
 
       <h3 style="margin-top:22px;">Respuestas rápidas</h3>
       <p style="margin:0 0 8px;font-size:12.5px;color:var(--texto-suave);">Mensajes predefinidos para preguntas o información frecuente. Cada asesor solo ve, en su consola, las de las campañas que tiene asignadas.</p>
@@ -785,6 +927,17 @@ body.sofi .conv-item .badge { background: var(--coral); }
       <h3 style="margin:0 0 8px;font-size:16px;">Invitar por SMS a escribirnos</h3>
       <p style="margin:0 0 12px;font-size:12.5px;color:var(--texto-suave);">Envía un SMS a un número que todavía no ha iniciado una conversación, con el enlace para escribirnos por el webchat. (Para un cliente que ya tiene conversación usa el botón 📲 SMS de esa conversación.)</p>
       <input id="smsInvitacionCelular" inputmode="numeric" maxlength="15" placeholder="Celular (9 dígitos, ej. 987654321)" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:14px;font-family:inherit;" />
+      <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Campaña de destino</label>
+      <select id="smsInvitacionCampana" style="padding:9px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;background:white;">
+        <option value="">Sin destino (enlace general: empieza con el bot)</option>
+      </select>
+      <div id="smsInvitacionAsesorWrap" style="display:none;">
+        <label style="margin:10px 0 4px;font-size:12px;color:var(--texto-suave);display:block;">Asesor</label>
+        <select id="smsInvitacionAsesor" style="width:100%;padding:9px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;background:white;">
+          <option value="">Cualquier asesor disponible de la campaña</option>
+        </select>
+        <div style="font-size:11.5px;color:var(--texto-suave);margin-top:4px;">Al abrir el enlace, el cliente habla con este asesor; si no está disponible, con otro de la misma campaña. Fuera de horario verá el mensaje de fuera de horario.</div>
+      </div>
       <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Mensaje que se enviará</label>
       <textarea id="smsInvitacionTexto" rows="4" maxlength="160" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;"></textarea>
       <div id="smsInvitacionContador" style="text-align:right;font-size:12px;margin-top:3px;color:var(--texto-suave);">0 / 160</div>
@@ -796,6 +949,22 @@ body.sofi .conv-item .badge { background: var(--coral); }
     </div>
   </div>
 
+
+  <div id="modalArchivoSmsOverlay" style="display:none;position:fixed;inset:0;background:rgba(10,20,30,.4);z-index:1003;align-items:center;justify-content:center;">
+    <div style="background:white;border-radius:14px;padding:22px;width:420px;max-width:94vw;display:flex;flex-direction:column;">
+      <h3 style="margin:0 0 8px;font-size:16px;">Enviar un archivo por SMS</h3>
+      <p style="margin:0 0 12px;font-size:12.5px;color:var(--texto-suave);">Sube un PDF o una imagen. Al cliente le llega un SMS con un enlace único (un solo uso, vence en 7 días) que abre el webchat con el archivo ya dentro de la conversación.</p>
+      <input id="archivoSmsCelular" inputmode="numeric" maxlength="15" placeholder="Celular (9 dígitos, ej. 987654321)" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:14px;font-family:inherit;" />
+      <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Archivo (PDF o imagen, máx. 10 MB)</label>
+      <input id="archivoSmsArchivo" type="file" accept="application/pdf,image/*" style="font-size:13px;" />
+      <div style="margin-top:10px;font-size:12px;color:var(--texto-suave);">SMS que recibirá: <i>“Sanitas: te enviamos un archivo. Ábrelo aquí y te atendemos: (enlace)”</i></div>
+      <div id="archivoSmsEstado" style="min-height:20px;margin-top:10px;font-size:12.5px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <button class="gris" id="btnCancelarArchivoSms" type="button">Cerrar</button>
+        <button id="btnEnviarArchivoSms" type="button">Enviar archivo</button>
+      </div>
+    </div>
+  </div>
 
   <div id="modalUsuariosOverlay">
     <div id="modalUsuarios">
@@ -874,6 +1043,14 @@ body.sofi .conv-item .badge { background: var(--coral); }
   <div id="lightboxOverlay">
     <button class="cerrar" id="btnCerrarLightbox">✕</button>
     <img src="" alt="" />
+    <div class="lb-barra" id="lbBarra">
+      <button type="button" id="lbMenos" title="Alejar (-)" aria-label="Alejar">&minus;</button>
+      <span class="lb-pct" id="lbPct">100%</span>
+      <button type="button" id="lbMas" title="Acercar (+)" aria-label="Acercar">+</button>
+      <button type="button" id="lbReset" title="Tamaño original (0)" aria-label="Restablecer zoom" style="font-size:13px;">100%</button>
+      <span class="lb-sep"></span>
+      <button type="button" id="lbDescargar" title="Descargar imagen" aria-label="Descargar imagen">&#11015;</button>
+    </div>
   </div>
 
   <div id="modalCerrarOverlay">
@@ -927,9 +1104,78 @@ body.sofi .conv-item .badge { background: var(--coral); }
     </div>
   </div>
 
+  <div id="modalCampanasOverlay">
+    <div id="modalCampanas">
+      <h3>📣 Campañas</h3>
+      <div class="sub">Una campaña es una cola de atención (Consultas, Pases de atención, Reclamos…) con su propio horario y sus asesores. Después de crearla: asigna asesores y supervisores en <b>Asesores</b>, ajusta el horario fino y los feriados en <b>Horarios</b>, y enlaza el menú desde el <b>Editor</b>.</div>
+      <div id="listaCampanasAdmin"></div>
+      <div class="camp-nueva">
+        <h3 style="font-size:14px;margin-bottom:8px;">Crear campaña nueva</h3>
+        <input type="text" id="campNombre" maxlength="80" placeholder="Nombre (ej. Reclamos)" />
+        <textarea id="campMensaje" placeholder="Mensaje fuera de horario (opcional). Si lo dejas vacío se usa uno estándar con el nombre de la campaña."></textarea>
+        <div class="nota-nivel">Horario de atención (hora de Lima). Deja vacío un día para que no se atienda.</div>
+        <div id="campHorario"></div>
+        <div class="camp-acciones">
+          <button id="btnCrearCampana">➕ Crear campaña</button>
+          <button class="gris" id="btnCerrarModalCampanas">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalReporteOverlay">
+    <div id="modalReporte">
+      <h3>📊 Reporte de conversaciones por asesor</h3>
+      <div class="sub">Excel para auditoría de calidad: resumen por asesor, detalle de cada conversación con sus tiempos y la transcripción de los mensajes.</div>
+
+      <div class="etq">Periodo</div>
+      <div class="rep-periodos" id="repPeriodos">
+        <button type="button" data-rango="hoy" class="sel">Hoy</button>
+        <button type="button" data-rango="ayer">Ayer</button>
+        <button type="button" data-rango="semana">Última semana</button>
+        <button type="button" data-rango="mes_actual">Mes actual</button>
+        <button type="button" data-rango="mes_pasado">Mes pasado</button>
+        <button type="button" data-rango="personalizado">Personalizado</button>
+      </div>
+      <div id="repPersonalizado">
+        <label>Desde <input type="date" id="repDesde" /></label>
+        <label>Hasta <input type="date" id="repHasta" /></label>
+      </div>
+      <div id="repRangoTexto"></div>
+
+      <div class="rep-fila">
+        <div><div class="etq">Asesor</div><select id="repAsesor"><option value="">Todos los asesores</option></select></div>
+        <div><div class="etq">Campaña</div><select id="repCampana"><option value="">Todas las campañas</option></select></div>
+      </div>
+
+      <label class="rep-check"><input type="checkbox" id="repTranscripcion" checked /> <span>Incluir la transcripción de los mensajes (hoja adicional; el archivo pesa más)</span></label>
+      <label class="rep-check"><input type="checkbox" id="repSoloBot" /> <span>Incluir también conversaciones que solo atendió el bot (sin asesor)</span></label>
+
+      <div id="repError"></div>
+      <div class="rep-acciones">
+        <button type="button" id="btnDescargarReporte">⬇️ Descargar Excel</button>
+        <button type="button" id="btnCerrarModalReporte">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="modalHorariosOverlay">
     <div id="modalHorarios">
       <h3>🕓 Horario de atención por campaña</h3>
+      <div class="feriados-box">
+        <div class="titulo">📅 Feriados y días sin atención</div>
+        <div class="feriados-ayuda">Elige las campañas que NO atienden ese día. Las demás siguen con su horario normal.</div>
+        <div id="listaFeriados"></div>
+        <div class="feriado-nuevo">
+          <div class="fila">
+            <input type="date" id="feriadoFecha" />
+            <input type="text" id="feriadoDescripcion" maxlength="120" placeholder="Nombre (ej. Combate de Angamos)" />
+          </div>
+          <div id="feriadoCampanas" class="feriado-campanas"></div>
+          <textarea id="feriadoMensaje" placeholder="Mensaje personalizado para el cliente (opcional). Déjalo vacío para usar el mensaje por defecto. Puedes usar {{FECHA}} y {{FERIADO}}."></textarea>
+          <div class="fila-guardar"><button id="btnAgregarFeriado">➕ Agregar feriado</button></div>
+        </div>
+      </div>
       <div id="listaHorarios"></div>
       <button id="btnCerrarModalHorarios">Cerrar</button>
     </div>
@@ -950,6 +1196,7 @@ if (!document.getElementById('urlBase').value) {
 
 let ws = null;
 let tokenGuardado = null;
+let tokenArchivoEn = 0;
 let tokenArchivo = null; // token de vida corta (5 min) solo para links de /archivo-receta y /conversacion-pdf
 let intervaloTokenArchivo = null;
 let urlBaseGuardada = null;
@@ -968,6 +1215,7 @@ async function refrescarTokenArchivo() {
     if (resp.ok) {
       const data = await resp.json();
       tokenArchivo = data.token;
+      tokenArchivoEn = Date.now();
     }
   } catch (e) { /* si falla, los links usan tokenGuardado como respaldo */ }
 }
@@ -976,6 +1224,64 @@ function iniciarRenovacionTokenArchivo() {
   if (intervaloTokenArchivo) clearInterval(intervaloTokenArchivo);
   intervaloTokenArchivo = setInterval(refrescarTokenArchivo, 4 * 60 * 1000);
 }
+
+// ---- Links de archivos ya dibujados ----
+// El token de archivo dura 5 minutos y cada link (PDF, imagen, audio) lo lleva
+// escrito en la URL al momento de DIBUJAR el mensaje. Si el mensaje se dibujó
+// hace más de 5 min (o el navegador pausó el temporizador de renovación con la
+// pestaña en segundo plano / PC suspendida), el link guarda un token vencido y
+// sale "Token inválido o expirado" aunque la sesión siga viva. Por eso, al
+// hacer clic se reemplaza por el token vigente, renovándolo antes si hace falta.
+const RUTAS_TOKEN_ARCHIVO = ['/archivo-receta?', '/conversacion-pdf?'];
+const TOKEN_ARCHIVO_FRESCO_MS = 3 * 60 * 1000;
+function esUrlConTokenArchivo(u) {
+  return typeof u === 'string' && RUTAS_TOKEN_ARCHIVO.some((r) => u.indexOf(r) !== -1);
+}
+function conTokenArchivoVigente(u) {
+  if (!esUrlConTokenArchivo(u) || !tokenArchivo) return u;
+  try {
+    const url = new URL(u, location.href);
+    url.searchParams.set('token', tokenArchivo);
+    return url.toString();
+  } catch (e) { return u; }
+}
+async function asegurarTokenArchivoFresco() {
+  if (tokenArchivo && Date.now() - tokenArchivoEn < TOKEN_ARCHIVO_FRESCO_MS) return;
+  await refrescarTokenArchivo();
+}
+document.addEventListener('click', (e) => {
+  const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+  if (!a || !esUrlConTokenArchivo(a.href)) return;
+  if (tokenArchivo && Date.now() - tokenArchivoEn < TOKEN_ARCHIVO_FRESCO_MS) {
+    a.href = conTokenArchivoVigente(a.href);   // token vigente: se abre normal
+    return;
+  }
+  // Token viejo: se renueva y recién entonces se abre.
+  e.preventDefault();
+  const destino = a.target || '_blank';
+  const bruta = a.href;
+  asegurarTokenArchivoFresco().then(() => {
+    const u = conTokenArchivoVigente(bruta);
+    a.href = u;
+    const w = window.open(u, destino, 'noopener');
+    if (!w) location.href = u;   // popup bloqueado: se abre en esta misma pestaña
+  });
+}, true);
+// Audios: se reproducen desde la URL guardada, así que también se actualizan al darle play.
+document.addEventListener('play', (e) => {
+  const el = e.target;
+  if (el && el.tagName === 'AUDIO' && esUrlConTokenArchivo(el.currentSrc || el.src)) {
+    if (Date.now() - tokenArchivoEn >= TOKEN_ARCHIVO_FRESCO_MS) {
+      const t = el.currentTime;
+      el.src = conTokenArchivoVigente(el.currentSrc || el.src);
+      el.currentTime = t; el.play().catch(() => {});
+    }
+  }
+}, true);
+// Al volver a la pestaña / reconectar la red se renueva de inmediato (los temporizadores se pausan en segundo plano).
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescarTokenArchivo(); });
+window.addEventListener('focus', () => { refrescarTokenArchivo(); });
+window.addEventListener('online', () => { refrescarTokenArchivo(); });
 
 // Escapa HTML antes de insertar cualquier dato que venga del paciente o de
 // otro asesor (nombre, teléfono, DNI, etiquetas, etc.) dentro de un
@@ -1020,16 +1326,116 @@ function esAudio(ruta) {
 }
 
 function abrirLightbox(url) {
+  lbReset();
+  url = conTokenArchivoVigente(url);
+  lbUrl = url;
   document.querySelector('#lightboxOverlay img').src = url;
   document.getElementById('lightboxOverlay').classList.add('activa');
 }
 function cerrarLightbox() {
   document.getElementById('lightboxOverlay').classList.remove('activa');
   document.querySelector('#lightboxOverlay img').src = '';
+  lbUrl = '';
+  lbReset();
 }
+// ---- Zoom, arrastre y descarga de la imagen ampliada ----
+let lbUrl = '', lbEsc = 1, lbX = 0, lbY = 0, lbMovio = false;
+const LB_MIN = 0.5, LB_MAX = 6;
+function lbAplicar() {
+  const img = document.querySelector('#lightboxOverlay img');
+  img.style.transform = 'translate(' + lbX + 'px,' + lbY + 'px) scale(' + lbEsc + ')';
+  img.classList.toggle('zoom', lbEsc > 1);
+  document.getElementById('lbPct').textContent = Math.round(lbEsc * 100) + '%';
+}
+function lbReset() { lbEsc = 1; lbX = 0; lbY = 0; lbAplicar(); }
+function lbZoom(nuevo) {
+  lbEsc = Math.min(LB_MAX, Math.max(LB_MIN, nuevo));
+  if (lbEsc <= 1) { lbX = 0; lbY = 0; }
+  lbAplicar();
+}
+document.getElementById('lbMas').onclick = (e) => { e.stopPropagation(); lbZoom(lbEsc * 1.25); };
+document.getElementById('lbMenos').onclick = (e) => { e.stopPropagation(); lbZoom(lbEsc / 1.25); };
+document.getElementById('lbReset').onclick = (e) => { e.stopPropagation(); lbReset(); };
+(function () {
+  const ov = document.getElementById('lightboxOverlay');
+  const img = ov.querySelector('img');
+  ov.addEventListener('wheel', (e) => {
+    if (!ov.classList.contains('activa')) return;
+    e.preventDefault();
+    lbZoom(lbEsc * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+  }, { passive: false });
+  img.addEventListener('dblclick', (e) => { e.preventDefault(); lbEsc > 1 ? lbReset() : lbZoom(2.5); });
+  // Arrastrar para mover la imagen cuando está ampliada (mouse, dedo y lápiz) + pellizco con dos dedos.
+  const punt = new Map(); let ini = null, distIni = 0, escIni = 1;
+  img.addEventListener('pointerdown', (e) => {
+    punt.set(e.pointerId, { x: e.clientX, y: e.clientY }); lbMovio = false;
+    try { img.setPointerCapture(e.pointerId); } catch (err) {}
+    if (punt.size === 2) { const [a, b] = [...punt.values()]; distIni = Math.hypot(a.x - b.x, a.y - b.y); escIni = lbEsc; }
+    else ini = { x: e.clientX, y: e.clientY, bx: lbX, by: lbY };
+    if (lbEsc > 1) img.classList.add('arrastrando');
+  });
+  img.addEventListener('pointermove', (e) => {
+    if (!punt.has(e.pointerId)) return;
+    punt.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (punt.size === 2 && distIni) {
+      const [a, b] = [...punt.values()]; lbMovio = true;
+      lbZoom(escIni * Math.hypot(a.x - b.x, a.y - b.y) / distIni);
+    } else if (ini && lbEsc > 1) {
+      const dx = e.clientX - ini.x, dy = e.clientY - ini.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) lbMovio = true;
+      lbX = ini.bx + dx; lbY = ini.by + dy; lbAplicar();
+    }
+  });
+  const fin = (e) => { punt.delete(e.pointerId); img.classList.remove('arrastrando'); distIni = 0; ini = null; setTimeout(() => { lbMovio = false; }, 0); };
+  img.addEventListener('pointerup', fin); img.addEventListener('pointercancel', fin);
+  document.addEventListener('keydown', (e) => {
+    if (!ov.classList.contains('activa')) return;
+    if (e.key === 'Escape') cerrarLightbox();
+    else if (e.key === '+' || e.key === '=') lbZoom(lbEsc * 1.25);
+    else if (e.key === '-' || e.key === '_') lbZoom(lbEsc / 1.25);
+    else if (e.key === '0') lbReset();
+  });
+})();
+async function lbDescargar() {
+  if (!lbUrl) return;
+  await asegurarTokenArchivoFresco();
+  const url = conTokenArchivoVigente(lbUrl);
+  // Imágenes del cliente: el servidor firma la URL con "attachment" y el navegador
+  // la descarga directo (el bucket es de otro dominio, un fetch fallaría por CORS).
+  if (url.indexOf('/archivo-receta') !== -1) {
+    const a = document.createElement('a');
+    a.href = url + (url.indexOf('?') === -1 ? '?' : '&') + 'descargar=1';
+    a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    return;
+  }
+  // Nombre: el del archivo en la URL si lo tiene; si no, uno genérico con fecha.
+  let nombre = '';
+  try { nombre = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || ''); } catch (e) {}
+  if (!/\.(png|jpe?g|gif|webp|heic|bmp)$/i.test(nombre)) nombre = 'imagen-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const blob = await r.blob();
+    if (!/\.[a-z0-9]{3,4}$/i.test(nombre)) {
+      const ext = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic' })[blob.type] || 'jpg';
+      nombre += '.' + ext;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    // Si el navegador no deja leer la imagen (CORS), se descarga directo / se abre en otra pestaña.
+    const a = document.createElement('a');
+    a.href = url; a.download = nombre; a.target = '_blank'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+}
+document.getElementById('lbDescargar').onclick = (e) => { e.stopPropagation(); lbDescargar(); };
 document.getElementById('btnCerrarLightbox').onclick = cerrarLightbox;
 document.getElementById('lightboxOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'lightboxOverlay') cerrarLightbox();
+  if (e.target.id === 'lightboxOverlay' && !lbMovio) cerrarLightbox();
 });
 
 // ---- Tooltip del último mensaje sobre cada conversación del tablero ----
@@ -1122,6 +1528,7 @@ function actualizarTiemposPanel() {
 let etiquetas = [];
 let asesoresAdmin = [];
 let campanasCatalogo = [];
+let campanaEscuchada = null; // campaña de la conversación que se está viendo (para filtrar etiquetas de cierre)
 let respuestasRapidas = [];
 
 function formatearDuracion(segundos) {
@@ -1149,10 +1556,14 @@ document.getElementById('btnConectar').onclick = async () => {
   try {
     const resp = await fetch(`${urlBase}/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usuario, password }),
+      body: JSON.stringify({ usuario, password, activar_2fa: !!(document.getElementById('activar2fa') || {}).checked }),
     });
     if (!resp.ok) { alert('Usuario o contraseña incorrectos'); btn.disabled = false; btn.textContent = 'Ingresar'; return; }
     data = await resp.json();
+    if (data.requiere_2fa || data.requiere_enrolar) {
+      data = await sofi2fa(data, urlBase);
+      if (!data) { btn.disabled = false; btn.textContent = 'Ingresar'; return; }
+    }
     if (data.rol !== 'supervisor') { alert('Este usuario no tiene rol de supervisor'); btn.disabled = false; btn.textContent = 'Ingresar'; return; }
   } catch (e) {
     alert('No se pudo contactar al servidor'); btn.disabled = false; btn.textContent = 'Ingresar'; return;
@@ -1161,6 +1572,7 @@ document.getElementById('btnConectar').onclick = async () => {
   tokenGuardado = data.token;
   urlBaseGuardada = urlBase;
   cerradoManualmente = false;
+  cargarOutboxStaff(usuario);
   iniciarRenovacionTokenArchivo();
   document.getElementById('login').style.display = 'none';
   document.getElementById('barraConectado').classList.add('activa');
@@ -1191,6 +1603,15 @@ function conectarWs() {
     document.getElementById('estadoTexto').textContent = 'En línea';
     const btnSmsReset = document.getElementById('btnEnviarSms');
     if (btnSmsReset) { btnSmsReset.disabled = false; btnSmsReset.textContent = '📲 SMS'; }
+    // Si había una conversación abierta en vivo, el servidor olvida la escucha al
+    // caerse la conexión: se vuelve a registrar y se recupera lo ocurrido mientras tanto.
+    if (conversacionEscuchada) {
+      try {
+        ws.send(JSON.stringify({ type: 'escuchar_conversacion',
+                                 payload: { conversacion_id: Number(conversacionEscuchada), reconexion: true } }));
+      } catch (e) { /* el siguiente intento de reconexión lo reintenta */ }
+    }
+    vaciarOutboxStaff();   // reenvía lo que se escribió sin red
   };
   ws.onclose = (e) => {
     ws = null;
@@ -1232,6 +1653,17 @@ function conectarWs() {
           agregarMensajeEscucha(p.texto, p.emisor_tipo, null, p.ruta || null, { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
         }
       }
+    } else if (data.type === 'mensajes_leidos') {
+      // lector 'usuario' = el cliente leyó lo del asesor/supervisor; 'asesor' = el asesor leyó lo del cliente.
+      if (String(p.conversacion_id) === String(conversacionEscuchada)) {
+        const emisores = p.lector === 'asesor' ? ['usuario'] : ['asesor', 'supervisor'];
+        emisores.forEach(em => {
+          document.querySelectorAll(`#chatEscucha .msg.${em} .check-esc`).forEach(c => {
+            c.textContent = '✓✓';
+            c.classList.add('leido');
+          });
+        });
+      }
     } else if (data.type === 'mensaje_editado') {
       if (String(p.conversacion_id) === String(conversacionEscuchada)) {
         aplicarMensajeEditadoEscucha(p);
@@ -1261,9 +1693,11 @@ function conectarWs() {
           agregarMensajeEscucha(texto, m.emisor_tipo, m.enviado_en, esArchivo ? m.contenido : null, {
             mensajeId: m.id, respondidoA: m.respondido_a, editadoEn: m.editado_en,
             eliminadoEn: m.eliminado_en, eliminadoPor: m.eliminado_por, reacciones: m.reacciones,
+            leido: m.leido,
           });
         });
         chat.scrollTop = chat.scrollHeight;
+        campanaEscuchada = p.campana_id ?? null;
         banderaActual = p.bandera || null;
         actualizarBotonBandera();
         avisoInactividadActivoEscucha = p.aviso_inactividad_activo !== false;
@@ -1276,10 +1710,11 @@ function conectarWs() {
       }
     } else if (data.type === 'etiquetas_disponibles') {
       etiquetas = p.etiquetas || [];
+      if (p.campanas) campanasCatalogo = p.campanas;
       renderEtiquetas();
     } else if (data.type === 'respuestas_rapidas_disponibles') {
       respuestasRapidas = p.respuestas || [];
-      if (p.campanas) campanasCatalogo = p.campanas;
+      if (p.campanas) { campanasCatalogo = p.campanas; renderEtiquetas(); }
       renderRespuestasRapidas();
     } else if (data.type === 'aviso_inactividad_cambiado') {
       if (String(p.conversacion_id) === String(conversacionEscuchada)) {
@@ -1290,10 +1725,23 @@ function conectarWs() {
       document.getElementById('mensajeCierreInput').value = p.mensaje_cierre_conversacion || '';
       document.getElementById('mensajeBienvenidaInput').value = p.mensaje_bienvenida_asesor || '';
       document.getElementById('inactividadMinutosInput').value = p.inactividad_minutos || '5';
+    } else if (data.type === 'permisos_supervisor') {
+      aplicarPermisosSupervisor(p);
+    } else if (data.type === 'error_permiso') {
+      alert(p.motivo || 'No tienes permiso para esa acción.');
+    } else if (data.type === 'campanas_admin') {
+      campanasAdmin = p.campanas || [];
+      renderCampanasAdmin();
+    } else if (data.type === 'error_campanas') {
+      alert(p.motivo || 'No se pudo guardar la campaña.');
     } else if (data.type === 'error_configuracion') {
       alert(p.motivo || 'No se pudo guardar la configuración.');
+    } else if (data.type === 'resultado_archivo_sms') {
+      if (window.__resultadoArchivoSms) window.__resultadoArchivoSms(p);
     } else if (data.type === 'resultado_sms_invitacion') {
       if (window.__resultadoSmsInvitacion) window.__resultadoSmsInvitacion(p);
+    } else if (data.type === 'destinos_sms_directo') {
+      if (window.__destinosSmsDirecto) window.__destinosSmsDirecto(p);
     } else if (data.type === 'texto_sms_invitacion') {
       if (window.__textoSmsInvitacion) window.__textoSmsInvitacion(p);
     } else if (data.type === 'resultados_usuarios_sofi') {
@@ -1310,6 +1758,9 @@ function conectarWs() {
       renderResultadosBusqueda(p.resultados || []);
     } else if (data.type === 'detalle_conversacion') {
       renderDetalleConversacion(p.historial || []);
+    } else if (data.type === 'mensaje_propio_guardado') {
+      if (p.cid) { confirmarEntradaStaff(p.cid); quitarPendienteEscucha(p.cid); }
+      else { const ent = confirmarSinCid(p.conversacion_id); if (ent) quitarPendienteEscucha(ent.cid); }
     } else if (data.type === 'lista_asesores') {
       renderListaAsesoresTransferir(p.asesores || []);
     } else if (data.type === 'error_transferencia') {
@@ -1317,6 +1768,12 @@ function conectarWs() {
     } else if (data.type === 'horarios_actuales') {
       horariosActuales = p.campanas || [];
       renderHorarios();
+    } else if (data.type === 'feriados_actuales') {
+      feriadosActuales = p.feriados || [];
+      campanasFeriados = p.campanas || [];
+      renderFeriados();
+    } else if (data.type === 'error_feriados') {
+      alert(p.motivo || 'No se pudo guardar el feriado.');
     } else if (data.type === 'error_horarios') {
       alert(p.motivo || 'No se pudo guardar el horario.');
     } else if (data.type === 'error_asignacion_manual') {
@@ -1432,7 +1889,8 @@ function renderFiltroCampanas() {
   if (limpiar) limpiar.onclick = () => { filtroCampanas.clear(); guardarFiltroCampanas(); pintarTablero(); };
 }
 
-function pintarTablero() {
+function pintarTablero() { _pintarTablero(); actualizarBotonPausar(); }
+function _pintarTablero() {
   const tablero = document.getElementById('tablero');
   tablero.innerHTML = '';
   renderFiltroCampanas();
@@ -1569,9 +2027,13 @@ function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni
   // tienen sentido — no hay a quién transferirle, susurrarle, ni a quién
   // quitarle el control. "Responder directo" y "Cerrar" siguen disponibles.
   const hayAsesorAsignado = !!asignadoEnActual;
-  document.getElementById('btnTransferir').style.display = hayAsesorAsignado ? '' : 'none';
-  document.getElementById('btnSusurro').style.display = hayAsesorAsignado ? '' : 'none';
-  document.getElementById('btnControl').style.display = hayAsesorAsignado ? '' : 'none';
+  // 'important': el CSS de los botones usa display:inline-flex !important y pisaría un display:none normal.
+  const mostrarSi = (id, ok) => { const e = document.getElementById(id); if (!e) return;
+    if (ok) e.style.removeProperty('display'); else e.style.setProperty('display', 'none', 'important'); };
+  mostrarSi('btnTransferir', true);
+  mostrarSi('btnPausarConv', hayAsesorAsignado);
+  mostrarSi('btnSusurro', hayAsesorAsignado);
+  mostrarSi('btnControl', hayAsesorAsignado);
   document.querySelector('.bandera-selector').style.display = hayAsesorAsignado ? '' : 'none';
 
   cargarNotaCliente(conversacionId);
@@ -1752,6 +2214,25 @@ document.querySelectorAll('#banderaMenu .bandera-opcion').forEach(btn => {
   };
 });
 
+// ---- Pausar / reanudar la conversación escuchada (pasa a "Pausados" del asesor) ----
+function convEstaPausada(id) {
+  return !!document.querySelector(`.conv-mini.pausada[data-id="${id}"]`);
+}
+function actualizarBotonPausar() {
+  const b = document.getElementById('btnPausarConv');
+  if (!b) return;
+  const p = conversacionEscuchada && convEstaPausada(conversacionEscuchada);
+  b.textContent = p ? '▶ Reanudar' : '⏸ Pausar';
+  b.classList.toggle('pausada-activa', !!p);
+}
+document.getElementById('btnPausarConv').onclick = () => {
+  if (!conversacionEscuchada || !ws) return;
+  ws.send(JSON.stringify({
+    type: convEstaPausada(conversacionEscuchada) ? 'reanudar_conversacion' : 'pausar_conversacion',
+    payload: { conversacion_id: Number(conversacionEscuchada) },
+  }));
+};
+
 // ---- Transferir conversación a otro asesor ----
 
 document.getElementById('btnTransferir').onclick = () => {
@@ -1791,7 +2272,7 @@ function renderListaAsesoresTransferir(asesores) {
       item.onclick = () => {
         if (!conversacionEscuchada || !ws) return;
         ws.send(JSON.stringify({
-          type: 'transferir_conversacion',
+          type: asignadoEnActual ? 'transferir_conversacion' : 'asignar_conversacion_manual',
           payload: { conversacion_id: Number(conversacionEscuchada), asesor_destino_id: a.asesor_id },
         }));
         document.getElementById('modalTransferirOverlay').classList.remove('activa');
@@ -1804,7 +2285,7 @@ function renderListaAsesoresTransferir(asesores) {
 document.getElementById('btnCerrarConversacion').onclick = () => {
   if (!conversacionEscuchada) return;
   const select = document.getElementById('selectEtiquetaCierre');
-  const activas = etiquetas.filter(e => e.activo);
+  const activas = etiquetas.filter(e => e.activo && etiquetaAplicaACampana(e, campanaEscuchada));
   select.innerHTML = activas.length > 0
     ? activas.map(e => `<option value="${e.id}">${escapeHtml(e.nombre)}</option>`).join('')
     : '<option value="">(sin etiquetas configuradas)</option>';
@@ -2027,6 +2508,13 @@ function agregarMensajeEscucha(texto, emisorTipo, horaIso, ruta, extra) {
   const d = horaIso ? new Date(horaIso) : new Date();
   hora.textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   div.appendChild(hora);
+  // ✓ enviado / ✓✓ leído por la otra parte (cliente <-> asesor), igual que en el widget y el asesor.
+  if (extra.mensajeId && (emisorTipo === 'usuario' || emisorTipo === 'asesor' || emisorTipo === 'supervisor')) {
+    const check = document.createElement('span');
+    check.className = 'check-esc' + (extra.leido ? ' leido' : '');
+    check.textContent = extra.leido ? '✓✓' : '✓';
+    div.appendChild(check);
+  }
   pintarReaccionesEscucha(div, extra.reacciones);
 
   if (emisorTipo !== 'sistema' && extra.mensajeId) {
@@ -2120,6 +2608,29 @@ function aplicarMensajeEliminadoEscucha(p) {
   div.textContent = `🚫 Mensaje eliminado por ${p.eliminado_por || ''} — ${horaTxt}`;
 }
 
+
+// Caja de texto que crece con el contenido (salta de línea en vez de desplazar el texto
+// hacia la derecha). Reacciona al escribir y también a cambios por código (.value = ...).
+function hacerCrecer(el, maxPx) {
+  if (!el || el.dataset.crece) return;
+  el.dataset.crece = '1';
+  const ajustar = () => {
+    el.style.height = 'auto';
+    const alto = el.scrollHeight;
+    el.style.height = Math.min(alto, maxPx) + 'px';
+    el.style.overflowY = alto > maxPx ? 'auto' : 'hidden';
+  };
+  el.addEventListener('input', ajustar);
+  const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+  Object.defineProperty(el, 'value', {
+    get() { return desc.get.call(el); },
+    set(v) { desc.set.call(el, v); ajustar(); },
+    configurable: true,
+  });
+  ajustar();
+}
+hacerCrecer(document.getElementById('accionTexto'), 140);
+
 document.getElementById('btnSusurro').onclick = () => {
   const texto = document.getElementById('accionTexto').value.trim();
   if (!conversacionEscuchada || !texto || !ws) return;
@@ -2135,13 +2646,114 @@ document.getElementById('btnControl').onclick = () => {
   agregarMensajeEscucha('✋ Tomaste el control de la conversación', 'supervisor');
 };
 
+// ---- Envío fiable (como WhatsApp): lo que se escribe sin red NO se pierde ----
+// Cada envío lleva un "cid". Se guarda en una cola (también en el navegador, por si se recarga la
+// página) y se reenvía al reconectar; si el servidor ya lo había procesado responde "dup" y no se duplica.
+const CLAVE_OUTBOX_STAFF = 'sanitas_supervisor_outbox';
+const VIGENCIA_OUTBOX_STAFF_MS = 6 * 60 * 60 * 1000;
+let outboxStaff = [];
+let usuarioOutbox = '';
+function cargarOutboxStaff(usuario) {
+  usuarioOutbox = usuario || '';
+  let guardado = [];
+  try { guardado = JSON.parse(localStorage.getItem(CLAVE_OUTBOX_STAFF) || '[]'); } catch (e) {}
+  const limite = Date.now() - VIGENCIA_OUTBOX_STAFF_MS;
+  const enMemoria = new Set(outboxStaff.map(e => e.cid));
+  (Array.isArray(guardado) ? guardado : []).forEach(e => {
+    if (e && e.cid && e.obj && e.ts > limite && e.usuario === usuarioOutbox && !enMemoria.has(e.cid)) {
+      outboxStaff.push({ cid: e.cid, obj: e.obj, ts: e.ts, usuario: e.usuario, enviadoEn: 0 });
+    }
+  });
+}
+function guardarOutboxStaff() {
+  try {
+    localStorage.setItem(CLAVE_OUTBOX_STAFF, JSON.stringify(
+      outboxStaff.map(e => ({ cid: e.cid, obj: e.obj, ts: e.ts, usuario: e.usuario }))));
+  } catch (e) { /* sin almacenamiento: queda solo en memoria */ }
+}
+function enviarEntradaStaff(entrada) {
+  if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+  try { ws.send(JSON.stringify(entrada.obj)); } catch (e) { return; }
+  const marca = entrada.enviadoEn = Date.now();
+  // Si en 10 s el servidor no confirmó, la conexión está muerta aunque parezca abierta: se cierra
+  // para que reconecte y reenvíe.
+  setTimeout(() => {
+    if (entrada.enviadoEn === marca && outboxStaff.indexOf(entrada) !== -1 && ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.close(); } catch (e) { /* ya cerrada */ }
+    }
+  }, 10000);
+}
+function enviarFiable(tipo, payload) {
+  const cid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : String(Date.now()) + Math.random().toString(16).slice(2);
+  const entrada = { cid, obj: { type: tipo, payload: Object.assign({}, payload, { cid }) },
+                    ts: Date.now(), usuario: usuarioOutbox, enviadoEn: 0 };
+  outboxStaff.push(entrada);
+  guardarOutboxStaff();
+  enviarEntradaStaff(entrada);
+  return entrada;
+}
+// Servidor sin "cid" en la confirmación (versión anterior): se da por confirmado el envío más
+// antiguo de esa conversación que ya se mandó, para no reenviarlo en bucle.
+function confirmarSinCid(conversacionId) {
+  const e = outboxStaff.find(x => x.enviadoEn > 0 && String((x.obj.payload || {}).conversacion_id) === String(conversacionId));
+  return e ? confirmarEntradaStaff(e.cid) : null;
+}
+function vaciarOutboxStaff() { outboxStaff.slice().forEach(enviarEntradaStaff); }
+// Devuelve la entrada confirmada (o null si ya estaba confirmada).
+function confirmarEntradaStaff(cid) {
+  const i = outboxStaff.findIndex(e => e.cid === cid);
+  if (i === -1) return null;
+  const e = outboxStaff.splice(i, 1)[0];
+  guardarOutboxStaff();
+  return e;
+}
+window.addEventListener('online', () => {
+  if (typeof cerradoManualmente !== 'undefined' && cerradoManualmente) return;
+  if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch (e) {} }
+});
+window.addEventListener('online', () => {
+  if (!cerradoManualmente && tokenGuardado && !ws) { intentosReconexion = 0; conectarWs(); }
+});
+// Burbuja "pendiente" (🕓) de lo escrito sin red; se quita al confirmarse (el servidor lo reenvía luego como mensaje normal).
+function agregarPendienteEscucha(cid, texto) {
+  const chat = document.getElementById('chatEscucha');
+  if (!chat) return;
+  const div = document.createElement('div');
+  div.className = 'msg supervisor';
+  div.dataset.cidPendiente = cid;
+  div.style.opacity = '.7';
+  div.textContent = texto + ' 🕓';
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+function quitarPendienteEscucha(cid) {
+  document.querySelectorAll('[data-cid-pendiente="' + cid + '"]').forEach(e => e.remove());
+}
+
+// ---- Mostrar / ocultar el nombre del supervisor en el widget del cliente ----
+let mostrarNombreAlCliente = true;
+try { mostrarNombreAlCliente = localStorage.getItem('sup_mostrar_nombre') !== '0'; } catch (e) {}
+function pintarBotonNombre() {
+  const b = document.getElementById('btnMostrarNombre');
+  b.textContent = mostrarNombreAlCliente ? '👁 Nombre visible' : '🙈 Nombre oculto';
+  b.classList.toggle('pausada-activa', !mostrarNombreAlCliente);
+}
+document.getElementById('btnMostrarNombre').onclick = () => {
+  mostrarNombreAlCliente = !mostrarNombreAlCliente;
+  try { localStorage.setItem('sup_mostrar_nombre', mostrarNombreAlCliente ? '1' : '0'); } catch (e) {}
+  pintarBotonNombre();
+};
+pintarBotonNombre();
+
 document.getElementById('btnDirecto').onclick = () => {
   const texto = document.getElementById('accionTexto').value.trim();
-  if (!conversacionEscuchada || !texto || !ws) return;
-  ws.send(JSON.stringify({
-    type: 'responder_directo',
-    payload: { conversacion_id: Number(conversacionEscuchada), texto, respondido_a_id: respondiendoAIdEscucha },
-  }));
+  if (!conversacionEscuchada || !texto) return;
+  const sinRed = !(ws && ws.readyState === WebSocket.OPEN);
+  const entrada = enviarFiable('responder_directo', {
+    conversacion_id: Number(conversacionEscuchada), texto, respondido_a_id: respondiendoAIdEscucha,
+    mostrar_nombre: mostrarNombreAlCliente });
+  if (sinRed) agregarPendienteEscucha(entrada.cid, texto);
   // No se agrega localmente: el servidor lo reenvía vía notificar_escuchas
   // (estamos escuchando esta misma conversación), agregarlo acá también lo duplicaba.
   document.getElementById('accionTexto').value = '';
@@ -2177,10 +2789,7 @@ async function subirImagenDirecta(archivo) {
       throw new Error(`HTTP ${resp.status} ${detalle}`);
     }
     const data = await resp.json();
-    ws.send(JSON.stringify({
-      type: 'responder_directo_archivo',
-      payload: { conversacion_id: Number(idDestino), ruta: data.ruta },
-    }));
+    enviarFiable('responder_directo_archivo', { conversacion_id: Number(idDestino), ruta: data.ruta });
     // No se agrega localmente por la misma razón que responder_directo: el
     // servidor lo reenvía vía notificar_escuchas.
     cancelarRespuestaEscucha();
@@ -2261,11 +2870,34 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
   const texto = document.getElementById('smsInvitacionTexto');
   const contador = document.getElementById('smsInvitacionContador');
   const MAX_SMS = 160;
+  const EXTRA_ENLACE_DIRECTO = 8;   // el enlace con token es unos 8 caracteres más largo que el general
+  const selCampana = document.getElementById('smsInvitacionCampana');
+  const selAsesor = document.getElementById('smsInvitacionAsesor');
+  const asesorWrap = document.getElementById('smsInvitacionAsesorWrap');
+  let destinosSms = [];
+  window.__destinosSmsDirecto = (p) => {
+    destinosSms = (p && p.campanas) || [];
+    const previa = selCampana.value;
+    selCampana.innerHTML = '<option value="">Sin destino (enlace general: empieza con el bot)</option>' +
+      destinosSms.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+    if (previa && destinosSms.some(c => String(c.id) === previa)) selCampana.value = previa;
+    pintarAsesoresSms();
+  };
+  function pintarAsesoresSms() {
+    const c = destinosSms.find(x => String(x.id) === selCampana.value);
+    asesorWrap.style.display = c ? 'block' : 'none';
+    selAsesor.innerHTML = '<option value="">Cualquier asesor disponible de la campaña</option>' +
+      (c ? c.asesores.map(a => `<option value="${a.id}">${a.conectado ? '🟢' : '⚪'} ${escapeHtml(a.nombre)}${a.conectado ? '' : ' (desconectado)'}</option>`).join('') : '');
+    actualizarContador();
+  }
+  selCampana.addEventListener('change', pintarAsesoresSms);
+  function maxEfectivo() { return MAX_SMS - (selCampana.value ? EXTRA_ENLACE_DIRECTO : 0); }
   function actualizarContador() {
     const n = texto.value.length;
-    contador.textContent = n + ' / ' + MAX_SMS;
-    contador.style.color = n > MAX_SMS ? '#C0392B' : (n > MAX_SMS - 15 ? '#B7791F' : '');
-    btnEnviar.disabled = n === 0 || n > MAX_SMS;
+    const tope = maxEfectivo();
+    contador.textContent = n + ' / ' + tope + (selCampana.value ? ' (el enlace directo ocupa unos ' + EXTRA_ENLACE_DIRECTO + ' caracteres más)' : '');
+    contador.style.color = n > tope ? '#C0392B' : (n > tope - 15 ? '#B7791F' : '');
+    btnEnviar.disabled = n === 0 || n > tope;
   }
   texto.addEventListener('input', actualizarContador);
   window.__textoSmsInvitacion = (p) => { texto.value = p.texto || ''; actualizarContador(); };
@@ -2276,9 +2908,13 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     btnEnviar.disabled = false;
     btnEnviar.textContent = 'Enviar SMS';
     texto.value = '';
-    actualizarContador();
+    selCampana.value = '';
+    pintarAsesoresSms();
     overlay.style.display = 'flex';
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'texto_sms_invitacion', payload: {} }));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'texto_sms_invitacion', payload: {} }));
+      ws.send(JSON.stringify({ type: 'destinos_sms_directo', payload: {} }));
+    }
     setTimeout(() => input.focus(), 50);
   };
   document.getElementById('btnCancelarSmsInvitacion').onclick = () => { overlay.style.display = 'none'; };
@@ -2289,13 +2925,20 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) { mostrar('Sin conexión con el servidor. Intenta de nuevo en un momento.', false); return; }
     const msg = texto.value.trim();
     if (!msg) { mostrar('El mensaje no puede estar vacío.', false); return; }
-    if (msg.length > MAX_SMS) { mostrar('El mensaje supera los ' + MAX_SMS + ' caracteres (' + msg.length + ').', false); return; }
+    if (msg.length > maxEfectivo()) { mostrar('El mensaje supera los ' + maxEfectivo() + ' caracteres (' + msg.length + ').', false); return; }
     if (!msg.includes('https://sanitasperu.com/?ac=1')) { mostrar('El mensaje debe incluir el enlace https://sanitasperu.com/?ac=1', false); return; }
-    if (!confirm('¿Enviar el SMS de invitación al ' + celular + '?')) return;
+    const campanaId = selCampana.value ? Number(selCampana.value) : null;
+    const asesorId = campanaId && selAsesor.value ? Number(selAsesor.value) : null;
+    let destinoTxt = '';
+    if (campanaId) {
+      const nc = selCampana.options[selCampana.selectedIndex].textContent;
+      destinoTxt = '\n\nDestino: ' + nc + ' — ' + (asesorId ? selAsesor.options[selAsesor.selectedIndex].textContent.replace(/^[^\s]+\s/, '') : 'cualquier asesor disponible');
+    }
+    if (!confirm('¿Enviar el SMS de invitación al ' + celular + '?' + destinoTxt)) return;
     btnEnviar.disabled = true;
     btnEnviar.textContent = 'Enviando...';
     mostrar('', true);
-    ws.send(JSON.stringify({ type: 'enviar_sms_invitacion', payload: { celular, texto: msg } }));
+    ws.send(JSON.stringify({ type: 'enviar_sms_invitacion', payload: { celular, texto: msg, campana_id: campanaId, asesor_destino_id: asesorId } }));
   }
   btnEnviar.onclick = enviarInvitacion;
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarInvitacion(); });
@@ -2308,6 +2951,53 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     else { mostrar(p.motivo || 'No se pudo enviar el SMS.', false); }
   };
 })();
+
+// ---- Enviar un archivo por SMS: PDF/imagen -> enlace único que abre el webchat con el archivo ----
+(function iniciarArchivoSms() {
+  const overlay = document.getElementById('modalArchivoSmsOverlay');
+  const input = document.getElementById('archivoSmsCelular');
+  const archivoInput = document.getElementById('archivoSmsArchivo');
+  const estado = document.getElementById('archivoSmsEstado');
+  const btnEnviar = document.getElementById('btnEnviarArchivoSms');
+  const mostrar = (txt, ok) => { estado.textContent = txt; estado.style.color = ok ? '#197A54' : '#C0392B'; };
+  document.getElementById('btnArchivoSms').onclick = () => {
+    input.value = ''; archivoInput.value = ''; mostrar('', true);
+    btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar archivo';
+    overlay.style.display = 'flex';
+    setTimeout(() => input.focus(), 50);
+  };
+  document.getElementById('btnCancelarArchivoSms').onclick = () => { overlay.style.display = 'none'; };
+  btnEnviar.onclick = async () => {
+    const celular = input.value.replace(/\D/g, '');
+    if (!/^(51)?9\d{8}$/.test(celular)) { mostrar('Escribe un celular válido de 9 dígitos que empiece con 9.', false); return; }
+    const archivo = archivoInput.files[0];
+    if (!archivo) { mostrar('Elige el archivo (PDF o imagen) que quieres enviar.', false); return; }
+    if (archivo.type !== 'application/pdf' && !(archivo.type || '').startsWith('image/')) { mostrar('Solo se permite PDF o imagen.', false); return; }
+    if (archivo.size > 10 * 1024 * 1024) { mostrar('El archivo supera los 10 MB.', false); return; }
+    if (!ws || ws.readyState !== WebSocket.OPEN) { mostrar('Sin conexión con el servidor. Intenta de nuevo en un momento.', false); return; }
+    if (!confirm('¿Enviar "' + archivo.name + '" al ' + celular + ' por SMS?')) return;
+    btnEnviar.disabled = true; btnEnviar.textContent = 'Subiendo...'; mostrar('', true);
+    try {
+      const formData = new FormData();
+      formData.append('file', archivo, archivo.name);
+      const resp = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: formData, headers: { Authorization: `Bearer ${tokenGuardado}` } });
+      if (!resp.ok) throw new Error('No se pudo subir el archivo (HTTP ' + resp.status + ').');
+      const data = await resp.json();
+      if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Se perdió la conexión con el servidor. Intenta de nuevo.');
+      btnEnviar.textContent = 'Enviando SMS...';
+      ws.send(JSON.stringify({ type: 'enviar_archivo_sms', payload: { celular, ruta: data.ruta, nombre: archivo.name } }));
+    } catch (e) {
+      btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar archivo';
+      mostrar(e.message || 'No se pudo enviar el archivo.', false);
+    }
+  };
+  window.__resultadoArchivoSms = (p) => {
+    btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar archivo';
+    if (p.ok) { mostrar('✅ SMS enviado. Puedes enviar otro archivo.', true); input.value = ''; archivoInput.value = ''; input.focus(); }
+    else { mostrar(p.motivo || 'No se pudo enviar el archivo.', false); }
+  };
+})();
+
 
 
 // ---- Mantenimiento de usuarios (tabla sofi_usuarios) ----------------------
@@ -2575,22 +3265,46 @@ document.getElementById('btnCerrarModalEtiquetas').onclick = () => {
   document.getElementById('modalOverlay').classList.remove('activa');
 };
 
+// Una etiqueta sin campañas vale para todas; con campañas, solo para esas.
+function etiquetaAplicaACampana(e, campanaId) {
+  const ids = e.campana_ids || [];
+  if (!ids.length) return true;
+  return campanaId != null && ids.includes(Number(campanaId));
+}
+
+function checksCampanas(seleccionadas) {
+  if (!campanasCatalogo.length) return '<span class="todas">Todas las campañas</span>';
+  return '<span class="todas">Campañas:</span>' + campanasCatalogo.map(c =>
+    `<label><input type="checkbox" value="${c.id}" ${seleccionadas.includes(c.id) ? 'checked' : ''} /> ${escapeHtml(c.nombre)}</label>`
+  ).join('') + '<span class="todas" title="Sin ninguna marcada, la etiqueta aparece en todas las campañas">(ninguna = todas)</span>';
+}
+
+function campanasMarcadas(contenedor) {
+  return Array.from(contenedor.querySelectorAll('input[type=checkbox]:checked')).map(i => Number(i.value));
+}
+
 function renderEtiquetas() {
   const lista = document.getElementById('listaEtiquetas');
   lista.innerHTML = '';
   etiquetas.forEach(e => {
+    const bloque = document.createElement('div');
+    bloque.className = 'etiqueta-bloque';
     const fila = document.createElement('div');
     fila.className = 'etiqueta-fila' + (e.activo ? '' : ' inactiva');
     fila.innerHTML = `
       <input type="text" value="${escapeHtml(e.nombre)}" data-id="${e.id}" />
-      <button class="chico gris" data-accion="guardar">💾</button>
+      <button class="chico gris" data-accion="guardar" title="Guardar nombre y campañas">💾</button>
       <button class="chico ${e.activo ? 'rojo' : ''}" data-accion="toggle">${e.activo ? '🚫' : '✅'}</button>
     `;
+    const campanas = document.createElement('div');
+    campanas.className = 'etiqueta-campanas';
+    campanas.innerHTML = checksCampanas(e.campana_ids || []);
     const input = fila.querySelector('input');
     fila.querySelector('[data-accion="guardar"]').onclick = () => {
       const nuevoNombre = input.value.trim();
       if (!nuevoNombre) return;
-      ws.send(JSON.stringify({ type: 'editar_etiqueta', payload: { id: e.id, nombre: nuevoNombre } }));
+      ws.send(JSON.stringify({ type: 'editar_etiqueta',
+        payload: { id: e.id, nombre: nuevoNombre, campana_ids: campanasMarcadas(campanas) } }));
     };
     fila.querySelector('[data-accion="toggle"]').onclick = () => {
       if (e.activo) {
@@ -2599,15 +3313,23 @@ function renderEtiquetas() {
         ws.send(JSON.stringify({ type: 'editar_etiqueta', payload: { id: e.id, activo: true } }));
       }
     };
-    lista.appendChild(fila);
+    bloque.appendChild(fila);
+    bloque.appendChild(campanas);
+    lista.appendChild(bloque);
   });
+  const nuevas = document.getElementById('nuevaEtiquetaCampanas');
+  if (nuevas) {
+    const previas = campanasMarcadas(nuevas);
+    nuevas.innerHTML = checksCampanas(previas);
+  }
 }
 
 document.getElementById('btnAgregarEtiqueta').onclick = () => {
   const input = document.getElementById('nuevaEtiquetaInput');
   const nombre = input.value.trim();
   if (!nombre || !ws) return;
-  ws.send(JSON.stringify({ type: 'crear_etiqueta', payload: { nombre } }));
+  const nuevas = document.getElementById('nuevaEtiquetaCampanas');
+  ws.send(JSON.stringify({ type: 'crear_etiqueta', payload: { nombre, campana_ids: campanasMarcadas(nuevas) } }));
   input.value = '';
 };
 
@@ -2674,9 +3396,177 @@ document.getElementById('btnAgregarRespuestaRapida').onclick = () => {
   cuerpoInput.value = '';
 };
 
+// ---- Reporte de conversaciones por asesor (Excel para auditoría) ----
+
+let repRango = 'hoy';
+
+function limaHoyISO() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date()); // YYYY-MM-DD
+}
+function isoMasDias(iso, dias) {
+  const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+function rangoVista(rango) {
+  const hoy = limaHoyISO();
+  if (rango === 'hoy') return [hoy, hoy];
+  if (rango === 'ayer') { const a = isoMasDias(hoy, -1); return [a, a]; }
+  if (rango === 'semana') return [isoMasDias(hoy, -6), hoy];
+  if (rango === 'mes_actual') return [hoy.slice(0, 8) + '01', hoy];
+  if (rango === 'mes_pasado') {
+    const primero = hoy.slice(0, 8) + '01';
+    const ultimo = isoMasDias(primero, -1);
+    return [ultimo.slice(0, 8) + '01', ultimo];
+  }
+  return [document.getElementById('repDesde').value, document.getElementById('repHasta').value];
+}
+function fechaCorta(iso) { return iso ? iso.split('-').reverse().join('/') : '—'; }
+
+function actualizarTextoRangoReporte() {
+  const [d, h] = rangoVista(repRango);
+  document.getElementById('repRangoTexto').textContent =
+    repRango === 'personalizado' && (!d || !h) ? 'Elige las dos fechas.' :
+    (d === h ? `Día ${fechaCorta(d)}` : `Del ${fechaCorta(d)} al ${fechaCorta(h)}`) + ' (hora de Lima)';
+}
+
+document.querySelectorAll('#repPeriodos button').forEach(b => {
+  b.onclick = () => {
+    repRango = b.dataset.rango;
+    document.querySelectorAll('#repPeriodos button').forEach(x => x.classList.toggle('sel', x === b));
+    document.getElementById('repPersonalizado').classList.toggle('visible', repRango === 'personalizado');
+    actualizarTextoRangoReporte();
+  };
+});
+['repDesde', 'repHasta'].forEach(id => document.getElementById(id).onchange = actualizarTextoRangoReporte);
+
+function mostrarErrorReporte(texto) {
+  const e = document.getElementById('repError');
+  e.textContent = texto || '';
+  e.classList.toggle('visible', !!texto);
+}
+
+document.getElementById('btnReporte').onclick = async () => {
+  mostrarErrorReporte('');
+  const hoy = limaHoyISO();
+  document.getElementById('repDesde').value = document.getElementById('repDesde').value || hoy;
+  document.getElementById('repHasta').value = document.getElementById('repHasta').value || hoy;
+  actualizarTextoRangoReporte();
+  document.getElementById('modalReporteOverlay').classList.add('activa');
+  try {
+    const r = await fetch(`${urlBaseGuardada}/supervisor/reporte-opciones`, { headers: { Authorization: `Bearer ${tokenGuardado}` } });
+    if (!r.ok) throw new Error();
+    const o = await r.json();
+    const selA = document.getElementById('repAsesor'), selC = document.getElementById('repCampana');
+    const vA = selA.value, vC = selC.value;
+    selA.innerHTML = '<option value="">Todos los asesores</option>' +
+      (o.asesores || []).map(a => `<option value="${a.id}">${escapeHtml(a.nombre || '')}${a.activo ? '' : ' (inactivo)'}</option>`).join('');
+    selC.innerHTML = '<option value="">Todas las campañas</option>' +
+      (o.campanas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nombre || c.codigo)}</option>`).join('');
+    selA.value = vA; selC.value = vC;
+  } catch (e) { /* los filtros quedan en "Todos"; la descarga sigue funcionando */ }
+};
+document.getElementById('btnCerrarModalReporte').onclick = () => {
+  document.getElementById('modalReporteOverlay').classList.remove('activa');
+};
+
+document.getElementById('btnDescargarReporte').onclick = async () => {
+  const btn = document.getElementById('btnDescargarReporte');
+  mostrarErrorReporte('');
+  const q = new URLSearchParams({ rango: repRango });
+  if (repRango === 'personalizado') {
+    const [d, h] = rangoVista('personalizado');
+    if (!d || !h) { mostrarErrorReporte('Elige las dos fechas del periodo.'); return; }
+    q.set('desde', d); q.set('hasta', h);
+  }
+  const a = document.getElementById('repAsesor').value, c = document.getElementById('repCampana').value;
+  if (a) q.set('asesor_id', a);
+  if (c) q.set('campana_id', c);
+  q.set('transcripcion', document.getElementById('repTranscripcion').checked ? 'true' : 'false');
+  q.set('incluir_bot', document.getElementById('repSoloBot').checked ? 'true' : 'false');
+
+  const textoOriginal = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Generando reporte...';
+  try {
+    const r = await fetch(`${urlBaseGuardada}/supervisor/reporte-conversaciones?${q}`, { headers: { Authorization: `Bearer ${tokenGuardado}` } });
+    if (!r.ok) {
+      let detalle = 'No se pudo generar el reporte.';
+      try { detalle = (await r.json()).detail || detalle; } catch (e) {}
+      mostrarErrorReporte(detalle);
+      return;
+    }
+    const blob = await r.blob();
+    const m = /filename="?([^";]+)"?/.exec(r.headers.get('Content-Disposition') || '');
+    const enlace = document.createElement('a');
+    enlace.href = URL.createObjectURL(blob);
+    enlace.download = m ? m[1] : 'reporte_conversaciones.xlsx';
+    document.body.appendChild(enlace); enlace.click(); enlace.remove();
+    setTimeout(() => URL.revokeObjectURL(enlace.href), 10000);
+  } catch (e) {
+    mostrarErrorReporte('No se pudo descargar el reporte. Revisa tu conexión e inténtalo de nuevo.');
+  } finally {
+    btn.disabled = false; btn.textContent = textoOriginal;
+  }
+};
+
 // ---- Horario de atención ----
 
+let feriadosActuales = [];
+let campanasFeriados = [];
+
+function fechaLargaFeriado(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function renderFeriados() {
+  const lista = document.getElementById('listaFeriados');
+  lista.innerHTML = '';
+  if (!feriadosActuales.length) {
+    lista.innerHTML = '<div style="color:var(--texto-suave);font-size:12.5px;padding:2px 0 6px;">No hay feriados próximos configurados.</div>';
+  }
+  feriadosActuales.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'feriado-item';
+    div.innerHTML = `
+      <div class="info">
+        <div><span class="fecha">${escapeHtml(fechaLargaFeriado(f.fecha))}</span>${f.descripcion ? ' · ' + escapeHtml(f.descripcion) : ''}</div>
+        <div class="camps">Sin atención: ${escapeHtml(f.campanas.map(c => c.nombre || c.codigo).join(', '))}</div>
+        ${f.mensaje ? `<div class="msg">“${escapeHtml(f.mensaje)}”</div>` : ''}
+      </div>
+      <button type="button">Quitar</button>`;
+    div.querySelector('button').onclick = () => {
+      if (!confirm('¿Quitar este feriado? Las campañas volverán a atender con su horario normal ese día.')) return;
+      if (ws) ws.send(JSON.stringify({ type: 'eliminar_feriados', payload: { ids: f.ids } }));
+    };
+    lista.appendChild(div);
+  });
+  const cont = document.getElementById('feriadoCampanas');
+  const marcadas = new Set([...cont.querySelectorAll('input:checked')].map(i => i.value));
+  cont.innerHTML = '';
+  campanasFeriados.forEach(c => {
+    const l = document.createElement('label');
+    l.innerHTML = `<input type="checkbox" value="${c.id}" ${marcadas.has(String(c.id)) ? 'checked' : ''} /> ${escapeHtml(c.nombre || c.codigo)}`;
+    cont.appendChild(l);
+  });
+}
+
+document.getElementById('btnAgregarFeriado').onclick = () => {
+  const fecha = document.getElementById('feriadoFecha').value;
+  const campanaIds = [...document.querySelectorAll('#feriadoCampanas input:checked')].map(i => Number(i.value));
+  if (!fecha) { alert('Elige la fecha del feriado.'); return; }
+  if (!campanaIds.length) { alert('Marca al menos una campaña que no atenderá ese día.'); return; }
+  if (ws) ws.send(JSON.stringify({ type: 'crear_feriado', payload: {
+    fecha, campana_ids: campanaIds,
+    descripcion: document.getElementById('feriadoDescripcion').value,
+    mensaje: document.getElementById('feriadoMensaje').value,
+  } }));
+  document.getElementById('feriadoDescripcion').value = '';
+  document.getElementById('feriadoMensaje').value = '';
+  document.querySelectorAll('#feriadoCampanas input').forEach(i => { i.checked = false; });
+};
+
 document.getElementById('btnHorarios').onclick = () => {
+  if (ws) ws.send(JSON.stringify({ type: 'listar_feriados', payload: {} }));
   if (ws) ws.send(JSON.stringify({ type: 'listar_horarios', payload: {} }));
   document.getElementById('modalHorariosOverlay').classList.add('activa');
 };
@@ -2806,6 +3696,94 @@ function renderCola() {
   });
 }
 
+// ---- Niveles de supervisor ----
+let campanasAdmin = [];
+function aplicarVerComo(p) {
+  const lbl = document.getElementById('lblVerComo'), sel = document.getElementById('selVerComo');
+  if (!lbl || !sel) return;
+  if (!p.puede_ver_como) { lbl.style.display = 'none'; return; }
+  const actual = (p.ver_como || [])[0];
+  sel.innerHTML = '<option value="">Todas las campañas (máximo)</option>' +
+    (p.campanas_todas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+  sel.value = actual ? String(actual) : '';
+  lbl.style.display = 'inline-flex';
+  lbl.style.color = actual ? '#b45309' : '';
+  sel.onchange = () => {
+    const v = sel.value;
+    if (ws) ws.send(JSON.stringify({ type: 'ver_como', payload: { campana_ids: v ? [parseInt(v, 10)] : [] } }));
+  };
+}
+
+function aplicarPermisosSupervisor(p) {
+  aplicarVerComo(p);
+  const limitado = !p.maximo;
+  document.body.classList.toggle('sup-limitado', limitado);
+  const est = document.getElementById('estadoTexto');
+  if (est && limitado) est.textContent = (p.puede_ver_como ? 'Viendo como supervisor de: ' : 'En línea · Supervisor de campaña: ') + ((p.campanas || []).join(', ') || 'sin campañas asignadas');
+  else if (est && p.puede_ver_como && /^Viendo como/.test(est.textContent)) est.textContent = 'En línea';
+  if (limitado && !p.puede_ver_como && !(p.campanas || []).length) {
+    alert('Todavía no tienes campañas asignadas. Pídele al supervisor máximo que te asigne las que vas a supervisar.');
+  }
+}
+
+// ---- Campañas (solo supervisor máximo) ----
+const DIAS_CAMPANA = [['Lunes a viernes', [0,1,2,3,4], '08:00', '18:00'], ['Sábado', [5], '08:00', '14:00'], ['Domingo', [6], '', '']];
+function renderFormHorarioCampana() {
+  document.getElementById('campHorario').innerHTML = DIAS_CAMPANA.map((d, i) => `
+    <div class="camp-horario">
+      <span>${d[0]}</span>
+      <input type="time" data-grupo="${i}" data-campo="ini" value="${d[2]}" />
+      <input type="time" data-grupo="${i}" data-campo="fin" value="${d[3]}" />
+    </div>`).join('');
+}
+function renderCampanasAdmin() {
+  const cont = document.getElementById('listaCampanasAdmin');
+  cont.innerHTML = '';
+  if (!campanasAdmin.length) { cont.innerHTML = '<div class="nota-nivel" style="text-align:center;padding:10px">Aún no hay campañas.</div>'; return; }
+  campanasAdmin.forEach(c => {
+    const fila = document.createElement('div');
+    fila.className = 'camp-fila' + (c.activo ? '' : ' inactiva');
+    fila.innerHTML = `
+      <div style="flex:1;min-width:0">
+        <input type="text" value="${escapeHtml(c.nombre)}" maxlength="80" />
+        <small>código: ${escapeHtml(c.codigo)} · ${c.asesores} asesor(es)${c.activo ? '' : ' · desactivada'}</small>
+      </div>
+      <button class="chico" data-a="guardar" title="Guardar el nombre">💾</button>
+      <button class="chico ${c.activo ? 'rojo' : ''}" data-a="toggle">${c.activo ? 'Desactivar' : 'Activar'}</button>`;
+    fila.querySelector('[data-a="guardar"]').onclick = () => {
+      const nombre = fila.querySelector('input').value.trim();
+      ws.send(JSON.stringify({ type: 'editar_campana', payload: { id: c.id, nombre } }));
+    };
+    fila.querySelector('[data-a="toggle"]').onclick = () => {
+      if (c.activo && !confirm('Si desactivas "' + c.nombre + '" deja de aparecer en horarios y selectores. Las conversaciones ya registradas se conservan. ¿Continuar?')) return;
+      ws.send(JSON.stringify({ type: 'editar_campana', payload: { id: c.id, activo: !c.activo } }));
+    };
+    cont.appendChild(fila);
+  });
+}
+document.getElementById('btnCampanas').onclick = () => {
+  renderFormHorarioCampana();
+  if (ws) ws.send(JSON.stringify({ type: 'listar_campanas_admin', payload: {} }));
+  document.getElementById('modalCampanasOverlay').classList.add('activa');
+};
+document.getElementById('btnCerrarModalCampanas').onclick = () => {
+  document.getElementById('modalCampanasOverlay').classList.remove('activa');
+};
+document.getElementById('btnCrearCampana').onclick = () => {
+  const nombre = document.getElementById('campNombre').value.trim();
+  if (nombre.length < 3) { alert('Escribe el nombre de la campaña.'); return; }
+  const dias = [];
+  DIAS_CAMPANA.forEach((d, i) => {
+    const ini = document.querySelector(`#campHorario [data-grupo="${i}"][data-campo="ini"]`).value;
+    const fin = document.querySelector(`#campHorario [data-grupo="${i}"][data-campo="fin"]`).value;
+    if (ini && fin) d[1].forEach(n => dias.push({ dia_semana: n, hora_inicio: ini, hora_fin: fin, activo: true }));
+  });
+  ws.send(JSON.stringify({ type: 'crear_campana', payload: {
+    nombre, mensaje_fuera_horario: document.getElementById('campMensaje').value.trim(), dias } }));
+  document.getElementById('campNombre').value = '';
+  document.getElementById('campMensaje').value = '';
+};
+
 // ---- Mantenimiento de asesores ----
 
 document.getElementById('btnAsesoresAdmin').onclick = () => {
@@ -2839,12 +3817,14 @@ function renderAsesoresAdmin() {
         </select>
         <input type="number" class="cupo-admin" value="${a.cupo_maximo}" min="1" data-campo="cupo" title="Cupo máximo" />
       </div>
-      <div style="font-size:11px;color:var(--texto-suave);">usuario: ${escapeHtml(a.usuario)}</div>
-      <div class="campanas-check">${campanasHtml}</div>
+      <div style="font-size:11px;color:var(--texto-suave);">usuario: ${escapeHtml(a.usuario)}${a.dosfa ? ' · 🔐 2FA activo' : ''}${a.es_maximo ? ' · ⭐ Supervisor máximo' : ''}</div>
+      ${a.es_maximo ? '<div class="nota-nivel">Ve y gestiona todas las campañas. Su rol y estado no se pueden cambiar desde aquí.</div>' : (a.rol === 'supervisor' ? '<div class="nota-nivel">Supervisor de campaña: solo ve y gestiona las campañas marcadas.</div>' : '')}
+      <div class="campanas-check" ${a.es_maximo ? 'style="display:none"' : ''}>${campanasHtml}</div>
       <div class="fila-botones">
         <button class="chico" data-accion="guardar">💾 Guardar</button>
         <button class="chico gris" data-accion="reset">🔑 Resetear clave</button>
-        <button class="chico ${a.activo ? 'rojo' : ''}" data-accion="toggle">${a.activo ? 'Desactivar' : 'Activar'}</button>
+        ${a.dosfa ? '<button class="chico gris" data-accion="quitar2fa">🔐 Quitar 2FA</button>' : ''}
+        ${a.es_maximo ? '' : `<button class="chico ${a.activo ? 'rojo' : ''}" data-accion="toggle">${a.activo ? 'Desactivar' : 'Activar'}</button>`}
       </div>
     `;
     fila.querySelector('[data-accion="guardar"]').onclick = () => {
@@ -2863,7 +3843,13 @@ function renderAsesoresAdmin() {
       ws.send(JSON.stringify({ type: 'resetear_password_asesor', payload: { asesor_id: a.asesor_id, password: nueva } }));
       alert('Contraseña actualizada.');
     };
-    fila.querySelector('[data-accion="toggle"]').onclick = () => {
+    const b2fa = fila.querySelector('[data-accion="quitar2fa"]');
+    if (b2fa) b2fa.onclick = () => {
+      if (!confirm(`¿Quitar la verificación en dos pasos de ${a.usuario}? Tendrá que configurarla de nuevo.`)) return;
+      ws.send(JSON.stringify({ type: 'quitar_2fa_asesor', payload: { asesor_id: a.asesor_id } }));
+    };
+    const btnToggle = fila.querySelector('[data-accion="toggle"]');
+    if (btnToggle) btnToggle.onclick = () => {
       ws.send(JSON.stringify({ type: 'editar_asesor', payload: { asesor_id: a.asesor_id, activo: !a.activo } }));
     };
     lista.appendChild(fila);
@@ -2903,6 +3889,18 @@ document.getElementById('btnCrearAsesor').onclick = () => {
   var b = document.body; b.classList.add('sofi');
   var $ = function (id) { return document.getElementById(id); };
   var login = $('login');
+  // Aviso en la parte superior del login (texto editable desde /editor -> "banner_login"; vacío = sin aviso)
+  if (login) {
+    fetch('/consola/aviso', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var texto = d && (d.texto || '').trim(); if (!texto) return;
+      try { if (sessionStorage.getItem('sofi_banner_cerrado') === texto) return; } catch (e) {}
+      var bar = document.createElement('div'); bar.className = 'sofi-banner-login'; bar.setAttribute('role', 'status');
+      var t = document.createElement('span'); t.textContent = texto;
+      var x = document.createElement('button'); x.type = 'button'; x.setAttribute('aria-label', 'Cerrar aviso'); x.title = 'Cerrar'; x.textContent = '✕';
+      x.onclick = function () { bar.remove(); try { sessionStorage.setItem('sofi_banner_cerrado', texto); } catch (e) {} };
+      bar.appendChild(t); bar.appendChild(x); login.insertBefore(bar, login.firstChild);
+    }).catch(function () {});
+  }
   function iniciales(n) { var p = (n || '').trim().split(/\s+/).filter(Boolean); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
   function sync() {
     var conectado = login && login.style.display === 'none';
@@ -2958,6 +3956,283 @@ document.getElementById('btnCrearAsesor').onclick = () => {
   }
 })();
 
+</script>
+<script id="sofi-2fa">
+/* Verificación en dos pasos (TOTP): ventana que pide el código de la app autenticadora o,
+   si hace falta, guía la configuración (QR + códigos de respaldo). Devuelve los datos de
+   sesión ({token, ...}) o null si la persona cancela. */
+window.sofi2fa = function (data, urlBase) {
+  return new Promise(function (resolve) {
+    var AZUL = '#0A2540', TEAL = '#0A7E8C';
+    var fondo = document.createElement('div');
+    fondo.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,30,.55);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+    var caja = document.createElement('div');
+    caja.style.cssText = 'background:#fff;color:' + AZUL + ';border-radius:16px;padding:24px;width:380px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)';
+    fondo.appendChild(caja);
+    document.body.appendChild(fondo);
+
+    var BTN = 'width:100%;padding:11px;border:0;border-radius:10px;background:' + AZUL + ';color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit';
+    var LINK = 'background:none;border:0;color:#5b6b7b;font-size:12.5px;cursor:pointer;margin-top:12px;text-decoration:underline;font-family:inherit';
+    var INPUT = 'width:100%;box-sizing:border-box;padding:12px;border:1.5px solid #d5dde5;border-radius:10px;font-size:22px;letter-spacing:.3em;text-align:center;font-family:ui-monospace,Menlo,monospace;margin:10px 0';
+
+    function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+    function cerrar(valor) { document.body.removeChild(fondo); resolve(valor); }
+    function msg(t) { var m = caja.querySelector('.err'); if (m) m.textContent = t || ''; }
+    async function llamar(ruta, cuerpo) {
+      var r = await fetch(urlBase + ruta, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) });
+      var j = {}; try { j = await r.json(); } catch (e) {}
+      return { ok: r.ok, status: r.status, j: j };
+    }
+    function cabecera(titulo, texto) {
+      return '<div style="font-size:30px;line-height:1">🔐</div><h3 style="margin:8px 0 4px;font-size:18px">' + titulo + '</h3>' +
+             '<p style="margin:0;font-size:13.5px;line-height:1.5;color:#4a5b6c">' + texto + '</p>';
+    }
+    var ERR = '<div class="err" style="color:#C0392B;font-size:13px;min-height:18px;margin-top:6px" role="alert"></div>';
+
+    function pantallaCodigo() {
+      caja.innerHTML = cabecera('Verificación en dos pasos', 'Ingresa el código de 6 dígitos que muestra tu aplicación autenticadora.') +
+        '<input class="cod" style="' + INPUT + '" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="000000" />' + ERR +
+        '<button class="ok" style="' + BTN + '">Verificar</button>' +
+        '<div style="text-align:center"><button class="resp" style="' + LINK + '">Usar un código de respaldo</button> ' +
+        '<button class="no" style="' + LINK + '">Cancelar</button></div>' +
+        '<p style="margin:12px 0 0;font-size:11.5px;color:#7a8896;line-height:1.4">¿Perdiste tu celular? Pide a tu supervisor que quite la verificación de tu cuenta.</p>';
+      var cod = caja.querySelector('.cod'); cod.focus();
+      var enviando = false;
+      async function enviar() {
+        if (enviando) return;
+        var v = cod.value.trim(); if (!v) return;
+        enviando = true; msg('');
+        try {
+          var r = await llamar('/auth/2fa/verificar', { pre_token: data.pre_token, codigo: v });
+          if (r.ok) return cerrar(r.j);
+          msg(r.status === 429 ? (r.j.detail || 'Demasiados intentos. Espera unos minutos.') : r.status === 401 && /venci/.test(r.j.detail || '') ? 'La sesión venció. Ingresa de nuevo.' : 'Código incorrecto o ya usado.');
+          if (r.status === 401 && /venci/.test(r.j.detail || '')) setTimeout(function () { cerrar(null); }, 1500);
+        } catch (e) { msg('No se pudo contactar al servidor.'); }
+        enviando = false; cod.select();
+      }
+      caja.querySelector('.ok').onclick = enviar;
+      cod.onkeydown = function (e) { if (e.key === 'Enter') enviar(); };
+      caja.querySelector('.resp').onclick = function () { cod.placeholder = 'xxxx-xxxxxx'; cod.style.fontSize = '17px'; cod.value = ''; cod.focus(); msg(''); };
+      caja.querySelector('.no').onclick = function () { cerrar(null); };
+    }
+
+    async function pantallaEnrolar() {
+      caja.innerHTML = cabecera('Configura tu verificación en dos pasos', data.obligatorio
+        ? 'Tu cuenta requiere este paso de seguridad para poder ingresar.' : 'Protege tu cuenta con un código que cambia cada 30 segundos.') +
+        '<p style="font-size:13px;color:#4a5b6c">Preparando…</p>' + ERR;
+      var r;
+      try { r = await llamar('/auth/2fa/iniciar', { pre_token: data.pre_token }); } catch (e) { r = { ok: false, j: {} }; }
+      if (!r.ok) { caja.innerHTML = cabecera('No se pudo continuar', esc(r.j.detail || 'Ingresa de nuevo.')) + '<button class="no" style="' + BTN + ';margin-top:14px">Cerrar</button>'; caja.querySelector('.no').onclick = function () { cerrar(null); }; return; }
+      caja.innerHTML = cabecera('Configura tu verificación en dos pasos', data.obligatorio
+        ? 'Tu cuenta requiere este paso de seguridad para poder ingresar.' : 'Protege tu cuenta con un código que cambia cada 30 segundos.') +
+        '<ol style="margin:12px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:#33475b">' +
+        '<li>Instala <b>Google Authenticator</b>, <b>Microsoft Authenticator</b> o similar.</li>' +
+        '<li>Escanea este código QR (o escribe la clave).</li><li>Ingresa el código de 6 dígitos que aparece.</li></ol>' +
+        '<div style="text-align:center;margin:12px 0 4px"><img alt="Código QR" src="' + r.j.qr + '" style="width:178px;height:178px;border:1px solid #e3e9ef;border-radius:10px"></div>' +
+        '<div style="text-align:center;font-size:11.5px;color:#5b6b7b">Clave manual:<br><span style="font-family:ui-monospace,Menlo,monospace;font-size:13px;color:' + AZUL + ';word-break:break-all;user-select:all">' + esc(r.j.secreto.replace(/(.{4})/g, '$1 ').trim()) + '</span></div>' +
+        '<input class="cod" style="' + INPUT + '" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />' + ERR +
+        '<button class="ok" style="' + BTN + '">Activar y entrar</button>' +
+        '<div style="text-align:center"><button class="no" style="' + LINK + '">Cancelar</button></div>';
+      var cod = caja.querySelector('.cod'); cod.focus();
+      var enviando = false;
+      async function activar() {
+        if (enviando) return;
+        var v = cod.value.trim(); if (v.length < 6) { msg('Escribe los 6 dígitos.'); return; }
+        enviando = true; msg('');
+        try {
+          var a = await llamar('/auth/2fa/activar', { pre_token: data.pre_token, codigo: v });
+          if (a.ok) return pantallaRespaldo(a.j);
+          msg(a.status === 429 ? (a.j.detail || 'Demasiados intentos.') : (a.j.detail || 'Código incorrecto.'));
+        } catch (e) { msg('No se pudo contactar al servidor.'); }
+        enviando = false; cod.select();
+      }
+      caja.querySelector('.ok').onclick = activar;
+      cod.onkeydown = function (e) { if (e.key === 'Enter') activar(); };
+      caja.querySelector('.no').onclick = function () { cerrar(null); };
+    }
+
+    function pantallaRespaldo(sesion) {
+      var codigos = sesion.codigos_respaldo || [];
+      caja.innerHTML = cabecera('Verificación activada', 'Guarda estos <b>códigos de respaldo</b> en un lugar seguro. Cada uno sirve una sola vez si pierdes el acceso a tu celular. <b>No se volverán a mostrar.</b>') +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:14px 0;padding:12px;background:#f3f6f9;border-radius:10px;font-family:ui-monospace,Menlo,monospace;font-size:14px;text-align:center;user-select:all">' +
+        codigos.map(function (c) { return '<span>' + esc(c) + '</span>'; }).join('') + '</div>' +
+        '<button class="copiar" style="' + BTN + ';background:#fff;color:' + AZUL + ';border:1.5px solid #d5dde5;margin-bottom:8px">Copiar códigos</button>' +
+        '<button class="ok" style="' + BTN + '">Ya los guardé, continuar</button>';
+      caja.querySelector('.copiar').onclick = function () {
+        var t = codigos.join('\n'); var b = this;
+        (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = '¡Copiados!'; }, function () { b.textContent = 'Selecciónalos y copia (Ctrl+C)'; });
+      };
+      caja.querySelector('.ok').onclick = function () { delete sesion.codigos_respaldo; cerrar(sesion); };
+    }
+
+    if (data.requiere_enrolar) pantallaEnrolar(); else pantallaCodigo();
+  });
+};
+</script>
+<script id="sofi-nav-compacta-js">
+/* Barra lateral compacta: el botón de la parte superior la adelgaza (solo iconos) y la vuelve a ampliar.
+   La elección se recuerda en este navegador. */
+(function () {
+  var KEY = 'sofi_nav_compacta', b = document.body, btn = document.getElementById('navToggle');
+  if (!btn) return;
+  function leer() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+  function aplicar(c) {
+    b.classList.toggle('nav-compacta', c);
+    var t = c ? 'Ampliar barra lateral' : 'Reducir barra lateral';
+    btn.title = t; btn.setAttribute('aria-label', t); btn.setAttribute('aria-expanded', String(!c));
+    document.querySelectorAll('.sofi-nav .nav-links a').forEach(function (a) {
+      var s = a.querySelector('span:not(.insignia)');
+      if (s) { a.title = c ? s.textContent.trim() : ''; a.setAttribute('aria-label', s.textContent.trim()); }
+    });
+    var sal = document.getElementById('navSalir'); if (sal) sal.title = c ? 'Cerrar sesión' : '';
+  }
+  aplicar(leer());
+  btn.addEventListener('click', function () {
+    var c = !b.classList.contains('nav-compacta'); aplicar(c);
+    try { localStorage.setItem(KEY, c ? '1' : '0'); } catch (e) {}
+  });
+})();
+</script>
+<!-- sofi-movil: vista de celular compartida por asesor / supervisor / editor / dashboard (solo actúa en pantallas <= 900px) -->
+<style id="sofi-movil-css">
+#sofiBurger, .mov-volver, #sofiScrim { display: none; }
+@media (max-width: 900px) {
+  html, body { overflow-x: hidden; max-width: 100vw; }
+  /* --- Cascarón: una sola columna (antes el contenido caía en una 2.ª columna fantasma) --- */
+  body.sofi, body.sofi.nav-compacta { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: auto minmax(0, 1fr); height: 100vh; height: 100dvh; }
+  body.sofi #barraConectado, body.sofi .sofi-top, body.sofi #main, body.sofi .sofi-contenido { grid-column: 1 !important; }
+  body.sofi .sofi-contenido { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  body.sofi:not(.sofi-conectado) { height: auto; min-height: 100dvh; }
+
+  /* --- Barra superior: una fila que se desliza de lado, con el botón ☰ --- */
+  body.sofi #barraConectado, body.sofi .sofi-top { padding: 8px 10px !important; gap: 8px !important; flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  body.sofi #barraConectado::-webkit-scrollbar, body.sofi .sofi-top::-webkit-scrollbar { display: none; }
+  body.sofi #barraConectado > *, body.sofi .sofi-top > * { flex: 0 0 auto; white-space: nowrap; }
+  body.sofi #barraConectado .sofi-icono, body.sofi .sofi-top .sofi-icono, body.sofi .sofi-titulo span, body.sofi #barraConectado .stats-conexion, #barraConectado .separador { display: none !important; }
+  body.sofi .sofi-titulo h1 { font-size: 16px; }
+  body.sofi #barraConectado .estado { flex: 0 0 auto; font-size: 12px; }
+  body.sofi #barraConectado .nombre-asesor { display: none; }
+  /* Los atajos que el escritorio deja en la barra lateral, aquí vuelven a la barra */
+  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
+  body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
+  body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi,
+  body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnCampanas { display: inline-flex !important; align-items: center; }
+  body.sofi #barraConectado button, body.sofi #barraConectado .chico { min-height: 38px; padding: 0 12px; font-size: 13px; }
+  body.sofi-conectado #sofiBurger { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; border-radius: 12px; font-size: 20px; line-height: 1; padding: 0; color: var(--marino, #0B2A4A); cursor: pointer; }
+
+  body.mov-filtros #barraConectado { flex-wrap: wrap !important; overflow: visible; }
+  body.mov-filtros #barraConectado > * { white-space: normal; }
+  body.mov-filtros #sofiBurger { margin-right: auto; }
+
+  /* --- Menú lateral como cajón --- */
+  body.sofi-conectado .sofi-nav { display: flex !important; position: fixed; z-index: 400; top: 0; left: 0; bottom: 0; width: min(280px, 84vw); transform: translateX(-104%); transition: transform .22s ease, box-shadow .22s ease; grid-column: auto; padding: 22px 16px; align-items: stretch; }
+  body.sofi-conectado.menu-abierto .sofi-nav { transform: none; box-shadow: 8px 0 30px rgba(0,0,0,.25); }
+  body.sofi-conectado .sofi-nav .nav-toggle { display: none !important; }
+  body.sofi.nav-compacta .sofi-nav .nav-logo b, body.sofi.nav-compacta .sofi-nav .nav-links a > span:not(.insignia), body.sofi.nav-compacta .sofi-nav .nav-usuario .fila > div:last-child { display: revert; }
+  #sofiScrim { position: fixed; inset: 0; z-index: 390; background: rgba(8,20,36,.5); }
+  body.menu-abierto #sofiScrim { display: block; }
+  body.menu-abierto { overflow: hidden; }
+
+  /* --- Asesor / supervisor: lista ↔ conversación (una pantalla a la vez) --- */
+  body.sofi #main { display: flex; }
+  body.sofi #lista, body.sofi #tableroCol { width: 100% !important; flex: 1 1 auto; border-right: 0 !important; min-width: 0; }
+  body.sofi #panel { display: none; width: 100%; flex: 1 1 auto; min-width: 0; }
+  body.movil-chat #lista, body.movil-chat #tableroCol { display: none !important; }
+  body.movil-chat #panel { display: flex !important; }
+  body.movil-chat #datosAfiliado { display: none !important; }
+  .mov-volver { align-items: center; justify-content: center; flex: 0 0 auto; width: 38px; height: 38px; border-radius: 12px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; font-size: 22px; line-height: 1; padding: 0; color: var(--azul, #0A4C8C); cursor: pointer; }
+  body.movil-chat .mov-volver { display: inline-flex; }
+
+  body.sofi #panel .chat-header, body.sofi #panel .panel-header { padding: 8px 10px; gap: 6px 8px; flex-wrap: wrap; }
+  body.sofi #panel .chat-header .nombre { font-size: 15px; }
+  .acciones-conv, .acciones-asesor, .acciones-supervisor { flex: 1 1 100%; max-width: none !important; display: flex !important; flex-wrap: nowrap !important; overflow-x: auto; gap: 6px; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .acciones-conv::-webkit-scrollbar { display: none; }
+  .acciones-conv > * { flex: 0 0 auto; white-space: nowrap; min-height: 36px; display: inline-flex; align-items: center; }
+  #panel .acciones-top { flex: 1 1 100%; flex-wrap: wrap; }
+  body.sofi #chat, body.sofi #chatEscucha { padding: 12px 10px; }
+  body.sofi .msg { max-width: 88%; font-size: 14.5px; }
+  body.sofi .msg.usuario, body.sofi .msg.asesor { padding-right: 34px; }
+  .msg-acciones { top: 4px !important; right: 4px !important; left: auto !important; width: 26px !important; height: 26px !important; opacity: .8 !important; }
+  .msg-menu { right: 4px !important; left: auto !important; top: 32px !important; }
+  body.sofi #entrada { padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); gap: 6px; flex-wrap: wrap; }
+  body.sofi #entrada #texto { flex: 1 1 100%; min-height: 44px; height: auto; font-size: 16px; }
+  body.sofi #entrada #btnEnviar { margin-left: auto; min-height: 42px; padding: 0 18px; }
+  body.sofi #entrada #btnEmoji, body.sofi #entrada #btnAdjuntar, body.sofi #entrada #btnRespuestasRapidas { width: 42px; height: 42px; }
+  body.sofi #entrada #btnCerrar { height: 42px; padding: 0 12px; }
+  body.sofi #acciones { flex-wrap: wrap; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  body.sofi #acciones #accionTexto { flex: 1 1 100%; min-height: 44px; }
+  body.sofi #acciones #btnDirecto { margin-left: auto; }
+  body.sofi .conv-item { padding: 12px; }
+  body.sofi .asesor-card { margin: 8px; }
+
+  /* --- General --- */
+  input, select, textarea { font-size: 16px !important; }
+  div[id^="modal"], #modalOverlay > div { max-width: calc(100vw - 20px) !important; max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
+  body.sofi .sofi-contenido table, body.sofi #contenido table { display: block; overflow-x: auto; max-width: 100%; }
+
+  /* --- Pantalla de ingreso: el formulario primero, sin el texto de marca --- */
+  .sofi-login .login-marca { padding: 16px 20px; gap: 0; }
+  .sofi-login .login-marca h1, .sofi-login .login-marca .marca-sub, .sofi-login .marca-roles { display: none !important; }
+  .sofi-login .login-card { padding: 22px 18px; }
+}
+</style>
+<script id="sofi-movil-js">
+(function () {
+  var b = document.body, mq = window.matchMedia('(max-width: 900px)');
+  var barra = document.getElementById('barraConectado') || document.querySelector('.sofi-top');
+  var nav = document.querySelector('.sofi-nav');
+  if (document.getElementById('filtros')) b.classList.add('mov-filtros');  // dashboard: los filtros de fecha necesitan varias filas
+
+  // Botón ☰ + fondo oscuro del cajón
+  if (barra && nav) {
+    var burger = document.createElement('button');
+    burger.id = 'sofiBurger'; burger.type = 'button'; burger.textContent = '☰';
+    burger.setAttribute('aria-label', 'Abrir menú');
+    barra.insertBefore(burger, barra.firstChild);
+    var scrim = document.createElement('div'); scrim.id = 'sofiScrim'; b.appendChild(scrim);
+    var cerrar = function () { b.classList.remove('menu-abierto'); };
+    burger.onclick = function () { b.classList.toggle('menu-abierto'); };
+    scrim.onclick = cerrar;
+    nav.addEventListener('click', function (e) { if (e.target.closest('a, button')) setTimeout(cerrar, 50); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') cerrar(); });
+  }
+
+  // En celular la barra lateral siempre va completa (se recuerda el modo "solo íconos" para la PC)
+  function ajustarNavCompacta() {
+    if (mq.matches) b.classList.remove('nav-compacta');
+    else { try { if (localStorage.getItem('sofi_nav_compacta') === '1') b.classList.add('nav-compacta'); } catch (e) {} b.classList.remove('menu-abierto'); }
+  }
+  ajustarNavCompacta();
+  (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(ajustarNavCompacta);
+
+  // Lista ↔ conversación (asesor: #lista; supervisor: #tableroCol)
+  var lista = document.getElementById('lista') || document.getElementById('tableroCol');
+  var panel = document.getElementById('panel');
+  if (lista && panel) {
+    var cab = document.getElementById('chatHeader') || document.getElementById('panelHeader');
+    if (cab) {
+      var volver = document.createElement('button');
+      volver.type = 'button'; volver.className = 'mov-volver'; volver.textContent = '‹'; volver.setAttribute('aria-label', 'Volver a la lista');
+      volver.onclick = function () { b.classList.remove('movil-chat'); };
+      cab.insertBefore(volver, cab.firstChild);
+    }
+    // Abrir: tocar una conversación (asesor: .conv-item; supervisor: .conv-mini)
+    lista.addEventListener('click', function (e) {
+      if (mq.matches && e.target.closest('.conv-item, .conv-mini')) b.classList.add('movil-chat');
+    }, true);
+    // Volver solo al cerrar / dejar de escuchar
+    ['btnCerrar', 'btnCerrarConversacion', 'btnDejarEscuchar'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('click', function () { setTimeout(function () { b.classList.remove('movil-chat'); }, 400); });
+    });
+    // Asesor: si la conversación se cierra por otro lado, el encabezado se apaga -> volver a la lista
+    var ch = document.getElementById('chatHeader');
+    if (ch && window.MutationObserver) {
+      new MutationObserver(function () { if (!ch.classList.contains('activa')) b.classList.remove('movil-chat'); })
+        .observe(ch, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
+})();
 </script>
 </body>
 </html>

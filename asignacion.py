@@ -7,7 +7,8 @@ Reglas:
 - Un asesor solo recibe conversaciones de campañas en su perfil (asesor_campanas).
 - Se respeta asesores.max_conversaciones_simultaneas (parametrizable, default 5).
 - Entre los candidatos válidos, se asigna al que tenga MENOS conversaciones activas
-  ahora mismo (balanceo simple por carga, no round-robin estricto).
+  ahora mismo; en caso de empate, al que lleve menos asignadas en el día (Lima); si
+  persiste, al que lleve más tiempo sin recibir una.
 - La cola (conversaciones en estado='en_cola') se atiende en orden FIFO por
   entrada_cola dentro de cada campaña.
 
@@ -55,7 +56,10 @@ def _buscar_mejor_asesor(cur, campana_id: int):
     cur.execute(
         """
         SELECT a.id, a.nombre_display, a.max_conversaciones_simultaneas,
-               COUNT(c.id) FILTER (WHERE c.estado = 'asignada') AS activas
+               COUNT(c.id) FILTER (WHERE c.estado = 'asignada') AS activas,
+               COUNT(c.id) FILTER (WHERE c.asignado_en >= date_trunc('day', NOW() AT TIME ZONE 'America/Lima')
+                                                          AT TIME ZONE 'America/Lima') AS asignadas_hoy,
+               MAX(c.asignado_en) AS ultima_asignacion
         FROM asesores a
         JOIN asesor_campanas ac ON ac.asesor_id = a.id AND ac.campana_id = %s
         JOIN asesor_sesiones s ON s.asesor_id = a.id AND s.desconectado_en IS NULL
@@ -63,7 +67,9 @@ def _buscar_mejor_asesor(cur, campana_id: int):
         WHERE a.activo = TRUE AND a.en_pausa = FALSE
         GROUP BY a.id, a.nombre_display, a.max_conversaciones_simultaneas
         HAVING COUNT(c.id) FILTER (WHERE c.estado = 'asignada') < a.max_conversaciones_simultaneas
-        ORDER BY activas ASC
+        -- 1) menos activas ahora; 2) empate: menos asignadas hoy; 3) empate: quien lleva
+        -- más tiempo sin recibir una (NULLS FIRST = nunca recibió); 4) id, para que sea estable.
+        ORDER BY activas ASC, asignadas_hoy ASC, ultima_asignacion ASC NULLS FIRST, a.id ASC
         LIMIT 1
         """,
         (campana_id,),
@@ -148,7 +154,7 @@ async def transferir_conversacion(conversacion_id: int, asesor_destino_id: int, 
             )
 
             cur.execute(
-                """SELECT u.nombre, u.telefono, u.dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
+                """SELECT COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
                    JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
                 (conversacion_id,),
             )
@@ -214,7 +220,7 @@ async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict |
                 )
 
             cur.execute(
-                """SELECT u.nombre, u.telefono, u.dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
+                """SELECT COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
                    JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
                 (conversacion_id,),
             )
@@ -297,7 +303,7 @@ async def asignar_manual(conversacion_id: int, asesor_id: int, manager) -> dict:
                 )
 
             cur.execute(
-                """SELECT u.nombre, u.telefono, u.dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
+                """SELECT COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
                    JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
                 (conversacion_id,),
             )
@@ -375,7 +381,7 @@ async def asignar_desde_cola_para_asesor(asesor_id: int, manager):
                         (conversacion_id, texto_bienvenida, datetime.now(LIMA_TZ)),
                     )
                 cur.execute(
-                    """SELECT u.nombre, u.telefono, u.dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
+                    """SELECT COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
                        JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
                     (conversacion_id,),
                 )

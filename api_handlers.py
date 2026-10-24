@@ -8,6 +8,7 @@ en los textos de bot_menus.
 """
 
 import json
+import math
 import os
 import random
 import re
@@ -44,6 +45,53 @@ WEBCHAT_API_BASE_URL = "https://api.sanitasperu.com"
 logger = logging.getLogger("api_handlers")
 
 
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+MENSAJE_FERIADO_DEFAULT = (
+    "Hoy {{FECHA}} es feriado ({{FERIADO}}) y en este momento no estamos atendiendo por este canal. "
+    "Retomaremos la atención en nuestro próximo día hábil. ¡Gracias por tu comprensión!"
+)
+
+
+def _feriado_de_hoy(campana_codigo: str, hoy):
+    """Si hoy es feriado para esa campaña devuelve el mensaje ya armado; si no, None.
+    Si la tabla todavía no existe (migración sin correr), se ignora: no debe romper
+    la validación de horario normal."""
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT f.descripcion, f.mensaje FROM feriados_campana f
+                   JOIN campanas c ON c.id = f.campana_id
+                   WHERE c.codigo = %s AND f.fecha = %s""",
+                (campana_codigo, hoy),
+            )
+            fila = cur.fetchone()
+            if not fila:
+                return None
+            descripcion, mensaje = fila
+            if not (mensaje or "").strip():
+                cur.execute("SELECT valor FROM configuracion_global WHERE clave = 'mensaje_feriado'")
+                cfg = cur.fetchone()
+                mensaje = (cfg[0] if cfg and (cfg[0] or "").strip() else MENSAJE_FERIADO_DEFAULT)
+        fecha_txt = f"{_DIAS_ES[hoy.weekday()]} {hoy.day} de {_MESES_ES[hoy.month - 1]}"
+        return (mensaje.replace("{{FECHA}}", fecha_txt)
+                       .replace("{{FERIADO}}", (descripcion or "feriado").strip()))
+    except Exception as e:
+        logger.warning("No se pudo revisar feriados (¿falta migracion_feriados.sql?): %s", e)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None
+    finally:
+        if conn:
+            release_connection(conn)
+
+
 def validar_horario_consultas(parametros: dict, variables: dict) -> dict:
     """
     Revisa horarios_atencion para la campaña indicada en parametros['campana_codigo'].
@@ -55,6 +103,11 @@ def validar_horario_consultas(parametros: dict, variables: dict) -> dict:
     """
     campana_codigo = parametros.get("campana_codigo", "consultas")
     ahora = datetime.now(LIMA_TZ)
+
+    # Feriado de esta campaña (configurado por el supervisor): no se atiende todo el día.
+    mensaje_feriado = _feriado_de_hoy(campana_codigo, ahora.date())
+    if mensaje_feriado:
+        return {"status": 200, "response": {"outOfTime": True, "messageOutOfTime": mensaje_feriado}}
     dia_semana = ahora.weekday()  # 0=lunes ... 6=domingo, igual que Python
     hora_actual = ahora.time()
 
@@ -115,6 +168,443 @@ def _llamar_sofi_apis(path: str, payload: dict) -> dict:
     """ASUNCIÓN a confirmar: reciben POST con JSON — si en realidad son GET
     con query params, cambiar requests.post(...) por requests.get(..., params=payload)."""
     return _llamar_api_externa(SOFI_APIS_BASE, path, payload)
+
+
+# --- Agente de IA (preguntas frecuentes) de sofi-apis ------------------------
+# Endpoint: POST {SOFI_APIS_BASE}/consulta_agente  body {"pregunta", "celular"} -> {"respuesta"}.
+# El agente guarda solo su estado (historial, perfil, sub-flujos como pedir el DNI) por celular;
+# el webchat únicamente reenvía el texto y muestra la respuesta.
+MENSAJE_RESPALDO_IA = ("Disculpa, tuve un problema para responder. Intenta de nuevo en un momento "
+                       "o escribe *menu* para volver al menú principal.")
+TIMEOUT_AGENTE_IA = (10, 45)   # (conexión, lectura): Gemini + consultas a BD pueden tardar 5-15 s
+MAX_CARACTERES_PREGUNTA_IA = 1500
+
+
+def consulta_agente_ia(parametros: dict, variables: dict) -> dict:
+    """Pregunta al agente de IA. SIEMPRE devuelve {"status", "response": {"respuesta": texto}}:
+    si algo falla, `respuesta` es un mensaje amable de respaldo (nunca el error crudo).
+    A propósito NO se registra el texto de la pregunta ni de la respuesta (pueden traer DNI u
+    otros datos personales): solo longitudes y códigos de estado."""
+    pregunta = str(parametros.get("pregunta") or "").strip()[:MAX_CARACTERES_PREGUNTA_IA]
+    celular = "".join(ch for ch in str(parametros.get("celular") or "") if ch.isdigit())
+    if not pregunta or not celular:
+        logger.error("consulta_agente_ia sin pregunta o sin celular (pregunta=%s, celular=%s)",
+                     bool(pregunta), bool(celular))
+        return {"status": 400, "response": {"respuesta": MENSAJE_RESPALDO_IA}}
+    url = f"{SOFI_APIS_BASE}/consulta_agente"
+    try:
+        resp = requests.post(
+            url, json={"pregunta": pregunta, "celular": celular},
+            headers={"Authorization": f"ApiKey {os.environ['SOFI_APIS_KEY']}"},
+            timeout=TIMEOUT_AGENTE_IA,
+        )
+        logger.info("consulta_agente_ia -> status=%s (pregunta de %s caracteres)", resp.status_code, len(pregunta))
+        if resp.status_code != 200:
+            logger.error("consulta_agente_ia respondió HTTP %s", resp.status_code)
+            return {"status": resp.status_code, "response": {"respuesta": MENSAJE_RESPALDO_IA}}
+        texto = str((resp.json() or {}).get("respuesta") or "").strip()
+        if not texto:
+            logger.error("consulta_agente_ia devolvió una respuesta vacía")
+            return {"status": 502, "response": {"respuesta": MENSAJE_RESPALDO_IA}}
+        return {"status": 200, "response": {"respuesta": texto}}
+    except Exception:  # noqa: BLE001  (timeout, red, JSON inválido, falta SOFI_APIS_KEY...)
+        logger.exception("consulta_agente_ia falló")
+        return {"status": 500, "response": {"respuesta": MENSAJE_RESPALDO_IA}}
+
+
+# --- Médico a domicilio (MAD) / Ambulancia -------------------------------------------------------
+# Todo el despacho vive en sofi-apis (búsqueda de proveedores, ofertas, reintentos, PWA del proveedor y
+# página de seguimiento). El webchat solo crea la solicitud y consulta su estado.
+#   POST {SOFI_APIS_BASE}/solicitudes/crear  {"telefono","lat","lng","tipo_servicio","cliente_nombre"?}
+#        -> {"solicitud_id", "tracking_url": ".../track/<token>"}
+#   GET  {SOFI_APIS_BASE}/track/<token>/estado -> {"estado","tipo_servicio","proveedor_nombre",...}
+TIMEOUT_MAD = 20
+MAD_TIPOS_VALIDOS = ("MAD", "AMBULANCIA")
+MAD_MINUTOS_BUSCANDO_LARGO = 5       # tras este tiempo en "buscando_proveedor" se ofrece hablar con un asesor
+_MAD_TOKEN_VALIDO = re.compile(r"[A-Za-z0-9_\-]{8,200}")
+LIMA_UTC_MENOS_5 = timezone(timedelta(hours=-5))
+
+
+def _headers_sofi_apis() -> dict:
+    return {"Authorization": f"ApiKey {os.environ['SOFI_APIS_KEY']}"}
+
+
+def crear_solicitud_mad(parametros: dict, variables: dict) -> dict:
+    """Crea la solicitud de MAD/Ambulancia. Devuelve {"status", "response": {...}}; si algo falla el status
+    NO es 200 y el nodo del flujo muestra un mensaje amable (nunca el error crudo). No se registran
+    coordenadas ni teléfono en los logs (datos personales)."""
+    try:
+        telefono = "".join(ch for ch in str(parametros.get("telefono") or "") if ch.isdigit())
+        tipo = str(parametros.get("tipo_servicio") or "").strip().upper()
+        lat = float(str(parametros.get("lat")).replace(",", "."))
+        lng = float(str(parametros.get("lng")).replace(",", "."))
+        if not telefono or tipo not in MAD_TIPOS_VALIDOS or not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            logger.error("crear_solicitud_mad con datos inválidos (telefono=%s, tipo=%s)", bool(telefono), tipo)
+            return {"status": 400, "response": {}}
+        cuerpo = {"telefono": telefono, "lat": lat, "lng": lng, "tipo_servicio": tipo}
+        nombre = str(parametros.get("cliente_nombre") or "").strip()
+        if nombre:
+            cuerpo["cliente_nombre"] = nombre   # sofi-apis lo ignora hasta que lo soporte
+        # Campos opcionales: ubicación escrita y, si es SERVICIO PROGRAMADO, la hora (de Lima) y el
+        # contacto en el lugar. Los vacíos no se mandan, así "ahora" sigue igual que siempre.
+        for campo in ("direccion", "distrito", "referencia", "contacto_nombre"):
+            valor = str(parametros.get(campo) or "").strip()
+            if valor:
+                cuerpo[campo] = valor[:300]
+        contacto_tel = "".join(ch for ch in str(parametros.get("contacto_telefono") or "") if ch.isdigit())
+        if contacto_tel:
+            cuerpo["contacto_telefono"] = contacto_tel
+        programada_para = str(parametros.get("programada_para") or "").strip()
+        if programada_para:
+            if not _PROGRAMADA_RE.fullmatch(programada_para):
+                logger.error("crear_solicitud_mad con programada_para inválido")
+                return {"status": 400, "response": {"error": MENSAJE_HORA_INVALIDA_MAD}}
+            cuerpo["programada_para"] = programada_para
+        resp = requests.post(f"{SOFI_APIS_BASE}/solicitudes/crear", json=cuerpo,
+                             headers=_headers_sofi_apis(), timeout=TIMEOUT_MAD)
+        logger.info("crear_solicitud_mad -> status=%s tipo=%s programada=%s", resp.status_code, tipo,
+                    bool(programada_para))
+        if resp.status_code not in (200, 201):
+            logger.error("crear_solicitud_mad respondió HTTP %s", resp.status_code)
+            if programada_para and resp.status_code in (400, 409):
+                # sofi-apis manda el motivo (hora muy cercana, fuera de horario, más de 14 días, ubicación
+                # fuera de Perú, máximo 3 programados) ya redactado para la persona: se muestra tal cual.
+                # Cualquier otro error (5xx, timeout...) NO se muestra: sale el mensaje de respaldo del flujo.
+                return {"status": resp.status_code, "response": {"error": _error_sofi_apis(resp)}}
+            return {"status": resp.status_code if resp.status_code != 200 else 502, "response": {}}
+        datos = resp.json() or {}
+        url = str(datos.get("tracking_url") or "").strip()
+        token = url.rstrip("/").rsplit("/", 1)[-1] if url else ""
+        if not url or not _MAD_TOKEN_VALIDO.fullmatch(token):
+            logger.error("crear_solicitud_mad devolvió una respuesta sin tracking_url válido")
+            return {"status": 502, "response": {}}
+        return {"status": 200, "response": {
+            "solicitud_id": datos.get("solicitud_id"), "tracking_url": url, "tracking_token": token,
+            "creada_en": datetime.now(LIMA_UTC_MENOS_5).isoformat(timespec="seconds"),
+            "programada": bool(datos.get("programada")),
+        }}
+    except Exception:  # noqa: BLE001  (timeout, red, JSON inválido, coordenadas no numéricas...)
+        logger.exception("crear_solicitud_mad falló")
+        return {"status": 500, "response": {}}
+
+
+# --- Servicio PROGRAMADO -------------------------------------------------------------------------
+# La hora se maneja SIEMPRE en hora de Lima, formato AAAA-MM-DDTHH:MM (igual que sofi-apis). El webchat
+# solo adelanta lo evidente (formato, mínimo 60 min, máximo 14 días) para no hacer perder tiempo; el horario
+# permitido y los topes (3 programados por celular, ubicación) los decide sofi-apis y su mensaje se muestra tal cual.
+_PROGRAMADA_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+MAD_PROGRAMADA_MIN_MINUTOS = 60
+MAD_PROGRAMADA_MAX_DIAS = 14
+MENSAJE_HORA_INVALIDA_MAD = "No pude leer la fecha y la hora. Elige de nuevo el día y la hora."
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
+             "octubre", "noviembre", "diciembre"]
+
+
+def _error_sofi_apis(resp) -> str:
+    """Mensaje de un 400/409 de sofi-apis ({"error": "..."} o {"detail": "..."}), recortado. Si no trae
+    texto usable, uno genérico: jamás el cuerpo crudo."""
+    try:
+        datos = resp.json() or {}
+        texto = datos.get("error") or datos.get("detail")
+        if isinstance(texto, str) and texto.strip():
+            return texto.strip()[:400]
+    except Exception:  # noqa: BLE001
+        pass
+    return "No pudimos programar el servicio con esos datos. Revisa la fecha, la hora y el lugar."
+
+
+def _texto_fecha_hora_mad(dt: datetime) -> str:
+    """'domingo 18 de octubre a las 15:30' (hora de Lima, 24 h)."""
+    return f"{_DIAS_ES[dt.weekday()]} {dt.day} de {_MESES_ES[dt.month - 1]} a las {dt:%H:%M}"
+
+
+def validar_programada_mad(parametros: dict, variables: dict) -> dict:
+    """Valida la fecha/hora elegida ("AAAA-MM-DDTHH:MM", hora de Lima). 200 -> {"programada_para", "texto"};
+    400 -> {"error": mensaje para la persona}."""
+    try:
+        bruto = str(parametros.get("programada_para") or "").strip()
+        if not _PROGRAMADA_RE.fullmatch(bruto):
+            return {"status": 400, "response": {"error": MENSAJE_HORA_INVALIDA_MAD}}
+        dt = datetime.strptime(bruto, "%Y-%m-%dT%H:%M").replace(tzinfo=LIMA_UTC_MENOS_5)
+        ahora = datetime.now(LIMA_UTC_MENOS_5)
+        if dt < ahora + timedelta(minutes=MAD_PROGRAMADA_MIN_MINUTOS):
+            return {"status": 400, "response": {"error": (
+                f"Esa hora es muy cercana 🕒 Para programar necesitamos al menos {MAD_PROGRAMADA_MIN_MINUTOS} "
+                "minutos de anticipación. Elige otra hora.")}}
+        if dt > ahora + timedelta(days=MAD_PROGRAMADA_MAX_DIAS):
+            return {"status": 400, "response": {"error": (
+                f"Solo puedes programar hasta {MAD_PROGRAMADA_MAX_DIAS} días desde hoy 📅 Elige una fecha más cercana.")}}
+        return {"status": 200, "response": {"programada_para": bruto, "texto": _texto_fecha_hora_mad(dt)}}
+    except Exception:  # noqa: BLE001
+        logger.exception("validar_programada_mad falló")
+        return {"status": 400, "response": {"error": MENSAJE_HORA_INVALIDA_MAD}}
+
+
+def resumen_programada_mad(parametros: dict, variables: dict) -> dict:
+    """Prepara los textos de la confirmación y valida el contacto en el lugar (opcional). El celular se acepta
+    con espacios, guiones o +51 y debe quedar de 9 dígitos. 200 -> {"contacto_telefono", "contacto_texto"};
+    400 -> {"error"}."""
+    try:
+        nombre = " ".join(str(parametros.get("contacto_nombre") or "").split())[:80]
+        digitos = "".join(ch for ch in str(parametros.get("contacto_telefono") or "") if ch.isdigit())
+        if len(digitos) == 11 and digitos.startswith("51"):
+            digitos = digitos[2:]
+        if digitos and not (len(digitos) == 9 and digitos.startswith("9")):
+            return {"status": 400, "response": {"error": (
+                "El celular de contacto debe tener 9 dígitos y empezar con 9 (ejemplo: 987654321).")}}
+        if nombre and not digitos:
+            return {"status": 400, "response": {"error": (
+                "Falta el celular de la persona que recibirá al profesional. Escríbelo de nuevo.")}}
+        if digitos and not nombre:
+            return {"status": 400, "response": {"error": (
+                "Falta el nombre de la persona que recibirá al profesional. Escríbelo de nuevo.")}}
+        texto = f"{nombre} - {digitos}" if digitos else "No indicaste una persona de contacto"
+        referencia = " ".join(str(parametros.get("referencia") or "").split())[:200]
+        return {"status": 200, "response": {"contacto_nombre": nombre, "contacto_telefono": digitos,
+                                            "contacto_texto": texto, "referencia_texto": referencia or "Sin referencia"}}
+    except Exception:  # noqa: BLE001
+        logger.exception("resumen_programada_mad falló")
+        return {"status": 400, "response": {"error": "No pude leer los datos de contacto. Escríbelos de nuevo."}}
+
+
+# --- Confirmación con la dirección y el mapa (ahora y programado) --------------------------------------
+# sofi-apis exige "direccion" (mín. 5 caracteres) y "distrito" al crear la solicitud. Esta función prepara lo que
+# se muestra antes de confirmar: dirección limpia, referencia, precisión del GPS, enlace al mapa y, si se puede,
+# un aviso cuando el punto del GPS queda lejos del distrito escrito.
+MAD_DIRECCION_MIN_CARACTERES = 5
+MAD_AVISO_DISTRITO_MARGEN_KM = 3.0
+
+# Distritos de Lima Metropolitana y Callao: (latitud, longitud, radio aproximado en km). Valores APROXIMADOS (centro
+# y "tamaño" del distrito) solo para avisar si el punto queda claramente lejos; el aviso nunca bloquea. Un distrito
+# que no esté aquí (otras provincias) simplemente no genera aviso.
+_DISTRITOS_LIMA = {
+    "ANCON": (-11.773, -77.175, 12), "ATE": (-12.026, -76.918, 9), "BARRANCO": (-12.140, -77.021, 1.5),
+    "BRENA": (-12.057, -77.051, 1.2), "CARABAYLLO": (-11.865, -77.036, 12), "CHACLACAYO": (-11.975, -76.764, 6),
+    "CHORRILLOS": (-12.170, -77.012, 4), "CIENEGUILLA": (-12.100, -76.770, 10), "COMAS": (-11.938, -77.052, 5),
+    "EL AGUSTINO": (-12.044, -76.997, 2), "INDEPENDENCIA": (-11.990, -77.054, 2.5),
+    "JESUS MARIA": (-12.070, -77.048, 1.3), "LA MOLINA": (-12.080, -76.930, 6), "LA VICTORIA": (-12.065, -77.015, 2),
+    "LIMA": (-12.046, -77.030, 3), "CERCADO DE LIMA": (-12.046, -77.030, 3), "LINCE": (-12.084, -77.036, 1),
+    "LOS OLIVOS": (-11.970, -77.072, 3), "LURIGANCHO": (-11.940, -76.693, 12), "CHOSICA": (-11.940, -76.693, 12),
+    "LURIN": (-12.276, -76.870, 9), "MAGDALENA DEL MAR": (-12.095, -77.072, 1.5), "MIRAFLORES": (-12.121, -77.030, 2),
+    "PACHACAMAC": (-12.257, -76.862, 14), "PUCUSANA": (-12.478, -76.796, 5), "PUEBLO LIBRE": (-12.072, -77.064, 1.5),
+    "PUENTE PIEDRA": (-11.860, -77.074, 7), "PUNTA HERMOSA": (-12.334, -76.823, 4), "PUNTA NEGRA": (-12.365, -76.795, 4),
+    "RIMAC": (-12.029, -77.043, 3), "SAN BARTOLO": (-12.388, -76.778, 3), "SAN BORJA": (-12.100, -77.000, 2.5),
+    "SAN ISIDRO": (-12.097, -77.036, 2), "SAN JUAN DE LURIGANCHO": (-11.983, -77.002, 9),
+    "SAN JUAN DE MIRAFLORES": (-12.155, -76.970, 4), "SAN LUIS": (-12.077, -77.000, 1.2),
+    "SAN MARTIN DE PORRES": (-12.002, -77.087, 5), "SAN MIGUEL": (-12.077, -77.091, 2),
+    "SANTA ANITA": (-12.046, -76.971, 2), "SANTA MARIA DEL MAR": (-12.399, -76.777, 2), "SANTA ROSA": (-11.800, -77.164, 6),
+    "SANTIAGO DE SURCO": (-12.145, -76.993, 6), "SURQUILLO": (-12.111, -77.017, 1.5),
+    "VILLA EL SALVADOR": (-12.213, -76.933, 6), "VILLA MARIA DEL TRIUNFO": (-12.165, -76.940, 5),
+    "CALLAO": (-12.056, -77.118, 4), "BELLAVISTA": (-12.063, -77.126, 1.5),
+    "CARMEN DE LA LEGUA REYNOSO": (-12.042, -77.093, 1.2), "LA PERLA": (-12.071, -77.117, 1.5),
+    "LA PUNTA": (-12.072, -77.164, 1), "VENTANILLA": (-11.874, -77.128, 8), "MI PERU": (-11.855, -77.123, 2),
+}
+
+
+def _sin_tildes_mayusculas(texto: str) -> str:
+    t = str(texto or "").upper()
+    for a, b in (("Á", "A"), ("É", "E"), ("Í", "I"), ("Ó", "O"), ("Ú", "U"), ("Ü", "U"), ("Ñ", "N")):
+        t = t.replace(a, b)
+    return " ".join(t.split())
+
+
+def _km_entre(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Distancia en km entre dos puntos (fórmula de haversine)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dlat, dlng = p2 - p1, math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlng / 2) ** 2
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _aviso_gps_lejos_del_distrito(distrito: str, lat: float, lng: float) -> str:
+    """Texto de aviso (con salto de línea inicial) si el punto está claramente lejos del distrito escrito;
+    cadena vacía si está bien, si el distrito no está en la tabla o si no se puede saber."""
+    try:
+        clave = _sin_tildes_mayusculas(distrito)
+        dato = _DISTRITOS_LIMA.get(clave)
+        if dato is None:   # "San Isidro, Lima": se prueba con el texto antes de la coma
+            dato = _DISTRITOS_LIMA.get(_sin_tildes_mayusculas(str(distrito).split(",")[0]))
+        if dato is None:
+            return ""
+        km = _km_entre(lat, lng, dato[0], dato[1])
+        if km <= dato[2] + MAD_AVISO_DISTRITO_MARGEN_KM:
+            return ""
+        return (f"\n\n⚠️ El punto del mapa parece estar a unos {km:.0f} km de *{' '.join(str(distrito).split())}*. "
+                "Si el distrito o el lugar no son correctos, corrígelos antes de confirmar.")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# Distritos de Lima Metropolitana y del Callao: el servicio MAD/Ambulancia es solo ahí, así que el distrito
+# se valida contra esta lista local (sin pasar por los códigos de ubigeo de sofi-apis, que son para Medicamentos).
+_DISTRITOS_PROVINCIA_LIMA = [
+    "Ancón", "Ate", "Barranco", "Breña", "Carabayllo", "Chaclacayo", "Chorrillos", "Cieneguilla", "Comas",
+    "El Agustino", "Independencia", "Jesús María", "La Molina", "La Victoria", "Lima", "Lince", "Los Olivos",
+    "Lurigancho", "Lurín", "Magdalena del Mar", "Miraflores", "Pachacámac", "Pucusana", "Pueblo Libre",
+    "Puente Piedra", "Punta Hermosa", "Punta Negra", "Rímac", "San Bartolo", "San Borja", "San Isidro",
+    "San Juan de Lurigancho", "San Juan de Miraflores", "San Luis", "San Martín de Porres", "San Miguel",
+    "Santa Anita", "Santa María del Mar", "Santa Rosa", "Santiago de Surco", "Surquillo", "Villa El Salvador",
+    "Villa María del Triunfo",
+    # Provincia Constitucional del Callao
+    "Callao", "Bellavista", "Carmen de la Legua Reynoso", "La Perla", "La Punta", "Mi Perú", "Ventanilla",
+]
+# Cómo la gente suele escribirlos (siglas y nombres alternativos).
+_ALIAS_DISTRITOS_LIMA = {
+    "SJL": "San Juan de Lurigancho", "SJM": "San Juan de Miraflores", "SMP": "San Martín de Porres",
+    "VES": "Villa El Salvador", "VMT": "Villa María del Triunfo", "CERCADO": "Lima", "CERCADO DE LIMA": "Lima",
+    "LIMA CERCADO": "Lima", "CHOSICA": "Lurigancho", "LURIGANCHO CHOSICA": "Lurigancho", "SURCO": "Santiago de Surco",
+    "MAGDALENA": "Magdalena del Mar", "CALLAO CERCADO": "Callao", "CERCADO DEL CALLAO": "Callao", "MI PERU": "Mi Perú", "MAGDALENA DEL MAR": "Magdalena del Mar",
+}
+
+
+def validar_distrito_mad(parametros: dict, variables: dict) -> dict:
+    """Valida el distrito escrito contra los de Lima Metropolitana. Siempre 200 con
+    {"estado": "ok"|"varios"|"no", "distrito": nombre oficial (si ok), "lista": viñetas (si varios)}."""
+    try:
+        bruto = " ".join(str(parametros.get("distrito") or "").split())[:80]
+        q = _sin_tildes_mayusculas(bruto)
+        for prefijo in ("DISTRITO DE ", "DISTRITO "):
+            if q.startswith(prefijo):
+                q = q[len(prefijo):]
+        q = q.split(",")[0].strip()
+        for sufijo in (" LIMA LIMA", " LIMA"):
+            if q.endswith(sufijo) and q != "LIMA" and q[:-len(sufijo)].strip() in {_sin_tildes_mayusculas(d) for d in _DISTRITOS_PROVINCIA_LIMA}:
+                q = q[:-len(sufijo)].strip()
+        if not q:
+            return {"status": 200, "response": {"estado": "no"}}
+        oficiales = {_sin_tildes_mayusculas(d): d for d in _DISTRITOS_PROVINCIA_LIMA}
+        if q in oficiales:
+            return {"status": 200, "response": {"estado": "ok", "distrito": oficiales[q]}}
+        if q in _ALIAS_DISTRITOS_LIMA:
+            return {"status": 200, "response": {"estado": "ok", "distrito": _ALIAS_DISTRITOS_LIMA[q]}}
+        candidatos = []
+        if len(q) >= 3:
+            candidatos = [d for k, d in oficiales.items() if k.startswith(q)] or [d for k, d in oficiales.items() if q in k]
+        if len(candidatos) == 1:
+            return {"status": 200, "response": {"estado": "ok", "distrito": candidatos[0]}}
+        if len(candidatos) > 1:
+            return {"status": 200, "response": {"estado": "varios", "lista": "\n".join(f"• {d}" for d in candidatos[:8])}}
+        return {"status": 200, "response": {"estado": "no"}}
+    except Exception:  # noqa: BLE001
+        logger.exception("validar_distrito_mad falló")
+        return {"status": 200, "response": {"estado": "no"}}
+
+
+def resumen_ubicacion_mad(parametros: dict, variables: dict) -> dict:
+    """Prepara la confirmación: dirección normalizada (mín. 5 caracteres), línea de referencia, línea de precisión
+    del GPS (o "lugar marcado en el mapa"), enlace a Google Maps y aviso si el punto queda lejos del distrito.
+    200 -> {"direccion", "referencia_linea", "precision_linea", "mapa_url", "aviso"}; 400 -> {"error"}.
+    Las coordenadas solo van en el enlace al mapa; no se escriben en los logs (datos personales)."""
+    try:
+        direccion = " ".join(str(parametros.get("direccion") or "").split())[:200]
+        if len(direccion) < MAD_DIRECCION_MIN_CARACTERES:
+            return {"status": 400, "response": {"error": (
+                "La dirección es muy corta 🤔 Escribe la dirección exacta: calle, número y departamento o piso "
+                f"(mínimo {MAD_DIRECCION_MIN_CARACTERES} caracteres).")}}
+        distrito = " ".join(str(parametros.get("distrito") or "").split())[:80]
+        lat = float(str(parametros.get("lat")).replace(",", "."))
+        lng = float(str(parametros.get("lng")).replace(",", "."))
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise ValueError("coordenadas fuera de rango")
+        referencia = " ".join(str(parametros.get("referencia") or "").split())[:200]
+        if str(parametros.get("origen") or "").strip() == "mapa":
+            precision_linea = "\n📌 Lugar marcado por ti en el mapa"
+        else:
+            try:
+                metros = int(round(float(str(parametros.get("precision")).replace(",", "."))))
+            except (TypeError, ValueError):
+                metros = None
+            precision_linea = f"\n🎯 Precisión del GPS: ±{metros} m" if metros is not None and metros >= 0 else ""
+        return {"status": 200, "response": {
+            "direccion": direccion,
+            "referencia_linea": f"\n🧭 Ref: {referencia}" if referencia else "",
+            "precision_linea": precision_linea,
+            "mapa_url": f"https://www.google.com/maps?q={lat:.6f},{lng:.6f}",
+            "aviso": _aviso_gps_lejos_del_distrito(distrito, lat, lng),
+        }}
+    except Exception:  # noqa: BLE001
+        logger.exception("resumen_ubicacion_mad falló")
+        return {"status": 400, "response": {"error": (
+            "No pude leer la ubicación o la dirección. Escribe de nuevo la dirección o comparte otra ubicación.")}}
+
+
+def _texto_estado_mad(datos: dict, tipo: str, minutos_buscando) -> str:
+    """Texto amigable para el cliente según el estado que devuelve sofi-apis."""
+    estado = str(datos.get("estado") or "").strip()
+    quien = "tu ambulancia" if str(datos.get("tipo_servicio") or tipo).upper() == "AMBULANCIA" else "tu médico"
+    proveedor = str(datos.get("proveedor_nombre") or "").strip()
+    nombre = f"*{proveedor}*" if proveedor else quien
+    if estado == "programada":
+        cuando = str(datos.get("programada_texto") or "").strip()
+        return (f"📅 Tu servicio está *programado para {cuando}*. Un profesional se asignará aproximadamente "
+                "45 minutos antes y te avisaremos por SMS." if cuando else
+                "📅 Tu servicio está programado. Un profesional se asignará aproximadamente 45 minutos antes "
+                "y te avisaremos por SMS.")
+    if estado == "cancelada":
+        return "❌ Este servicio fue cancelado. Si necesitas uno nuevo, escribe *menu* para volver a empezar."
+    if estado == "buscando_proveedor":
+        texto = "🔎 Seguimos buscando al profesional más cercano. Te avisaremos apenas alguien acepte tu solicitud."
+        if minutos_buscando is not None and minutos_buscando >= MAD_MINUTOS_BUSCANDO_LARGO:
+            texto += ("\n\n⏳ Está tardando más de lo normal. Si prefieres, toca *Hablar c/ asesor* "
+                      "y te ayudamos de inmediato.")
+        return texto
+    if estado == "asignado":
+        return f"✅ {nombre} aceptó tu solicitud y se está preparando para salir."
+    if estado == "en_camino":
+        return f"🚗 {nombre} va en camino a tu ubicación."
+    if estado == "llego":
+        return f"📍 {nombre} llegó a tu ubicación."
+    if estado == "en_atencion":
+        return f"🩺 Estás siendo atendido por {nombre}."
+    if estado == "finalizado":
+        return "🏁 El servicio finalizó. ¡Gracias por confiar en Sanitas! 💙"
+    if estado == "sin_cobertura":
+        return ("😔 En este momento no encontramos un profesional disponible cerca de tu ubicación. "
+                "Toca *Hablar c/ asesor* para que te ayudemos.")
+    return "Tu solicitud está registrada. Consulta de nuevo en unos instantes."
+
+
+def estado_solicitud_mad(parametros: dict, variables: dict) -> dict:
+    """Consulta el estado de la solicitud (GET /track/<token>/estado). Devuelve
+    {"status", "response": {"estado", "mensaje", ...}}; status != 200 si no se pudo consultar."""
+    try:
+        token = str(parametros.get("token") or "").strip()
+        if not _MAD_TOKEN_VALIDO.fullmatch(token):   # evita rutas raras en la URL
+            logger.error("estado_solicitud_mad sin token válido")
+            return {"status": 400, "response": {}}
+        resp = requests.get(f"{SOFI_APIS_BASE}/track/{token}/estado",
+                            headers=_headers_sofi_apis(), timeout=TIMEOUT_MAD)
+        logger.info("estado_solicitud_mad -> status=%s", resp.status_code)
+        if resp.status_code != 200:
+            logger.error("estado_solicitud_mad respondió HTTP %s", resp.status_code)
+            return {"status": resp.status_code, "response": {}}
+        datos = resp.json() or {}
+        # Si es programado, el texto "Programado para <fecha y hora>" lo arma el webchat (hora de Lima) a partir de
+        # lo que la persona eligió; y el aviso de "está tardando" cuenta desde la hora programada, no desde que
+        # se creó la solicitud (días antes).
+        datos["programada_texto"] = str(parametros.get("programada_texto") or "").strip()
+        minutos = None
+        try:
+            base = None
+            programada = str(parametros.get("programada_para") or "").strip()
+            if programada and _PROGRAMADA_RE.fullmatch(programada):
+                base = datetime.strptime(programada, "%Y-%m-%dT%H:%M").replace(tzinfo=LIMA_UTC_MENOS_5)
+            else:
+                base = datetime.fromisoformat(str(parametros.get("creada_en") or ""))
+            minutos = (datetime.now(base.tzinfo or LIMA_UTC_MENOS_5) - base).total_seconds() / 60
+            if minutos < 0:
+                minutos = None
+        except ValueError:
+            pass
+        return {"status": 200, "response": {
+            "estado": datos.get("estado"),
+            "proveedor_nombre": datos.get("proveedor_nombre"),
+            "mensaje": _texto_estado_mad(datos, str(parametros.get("tipo") or ""), minutos),
+        }}
+    except Exception:  # noqa: BLE001
+        logger.exception("estado_solicitud_mad falló")
+        return {"status": 500, "response": {}}
 
 
 def consulta_doi(parametros: dict, variables: dict) -> dict:

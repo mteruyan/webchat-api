@@ -13,9 +13,11 @@ igual que DB_PASSWORD) — nunca hardcodear acá.
 """
 
 import os
+import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
+from db import get_connection, release_connection
 
 TOKEN_TTL_HORAS = 12
 
@@ -28,36 +30,115 @@ HASH_DUMMY = bcrypt.hashpw(b"contrasena-que-nadie-usa", bcrypt.gensalt()).decode
 
 # ---------------------------------------------------------------------------
 # Bloqueo temporal tras varios intentos fallidos de /login (fuerza bruta).
-# En memoria del proceso: es una primera barrera simple; para un control más
-# robusto (por IP, entre instancias) se recomienda Cloud Armor por delante de
-# Cloud Run — ver informe de seguridad.
+# El contador vive en la base (tabla login_intentos, ver migracion_login_intentos.sql)
+# para que lo compartan TODAS las instancias de Cloud Run y sobreviva a los
+# despliegues. Plan B: si la tabla no existe o la base falla, se usa un contador
+# en memoria del proceso (como antes) para no dejar a nadie sin poder entrar.
+# Además hay un límite por IP en Cloud Armor (regla 900).
 # ---------------------------------------------------------------------------
 MAX_INTENTOS_LOGIN = 5
 BLOQUEO_MINUTOS = 15
-_intentos_login: dict[str, dict] = {}  # usuario (lowercase) -> {"fallos": int, "bloqueado_hasta": datetime | None}
+OLVIDAR_FALLOS_HORAS = 24   # los fallos sueltos se olvidan tras este tiempo sin nuevos intentos
+_intentos_login: dict[str, dict] = {}  # plan B: usuario (lowercase) -> {"fallos": int, "bloqueado_hasta": datetime | None}
+logger = logging.getLogger("auth")
 
 
-def segundos_bloqueo_restante(usuario: str) -> int:
-    """0 si el usuario puede intentar iniciar sesión; si no, los segundos que
-    le quedan de bloqueo."""
-    entrada = _intentos_login.get(usuario.lower())
+def _clave(usuario: str) -> str:
+    return (usuario or "").strip().lower()[:100]
+
+
+def _restante_memoria(clave: str) -> int:
+    entrada = _intentos_login.get(clave)
     if not entrada or not entrada.get("bloqueado_hasta"):
         return 0
     restante = (entrada["bloqueado_hasta"] - datetime.now(timezone.utc)).total_seconds()
     return max(0, int(restante))
 
 
+def segundos_bloqueo_restante(usuario: str) -> int:
+    """0 si el usuario puede intentar iniciar sesión; si no, los segundos que
+    le quedan de bloqueo."""
+    clave = _clave(usuario)
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT GREATEST(0, CEIL(EXTRACT(EPOCH FROM (bloqueado_hasta - NOW())))) "
+                "FROM login_intentos WHERE usuario = %s AND bloqueado_hasta > NOW()",
+                (clave,),
+            )
+            fila = cur.fetchone()
+        conn.rollback()
+        return int(fila[0]) if fila else 0
+    except Exception:
+        logger.warning("login_intentos no disponible: se usa el contador en memoria", exc_info=True)
+        return _restante_memoria(clave)
+    finally:
+        if conn:
+            release_connection(conn)
+
+
 def registrar_intento_fallido(usuario: str) -> None:
-    clave = usuario.lower()
-    entrada = _intentos_login.setdefault(clave, {"fallos": 0, "bloqueado_hasta": None})
-    entrada["fallos"] += 1
-    if entrada["fallos"] >= MAX_INTENTOS_LOGIN:
-        entrada["bloqueado_hasta"] = datetime.now(timezone.utc) + timedelta(minutes=BLOQUEO_MINUTOS)
-        entrada["fallos"] = 0
+    clave = _clave(usuario)
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            # El UPSERT bloquea la fila: dos instancias que fallen a la vez no se pisan.
+            cur.execute(
+                """INSERT INTO login_intentos (usuario, fallos, ultimo_fallo) VALUES (%s, 1, NOW())
+                   ON CONFLICT (usuario) DO UPDATE SET
+                     fallos = CASE WHEN login_intentos.ultimo_fallo < NOW() - make_interval(hours => %s)
+                                   THEN 1 ELSE login_intentos.fallos + 1 END,
+                     ultimo_fallo = NOW()
+                   RETURNING fallos""",
+                (clave, OLVIDAR_FALLOS_HORAS),
+            )
+            fallos = cur.fetchone()[0]
+            if fallos >= MAX_INTENTOS_LOGIN:
+                cur.execute(
+                    "UPDATE login_intentos SET bloqueado_hasta = NOW() + make_interval(mins => %s), fallos = 0 "
+                    "WHERE usuario = %s",
+                    (BLOQUEO_MINUTOS, clave),
+                )
+            # Limpieza: filas viejas (p. ej. nombres de usuario inventados) no se acumulan.
+            cur.execute(
+                "DELETE FROM login_intentos WHERE ultimo_fallo < NOW() - make_interval(hours => %s) "
+                "AND (bloqueado_hasta IS NULL OR bloqueado_hasta < NOW())",
+                (OLVIDAR_FALLOS_HORAS,),
+            )
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        logger.warning("login_intentos no disponible: se usa el contador en memoria", exc_info=True)
+        entrada = _intentos_login.setdefault(clave, {"fallos": 0, "bloqueado_hasta": None})
+        entrada["fallos"] += 1
+        if entrada["fallos"] >= MAX_INTENTOS_LOGIN:
+            entrada["bloqueado_hasta"] = datetime.now(timezone.utc) + timedelta(minutes=BLOQUEO_MINUTOS)
+            entrada["fallos"] = 0
+    finally:
+        if conn:
+            release_connection(conn)
 
 
 def registrar_login_exitoso(usuario: str) -> None:
-    _intentos_login.pop(usuario.lower(), None)
+    clave = _clave(usuario)
+    _intentos_login.pop(clave, None)
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM login_intentos WHERE usuario = %s", (clave,))
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        logger.warning("No se pudo limpiar login_intentos", exc_info=True)
+    finally:
+        if conn:
+            release_connection(conn)
 
 
 def hash_password(password: str) -> str:
@@ -102,5 +183,29 @@ def decodificar_token(token: str) -> int | None:
     try:
         payload = jwt.decode(token, os.environ["SECRET_KEY"], algorithms=["HS256"])
         return payload["asesor_id"]
-    except jwt.PyJWTError:
+    except (jwt.PyJWTError, KeyError):
+        return None
+
+
+# Token intermedio del 2FA: se entrega tras acertar la contraseña y SOLO sirve para
+# los endpoints /auth/2fa/*. No lleva "asesor_id", así que decodificar_token() lo rechaza
+# y no abre ninguna consola ni WebSocket.
+PRE2FA_TTL_MINUTOS = 5
+
+
+def crear_token_pre2fa(asesor_id: int, fase: str) -> str:
+    """fase: 'verificar' (ya tiene 2FA) | 'enrolar' (debe configurarlo ahora)."""
+    payload = {
+        "pre2fa": asesor_id,
+        "fase": fase,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=PRE2FA_TTL_MINUTOS),
+    }
+    return jwt.encode(payload, os.environ["SECRET_KEY"], algorithm="HS256")
+
+
+def decodificar_pre2fa(token: str) -> tuple[int, str] | None:
+    try:
+        payload = jwt.decode(token, os.environ["SECRET_KEY"], algorithms=["HS256"])
+        return payload["pre2fa"], payload["fase"]
+    except (jwt.PyJWTError, KeyError):
         return None

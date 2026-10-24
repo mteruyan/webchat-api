@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sofi — Sanitas Perú</title>
+<meta name="theme-color" content="#0A4C8C">
+<link rel="manifest" href="/app/manifest.webmanifest">
+<link rel="icon" href="/app/icon-192.png">
+<link rel="apple-touch-icon" href="/app/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sofi">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root { --azul:#0A4C8C; --azul2:#073A6B; --verde:#2FB88B; --fondo:#F7F9FB; --texto:#1A2B3C; --suave:#5B6B7C; --borde:#E1E8EF; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; }
+  body { font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fondo); color: var(--texto); display:flex; flex-direction:column; min-height:100dvh; }
+  @font-face { font-family:"Plus Jakarta Sans"; src:url(/static/imagenes/plus-jakarta-sans.woff2) format("woff2"); font-display:swap; }
+  header { background: linear-gradient(160deg, var(--azul), var(--azul2)); color:#fff; padding: max(22px, env(safe-area-inset-top)) 20px 56px; }
+  header .fila { display:flex; align-items:center; gap:12px; }
+  header img { width:48px; height:48px; border-radius:50%; background:#fff; }
+  header h1 { margin:0; font-size:19px; font-weight:700; }
+  header p { margin:2px 0 0; font-size:13px; opacity:.85; }
+  main { flex:1; padding: 0 16px 24px; margin-top:-36px; max-width: 520px; width:100%; margin-left:auto; margin-right:auto; }
+  .tarjeta-chat { width:100%; border:0; text-align:left; background:#fff; border-radius:18px; padding:18px; display:flex; align-items:center; gap:14px; box-shadow:0 6px 22px rgba(10,76,140,.16); cursor:pointer; font:inherit; color:inherit; }
+  .tarjeta-chat .ico { width:52px; height:52px; border-radius:14px; background: var(--verde); display:grid; place-items:center; font-size:26px; flex-shrink:0; }
+  .tarjeta-chat b { display:block; font-size:16px; }
+  .tarjeta-chat span { font-size:13px; color:var(--suave); }
+  .tarjeta-chat .flecha { margin-left:auto; color:var(--azul); font-size:22px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--suave); margin:26px 4px 10px; }
+  .rejilla { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .mosaico { background:#fff; border:1px dashed var(--borde); border-radius:14px; padding:14px; opacity:.75; }
+  .mosaico .ico { font-size:22px; }
+  .mosaico b { display:block; font-size:14px; margin-top:6px; }
+  .mosaico small { color:var(--suave); font-size:11.5px; }
+  .etiqueta { display:inline-block; background:#EEF3F8; color:var(--azul); font-size:10.5px; font-weight:700; border-radius:999px; padding:2px 8px; margin-top:6px; }
+  .instalar { margin-top:22px; width:100%; border:1px solid var(--borde); background:#fff; color:var(--azul); font:inherit; font-weight:600; border-radius:12px; padding:12px; display:none; cursor:pointer; }
+  .ayuda-ios { display:none; margin-top:18px; font-size:12.5px; color:var(--suave); background:#fff; border-radius:12px; padding:12px; border:1px solid var(--borde); }
+  .sin-red { display:none; background:#FFF4E5; color:#8a5a00; border-radius:12px; padding:10px 12px; font-size:13px; margin-bottom:12px; }
+  .avisos { margin-top:14px; background:#fff; border:1px solid var(--borde); border-radius:14px; padding:14px; display:none; }
+  .avisos .fila { display:flex; align-items:center; gap:12px; }
+  .avisos .ico { font-size:22px; }
+  .avisos b { display:block; font-size:14px; }
+  .avisos small { color:var(--suave); font-size:12px; display:block; margin-top:2px; line-height:1.35; }
+  .avisos .acciones { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .avisos button { border:1px solid var(--borde); background:#fff; color:var(--azul); font:inherit; font-weight:600; font-size:13.5px; border-radius:10px; padding:9px 14px; cursor:pointer; }
+  .avisos button.principal { background:var(--azul); color:#fff; border-color:var(--azul); }
+  .avisos button:disabled { opacity:.6; cursor:default; }
+  .avisos .msg { font-size:12.5px; margin-top:8px; color:var(--suave); }
+</style>
+</head>
+<body>
+<header>
+  <div class="fila">
+    <img src="/static/imagenes/sofi-cara.png" alt="">
+    <div><h1>Hola, soy Sofi</h1><p>Tu asistente de Sanitas Perú</p></div>
+  </div>
+</header>
+<main>
+  <div class="sin-red" id="sinRed">Sin conexión. Reconéctate a internet para chatear con Sofi.</div>
+  <button class="tarjeta-chat" id="btnChat">
+    <div class="ico">💬</div>
+    <div><b>Escribir a Sofi</b><span>Consultas, solicitudes o hablar con un asesor</span></div>
+    <div class="flecha">›</div>
+  </button>
+
+  <div class="avisos" id="avisos">
+    <div class="fila"><div class="ico">🔔</div><div><b id="avisosTitulo">Avisos de Sofi</b><small id="avisosTexto"></small></div></div>
+    <div class="acciones" id="avisosAcciones"></div>
+    <div class="msg" id="avisosMsg"></div>
+  </div>
+
+  <h2>Próximamente en el app</h2>
+  <div class="rejilla">
+    <div class="mosaico"><div class="ico">🛡️</div><b>Mis seguros</b><small>Pólizas y coberturas</small><br><span class="etiqueta">Maqueta</span></div>
+    <div class="mosaico"><div class="ico">📋</div><b>Mis solicitudes</b><small>Estado de tus trámites</small><br><span class="etiqueta">Maqueta</span></div>
+    <div class="mosaico"><div class="ico">💊</div><b>Mis entregas</b><small>Recetas y recordatorios</small><br><span class="etiqueta">Maqueta</span></div>
+    <div class="mosaico"><div class="ico">🏥</div><b>Red de clínicas</b><small>Dónde atenderte</small><br><span class="etiqueta">Maqueta</span></div>
+  </div>
+
+  <button class="instalar" id="btnInstalar">📲 Instalar app en este dispositivo</button>
+  <div class="ayuda-ios" id="ayudaIos">En iPhone: toca <b>Compartir</b> (□↑) y luego <b>Añadir a pantalla de inicio</b>.</div>
+</main>
+
+<script>
+  // Cargamos el widget DESPUÉS de fijar data-api-base (document.currentScript lo lee al ejecutarse).
+  const w = document.createElement("script");
+  w.src = "/widget.js"; w.dataset.apiBase = location.origin; w.async = false;
+  document.body.appendChild(w);
+
+  // En el app el chat va a pantalla completa y sin la burbuja flotante (la pantalla de inicio hace de lanzador).
+  function prepararWidget() {
+    const host = document.getElementById("sanitas-webchat-host");
+    if (!host || !host.shadowRoot) return setTimeout(prepararWidget, 150);
+    const st = document.createElement("style");
+    st.textContent = `
+      .burbuja { display:none !important; }
+      :host(:not(.movil)) .panel { right: max(0px, calc(50% - 240px)); bottom:0; width:min(100vw,480px); height:100dvh; max-height:none; border-radius:0; }
+    `;
+    host.shadowRoot.appendChild(st);
+    window.__sofiBurbuja = () => host.shadowRoot.querySelector(".burbuja");
+    window.__sofiPanel = () => host.shadowRoot.querySelector(".panel");
+    // ?ac=1 / ?wcs= / ?wct= (enlaces de SMS y QR) ya abren el panel solos desde widget.js.
+  }
+  prepararWidget();
+
+  document.getElementById("btnChat").onclick = () => {
+    const b = window.__sofiBurbuja && window.__sofiBurbuja();
+    if (b) b.click();
+  };
+
+  // Instalación
+  let eventoInstalar = null;
+  const btnInstalar = document.getElementById("btnInstalar");
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); eventoInstalar = e; btnInstalar.style.display = "block"; });
+  btnInstalar.onclick = async () => { if (!eventoInstalar) return; eventoInstalar.prompt(); await eventoInstalar.userChoice; eventoInstalar = null; btnInstalar.style.display = "none"; };
+  window.addEventListener("appinstalled", () => { btnInstalar.style.display = "none"; });
+  const esIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const instalada = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  if (esIos && !instalada) document.getElementById("ayudaIos").style.display = "block";
+
+  // Sin conexión
+  const sinRed = document.getElementById("sinRed");
+  const actualizarRed = () => { sinRed.style.display = navigator.onLine ? "none" : "block"; };
+  window.addEventListener("online", actualizarRed); window.addEventListener("offline", actualizarRed); actualizarRed();
+
+
+  // ---- Avisos (notificaciones push) y conteo de instalaciones ----------------
+  (function () {
+    const LS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+    let dispId = LS("sofi_dispositivo_id");
+    if (!dispId) {
+      dispId = (crypto.randomUUID ? crypto.randomUUID() : "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+      LS("sofi_dispositivo_id", dispId);
+    }
+    const modo = (window.matchMedia("(display-mode: standalone)").matches || navigator.standalone) ? "app" : "navegador";
+    const soportaPush = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    const permisoActual = () => (soportaPush ? Notification.permission : "no_soportado");
+    const token = () => LS("sanitas_webchat_sesion") || null;
+    const urlAbrir = location.origin + "/app?ac=1";
+    const post = (ruta, cuerpo, keepalive) => fetch(ruta, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo), keepalive: !!keepalive });
+
+    const caja = document.getElementById("avisos"), tit = document.getElementById("avisosTitulo"),
+          txt = document.getElementById("avisosTexto"), acc = document.getElementById("avisosAcciones"), msg = document.getElementById("avisosMsg");
+
+    const visita = (keepalive) => post("/push/visita", { dispositivo_id: dispId, sesion_token: token(), modo, permiso: permisoActual(), url_abrir: urlAbrir }, keepalive)
+      .then((r) => r.ok).catch(() => false);
+
+    function b64aU8(b64) {
+      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+      const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+      return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+    }
+    // Si el service worker no llega a registrarse, no se cuelga la pantalla: a los 5 s se rinde.
+    async function registro() {
+      const reg = await navigator.serviceWorker.getRegistration("/app");
+      if (reg) return reg;
+      return Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(() => no(new Error("sw")), 5000))]);
+    }
+
+    async function guardarSuscripcion(sub) {
+      const r = await post("/push/suscribir", { dispositivo_id: dispId, sesion_token: token(), modo, suscripcion: sub.toJSON(), url_abrir: urlAbrir });
+      if (!r.ok) throw new Error("servidor");
+    }
+    async function suscribir() {
+      const reg = await registro();
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const k = await (await fetch("/push/clave")).json();
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aU8(k.clave) });
+      }
+      await guardarSuscripcion(sub);
+      return sub;
+    }
+    function boton(texto, fn, principal) {
+      const b = document.createElement("button"); b.textContent = texto; if (principal) b.className = "principal";
+      b.onclick = async () => { b.disabled = true; try { await fn(); } finally { b.disabled = false; } };
+      acc.appendChild(b); return b;
+    }
+    async function pintar() {
+      acc.innerHTML = ""; msg.textContent = "";
+      const esIosNavegador = /iphone|ipad|ipod/i.test(navigator.userAgent) && modo !== "app";
+      if (!soportaPush) {
+        if (esIosNavegador) {
+          caja.style.display = "block"; tit.textContent = "Recibe avisos de tu asesor";
+          txt.textContent = "En iPhone los avisos funcionan cuando instalas el app: toca Compartir y luego «Añadir a pantalla de inicio», y ábrela desde ahí.";
+        }
+        return;
+      }
+      const permiso = Notification.permission;
+      caja.style.display = "block";
+      if (permiso === "denied") {
+        tit.textContent = "Avisos bloqueados";
+        txt.textContent = "Bloqueaste los avisos para este sitio. Si quieres recibirlos, actívalos en la configuración del navegador o del teléfono.";
+        return;
+      }
+      const reg = await registro().catch(() => null);
+      const sub = reg ? await reg.pushManager.getSubscription() : null;
+      if (permiso === "granted" && sub) {
+        tit.textContent = "Avisos activados ✓";
+        txt.textContent = "Te avisaremos cuando tu asesor te responda o cuando puedas coordinar la entrega de tus medicamentos.";
+        boton("Enviarme un aviso de prueba", async () => {
+          const r = await (await post("/push/prueba", { dispositivo_id: dispId })).json().catch(() => ({}));
+          msg.textContent = r.ok ? "Listo: en unos segundos te llegará un aviso." : "No se pudo enviar el aviso de prueba.";
+        });
+        boton("Desactivar", async () => {
+          await sub.unsubscribe().catch(() => {});
+          await post("/push/cancelar", { dispositivo_id: dispId }).catch(() => {});
+          await pintar();
+        });
+        return;
+      }
+      tit.textContent = "Activa los avisos";
+      txt.textContent = "Entérate al instante cuando tu asesor te responda, aunque tengas el app cerrada. No mostramos datos de salud en el aviso.";
+      boton("Activar avisos", async () => {
+        try {
+          const p = await Notification.requestPermission();
+          if (p !== "granted") { await visita(); await pintar(); return; }
+          await suscribir();
+          await pintar();
+        } catch (e) { msg.textContent = "No se pudieron activar los avisos. Intenta de nuevo en un momento."; }
+      }, true);
+    }
+
+    // Arranque: registra la visita (cuenta la instalación si se abrió como app) y renueva la suscripción.
+    (async function () {
+      let habilitado = true;
+      try { const r = await fetch("/push/clave"); habilitado = r.ok; } catch (e) { habilitado = false; }
+      visita();
+      if (!habilitado) return;           // el servidor aún no tiene avisos habilitados: no se muestra nada
+      await pintar();
+      if (soportaPush && Notification.permission === "granted") { try { await suscribir(); } catch (e) {} }
+    })();
+
+    // Cuando ya existe la sesión del chat (o al salir del app) se vuelve a avisar, para enlazar el dispositivo con el cliente.
+    document.getElementById("btnChat").addEventListener("click", () => setTimeout(() => visita(), 15000));
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") visita(true); });
+    window.addEventListener("appinstalled", () => { visita(); });
+  })();
+
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/app-sw.js", { scope: "/app" }).catch(() => {});
+</script>
+</body>
+</html>
