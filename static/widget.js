@@ -289,6 +289,9 @@
     .responder-banner .texto-cita { flex: 1; border-left: 3px solid ${TOKENS.azul}; padding-left: 8px; opacity: .85; }
     .responder-banner button { background: none; border: none; font-size: 15px; cursor: pointer; color: ${TOKENS.textoSuave}; }
     .msg .msg-imagen { display: block; width: 100%; max-width: 260px; border-radius: 10px; margin-bottom: 6px; cursor: pointer; }
+    .msg.subiendo .msg-imagen { opacity: .55; }
+    .msg .msg-imagen.sin-previa { min-height: 140px; background: rgba(0,0,0,.08); }
+    .msg .estado-subida { font-size: 12px; opacity: .8; }
     .msg .msg-archivo-link { display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,.06); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; text-decoration: none; color: inherit; font-weight: 600; font-size: 13.5px; }
     .msg.bot .msg-archivo-link { background: #EAF1F9; color: var(--azul, #1a73e8); }
     .lightbox-overlay {
@@ -296,7 +299,13 @@
       display: none; align-items: center; justify-content: center; padding: 24px;
     }
     .lightbox-overlay.abierto { display: flex; }
-    .lightbox-overlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+    .lightbox-overlay img { max-width: 100%; max-height: 100%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.4); transform-origin: center center; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; touch-action: none; cursor: zoom-in; }
+    .lightbox-overlay img.zoom { cursor: grab; }
+    .lightbox-overlay img.arrastrando { cursor: grabbing; }
+    .lightbox-overlay .lb-barra { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; background: rgba(20,30,45,.88); border-radius: 999px; padding: 6px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+    .lightbox-overlay .lb-barra button { background: none; border: none; color: white; font-size: 20px; line-height: 1; min-width: 38px; height: 38px; border-radius: 999px; cursor: pointer; font-family: inherit; padding: 0; }
+    .lightbox-overlay .lb-barra button:hover { background: rgba(255,255,255,.18); }
+    .lightbox-overlay .lb-barra .lb-pct { color: white; font-size: 13px; min-width: 48px; text-align: center; }
     .lightbox-cerrar {
       position: absolute; top: 16px; right: 20px; color: white; font-size: 30px; line-height: 1;
       cursor: pointer; background: none; border: none; opacity: .85;
@@ -466,19 +475,55 @@
       border-radius: 8px; cursor: pointer; text-align: left; font-family: inherit;
     }
     .adjuntar-menu button:hover { background: ${TOKENS.fondo}; }
+    /* Cámara a pantalla completa, al estilo WhatsApp: la vista ocupa toda la pantalla y se ve COMPLETA
+       (object-fit: contain = exactamente lo que saldrá en la foto, sin recortes). */
     .camara-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 1000000;
-      display: flex; align-items: center; justify-content: center;
+      position: fixed; inset: 0; background: #000; z-index: 1000000; overflow: hidden;
+      font-family: inherit; color: white; touch-action: none; user-select: none; -webkit-user-select: none;
     }
-    .camara-caja { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; max-width: 420px; padding: 20px; }
-    .camara-caja video { width: 100%; border-radius: 12px; background: #000; max-height: 70vh; }
-    .camara-botones { display: flex; gap: 10px; width: 100%; }
-    .camara-botones button {
-      flex: 1; padding: 12px; border-radius: 999px; border: none; font-size: 14px;
-      font-weight: 600; cursor: pointer; font-family: inherit;
+    .camara-overlay .cam-vista { position: absolute; inset: 0; }
+    .camara-overlay .cam-vista video, .camara-overlay .cam-vista .cam-revision {
+      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000;
     }
-    .camara-cancelar { background: rgba(255,255,255,.15); color: white; }
-    .camara-tomar { background: ${TOKENS.azul}; color: white; }
+    .camara-overlay.espejo .cam-vista video { transform: scaleX(-1); }
+    .camara-overlay .cam-destello { position: absolute; inset: 0; background: white; opacity: 0; pointer-events: none; transition: opacity .25s ease-out; }
+    .camara-overlay .cam-destello.activo { opacity: .85; transition: none; }
+    .camara-overlay .cam-arriba {
+      position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center;
+      padding: max(14px, env(safe-area-inset-top)) 16px 28px; background: linear-gradient(rgba(0,0,0,.55), transparent);
+    }
+    .camara-overlay .cam-abajo {
+      position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-around; align-items: center;
+      padding: 34px 20px max(22px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.6));
+    }
+    .camara-overlay .cam-btn {
+      width: 48px; height: 48px; border-radius: 50%; border: none; background: rgba(0,0,0,.4); color: white;
+      font-size: 22px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      font-family: inherit; padding: 0;
+    }
+    .camara-overlay .cam-btn:hover { background: rgba(255,255,255,.2); }
+    .camara-overlay .cam-btn.encendido { background: #FFD54F; color: #000; }
+    .camara-overlay .cam-btn.oculto { visibility: hidden; }
+    .camara-overlay .cam-disparo {
+      width: 76px; height: 76px; border-radius: 50%; border: 5px solid white; background: rgba(255,255,255,.25);
+      cursor: pointer; padding: 0; position: relative; transition: transform .1s;
+    }
+    .camara-overlay .cam-disparo::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: white; }
+    .camara-overlay .cam-disparo:active { transform: scale(.92); }
+    .camara-overlay .cam-disparo:disabled { opacity: .5; cursor: default; }
+    .camara-overlay .cam-zoom {
+      position: absolute; left: 50%; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 108px); transform: translateX(-50%);
+      background: rgba(0,0,0,.5); border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 600; display: none;
+    }
+    .camara-overlay .cam-zoom.visible { display: block; }
+    .camara-overlay .cam-revision-botones { justify-content: space-between; gap: 12px; }
+    .camara-overlay .cam-revision-botones button {
+      flex: 1; max-width: 200px; padding: 14px; border-radius: 999px; border: none; font-size: 15px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    .camara-overlay .cam-repetir { background: rgba(255,255,255,.18); color: white; }
+    .camara-overlay .cam-enviar { background: ${TOKENS.verde}; color: white; }
+    .camara-overlay .cam-oculto { display: none !important; }
     /* Celular: la clase "movil" y la variable --k las pone el JS (ver ajustarMovil).
        --k compensa páginas sin <meta viewport>, donde el navegador móvil dibuja la
        página a ~980px y encoge todo (burbuja y panel se ven diminutos). */
@@ -487,6 +532,11 @@
       height: calc(100vh / var(--k, 1)); height: calc(100dvh / var(--k, 1));
       max-height: none; border-radius: 0;
       transform: scale(var(--k, 1)); transform-origin: bottom right;
+    }
+    :host(.movil) .camara-overlay {
+      inset: auto; top: 0; left: 0; width: calc(100vw / var(--k, 1));
+      height: calc(100vh / var(--k, 1)); height: calc(100dvh / var(--k, 1));
+      transform: scale(var(--k, 1)); transform-origin: top left;
     }
     :host(.movil) .cabecera { padding-top: max(16px, env(safe-area-inset-top)); }
     :host(.movil) .pie { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
@@ -581,6 +631,12 @@
     <div class="lightbox-overlay">
       <button class="lightbox-cerrar" aria-label="Cerrar">✕</button>
       <img src="" alt="" />
+      <div class="lb-barra">
+        <button type="button" class="lb-menos" title="Alejar" aria-label="Alejar">&minus;</button>
+        <span class="lb-pct">100%</span>
+        <button type="button" class="lb-mas" title="Acercar" aria-label="Acercar">+</button>
+        <button type="button" class="lb-reset" title="Tamaño original" aria-label="Restablecer zoom" style="font-size:13px;">100%</button>
+      </div>
     </div>
   `;
 
@@ -827,15 +883,97 @@
   }
 
   function abrirLightbox(url) {
+    lbReset();
     $lightboxImg.src = url;
     $lightboxOverlay.classList.add("abierto");
   }
   function cerrarLightbox() {
     $lightboxOverlay.classList.remove("abierto");
     $lightboxImg.src = "";
+    lbReset();
   }
+
+  // ---- Zoom de la imagen ampliada (igual que en la consola del asesor/supervisor) ----
+  // Botones −/+ y 100%, rueda del mouse, pellizco con dos dedos, doble toque/clic, y arrastrar
+  // para moverla cuando está ampliada.
+  const LB_MIN = 0.5, LB_MAX = 6;
+  let lbEsc = 1, lbX = 0, lbY = 0, lbMovio = false;
+  const $lbPct = $lightboxOverlay.querySelector(".lb-pct");
+  function lbAplicar() {
+    $lightboxImg.style.transform = `translate(${lbX}px,${lbY}px) scale(${lbEsc})`;
+    $lightboxImg.classList.toggle("zoom", lbEsc > 1);
+    $lbPct.textContent = Math.round(lbEsc * 100) + "%";
+  }
+  function lbReset() { lbEsc = 1; lbX = 0; lbY = 0; lbAplicar(); }
+  function lbZoom(nuevo) {
+    lbEsc = Math.min(LB_MAX, Math.max(LB_MIN, nuevo));
+    if (lbEsc <= 1) { lbX = 0; lbY = 0; }
+    lbAplicar();
+  }
+  $lightboxOverlay.querySelector(".lb-mas").addEventListener("click", (e) => { e.stopPropagation(); lbZoom(lbEsc * 1.25); });
+  $lightboxOverlay.querySelector(".lb-menos").addEventListener("click", (e) => { e.stopPropagation(); lbZoom(lbEsc / 1.25); });
+  $lightboxOverlay.querySelector(".lb-reset").addEventListener("click", (e) => { e.stopPropagation(); lbReset(); });
+  $lightboxOverlay.addEventListener("wheel", (e) => {
+    if (!$lightboxOverlay.classList.contains("abierto")) return;
+    e.preventDefault();
+    lbZoom(lbEsc * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+  }, { passive: false });
+  (function () {
+    const punt = new Map();
+    let ini = null, distIni = 0, escIni = 1, ultimoToque = 0;
+    $lightboxImg.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      punt.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      lbMovio = false;
+      try { $lightboxImg.setPointerCapture(e.pointerId); } catch (_) { /* nada */ }
+      if (punt.size === 2) {
+        const [a, b] = [...punt.values()];
+        distIni = Math.hypot(a.x - b.x, a.y - b.y); escIni = lbEsc; ini = null;
+      } else {
+        ini = { x: e.clientX, y: e.clientY, bx: lbX, by: lbY };
+      }
+      if (lbEsc > 1) $lightboxImg.classList.add("arrastrando");
+    });
+    $lightboxImg.addEventListener("pointermove", (e) => {
+      if (!punt.has(e.pointerId)) return;
+      punt.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (punt.size === 2 && distIni) {
+        const [a, b] = [...punt.values()];
+        lbMovio = true;
+        lbZoom(escIni * Math.hypot(a.x - b.x, a.y - b.y) / distIni);
+      } else if (ini && lbEsc > 1) {
+        const dx = e.clientX - ini.x, dy = e.clientY - ini.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) lbMovio = true;
+        lbX = ini.bx + dx; lbY = ini.by + dy; lbAplicar();
+      }
+    });
+    const fin = (e) => {
+      const eraUnSoloDedo = punt.size === 1;
+      punt.delete(e.pointerId);
+      $lightboxImg.classList.remove("arrastrando");
+      if (punt.size < 2) distIni = 0;
+      if (punt.size === 0) ini = null;
+      // Doble toque / doble clic: amplía al 250% o vuelve al 100% (hecho a mano: en iPhone el
+      // evento dblclick no llega con touch-action: none).
+      if (e.type === "pointerup" && eraUnSoloDedo && !lbMovio) {
+        const ahora = Date.now();
+        if (ahora - ultimoToque < 300) { ultimoToque = 0; if (lbEsc > 1) lbReset(); else lbZoom(2.5); }
+        else ultimoToque = ahora;
+      }
+      setTimeout(() => { lbMovio = false; }, 0);
+    };
+    $lightboxImg.addEventListener("pointerup", fin);
+    $lightboxImg.addEventListener("pointercancel", fin);
+  })();
+  document.addEventListener("keydown", (e) => {
+    if (!$lightboxOverlay.classList.contains("abierto")) return;
+    if (e.key === "Escape") cerrarLightbox();
+    else if (e.key === "+" || e.key === "=") lbZoom(lbEsc * 1.25);
+    else if (e.key === "-" || e.key === "_") lbZoom(lbEsc / 1.25);
+    else if (e.key === "0") lbReset();
+  });
   $lightboxCerrar.addEventListener("click", cerrarLightbox);
-  $lightboxOverlay.addEventListener("click", (e) => { if (e.target === $lightboxOverlay) cerrarLightbox(); });
+  $lightboxOverlay.addEventListener("click", (e) => { if (e.target === $lightboxOverlay && !lbMovio) cerrarLightbox(); });
 
   let ws = null;
   let noLeidos = 0;
@@ -1614,7 +1752,7 @@
       }
       div.appendChild(hora);
       agregarBotonAcciones(div, {
-        tipo, texto, enviadoEnMs, esArchivo: !!imagenUrl,
+        tipo, texto, enviadoEnMs, esArchivo: !!imagenUrl || !!extra.esArchivo,
       });
     }
     $cuerpo.appendChild(div);
@@ -1632,6 +1770,7 @@
       noLeidos++;
       actualizarBadge();
     }
+    return div;
   }
 
   function marcarMensajeRecibido(mensajeId, recibido) {
@@ -3005,77 +3144,265 @@
     const overlay = document.createElement("div");
     overlay.className = "camara-overlay";
     overlay.innerHTML = `
-      <div class="camara-caja">
+      <div class="cam-vista">
         <video autoplay playsinline muted></video>
-        <canvas style="display:none;"></canvas>
-        <div class="camara-botones">
-          <button type="button" class="camara-cancelar">✕ Cancelar</button>
-          <button type="button" class="camara-tomar">📸 Tomar foto</button>
-        </div>
+        <canvas class="cam-revision cam-oculto" aria-label="Foto tomada"></canvas>
+      </div>
+      <div class="cam-destello"></div>
+      <div class="cam-arriba">
+        <button type="button" class="cam-btn cam-cerrar" title="Cerrar (Esc)" aria-label="Cerrar cámara">✕</button>
+        <button type="button" class="cam-btn cam-luz oculto" title="Luz" aria-label="Encender o apagar la luz">⚡</button>
+      </div>
+      <div class="cam-zoom">1.0x</div>
+      <div class="cam-abajo cam-controles">
+        <button type="button" class="cam-btn cam-galeria" title="Elegir de la galería" aria-label="Elegir una foto de la galería">🖼️</button>
+        <button type="button" class="cam-disparo" title="Tomar foto (Espacio)" aria-label="Tomar foto"></button>
+        <button type="button" class="cam-btn cam-girar oculto" title="Cambiar de cámara" aria-label="Cambiar entre cámara frontal y trasera">🔄</button>
+      </div>
+      <div class="cam-abajo cam-revision-botones cam-oculto">
+        <button type="button" class="cam-repetir">↺ Repetir</button>
+        <button type="button" class="cam-enviar">Enviar ➤</button>
       </div>
     `;
     root.appendChild(overlay);
-    const video = overlay.querySelector("video");
-    const canvas = overlay.querySelector("canvas");
+    const $ = (sel) => overlay.querySelector(sel);
+    const video = $("video");
+    // El mismo canvas sirve de "foto congelada" en la revisión y de origen del JPG.
+    const canvas = $(".cam-revision");
+    const btnDisparo = $(".cam-disparo");
+    const btnLuz = $(".cam-luz");
+    const btnGirar = $(".cam-girar");
+    const $zoom = $(".cam-zoom");
+    const esMovil = host.classList.contains("movil");
 
-    let stream;
-    try {
-      // Sin restricciones el navegador entrega 640x480. Se pide la máxima resolución que la cámara permita
-      // (ideal 4K; el navegador baja a lo que soporte el dispositivo).
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 4096 }, height: { ideal: 2160 } },
-      });
-    } catch (e1) {
+    let stream = null;
+    let track = null;
+    let facing = "environment";
+    let luzEncendida = false;
+    let zoomCap = null;          // {min, max, step} si la cámara permite zoom
+    let zoomActual = 1;
+    let enRevision = false;
+    let fotoPromesa = null;      // Promise<Blob|null> del JPG que se codifica mientras el cliente revisa
+    let cerrada = false;
+
+    async function iniciarStream(modo) {
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      stream = null; track = null;
+      let nuevo;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      } catch (e2) {
-        overlay.remove();
-        agregarMensaje("⚠️ No se pudo acceder a la cámara. Revisa los permisos del navegador.", "sistema");
-        return;
+        // Sin restricciones el navegador entrega 640x480. Se pide la máxima resolución que la cámara permita
+        // (ideal 4K; el navegador baja a lo que soporte el dispositivo).
+        nuevo = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: modo }, width: { ideal: 4096 }, height: { ideal: 2160 } },
+        });
+      } catch (e1) {
+        nuevo = await navigator.mediaDevices.getUserMedia({ video: true });
       }
+      if (cerrada) { nuevo.getTracks().forEach((t) => t.stop()); return; }
+      stream = nuevo;
+      track = stream.getVideoTracks()[0] || null;
+      video.srcObject = stream;
+      const ajustes = (track && track.getSettings) ? track.getSettings() : {};
+      // Espejo como en WhatsApp: cámara frontal (o la webcam de la laptop, que no informa facingMode).
+      const frontal = ajustes.facingMode ? ajustes.facingMode === "user" : (modo === "user" || !esMovil);
+      overlay.classList.toggle("espejo", frontal);
+      // Luz (linterna) y zoom: solo si el navegador/cámara lo permiten (Chrome en Android, sobre todo).
+      const caps = (track && track.getCapabilities) ? track.getCapabilities() : {};
+      luzEncendida = false;
+      btnLuz.classList.remove("encendido");
+      btnLuz.classList.toggle("oculto", !caps.torch);
+      zoomCap = (caps.zoom && caps.zoom.max > caps.zoom.min) ? caps.zoom : null;
+      zoomActual = zoomCap ? (ajustes.zoom || zoomCap.min) : 1;
+      $zoom.classList.remove("visible");
     }
-    video.srcObject = stream;
+
+    try {
+      await iniciarStream(facing);
+    } catch (e) {
+      overlay.remove();
+      agregarMensaje("⚠️ No se pudo acceder a la cámara. Revisa los permisos del navegador.", "sistema");
+      return;
+    }
+    // Botón para cambiar de cámara solo si hay más de una (los nombres se conocen recién con el permiso dado).
+    try {
+      const dispositivos = await navigator.mediaDevices.enumerateDevices();
+      if (dispositivos.filter((d) => d.kind === "videoinput").length > 1) btnGirar.classList.remove("oculto");
+    } catch (_) { /* sin botón de girar */ }
 
     function cerrarCamara() {
-      stream.getTracks().forEach((t) => t.stop());
+      cerrada = true;
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      fotoPromesa = null;
+      document.removeEventListener("keydown", teclas, true);
       overlay.remove();
     }
+    function modoCamara() {
+      enRevision = false;
+      fotoPromesa = null;
+      canvas.classList.add("cam-oculto");
+      video.classList.remove("cam-oculto");
+      $(".cam-controles").classList.remove("cam-oculto");
+      $(".cam-revision-botones").classList.add("cam-oculto");
+      $(".cam-enviar").disabled = false;
+      btnDisparo.disabled = false;
+    }
 
-    overlay.querySelector(".camara-cancelar").addEventListener("click", cerrarCamara);
-    // Foto fija a resolución completa del sensor (Chrome/Android y otros con ImageCapture); si no existe,
-    // se captura el cuadro del video, que ya viene a la máxima resolución pedida arriba.
+    // Captura INSTANTÁNEA, como WhatsApp: se copia al canvas el cuadro que el video muestra en el momento
+    // exacto del toque y se deja congelado en pantalla; el JPG se codifica por detrás mientras se revisa.
+    // (Antes se usaba ImageCapture.takePhoto(): en Android reconfigura el sensor y reenfoca, tarda 1-2 s y
+    // la foto salía de lo que la cámara veía DESPUÉS del toque.) El cuadro del video ya viene a la máxima
+    // resolución que la cámara entrega en vivo (se pide 4K al abrirla).
     const MAX_BYTES_FOTO = 9.5 * 1024 * 1024; // el servidor acepta hasta 10 MB
-    async function blobDesdeVideo() {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d").drawImage(video, 0, 0);
-      for (const calidad of [0.95, 0.85, 0.75]) {
+    async function codificarJpg() {
+      for (const calidad of [0.92, 0.85, 0.75]) {
         const b = await new Promise((r) => canvas.toBlob(r, "image/jpeg", calidad));
         if (b && b.size <= MAX_BYTES_FOTO) return b;
       }
       return null;
     }
-    overlay.querySelector(".camara-tomar").addEventListener("click", async (ev) => {
-      ev.currentTarget.disabled = true;
-      let blob = null;
-      try {
-        const track = stream.getVideoTracks()[0];
-        if (window.ImageCapture && track) {
-          const foto = await new window.ImageCapture(track).takePhoto();
-          if (foto && foto.size <= MAX_BYTES_FOTO) blob = foto;
-        }
-      } catch (e) { blob = null; }
-      if (!blob) blob = await blobDesdeVideo();
+    function tomarFoto() {
+      if (btnDisparo.disabled || !track || !video.videoWidth) return;
+      btnDisparo.disabled = true;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);    // <- el instante del toque
+      const destello = $(".cam-destello");
+      destello.classList.add("activo");
+      setTimeout(() => destello.classList.remove("activo"), 60);
+      enRevision = true;
+      canvas.classList.remove("cam-oculto");
+      video.classList.add("cam-oculto");
+      $(".cam-controles").classList.add("cam-oculto");
+      $zoom.classList.remove("visible");
+      $(".cam-revision-botones").classList.remove("cam-oculto");
+      fotoPromesa = codificarJpg();
+    }
+    async function enviarFoto() {
+      if (!enRevision || !fotoPromesa) return;
+      const btnEnviar = $(".cam-enviar");
+      btnEnviar.disabled = true;
+      const promesa = fotoPromesa;
+      const blob = await promesa;       // normalmente ya está lista: se codificó mientras se revisaba
+      if (cerrada || promesa !== fotoPromesa) return;   // cerró o tocó "Repetir" mientras tanto
+      if (!blob) {
+        btnEnviar.disabled = false;
+        agregarMensaje("⚠️ La foto es demasiado pesada. Intenta de nuevo.", "sistema");
+        modoCamara();
+        return;
+      }
       cerrarCamara();
-      if (blob) subirArchivo(blob, `foto-${Date.now()}.jpg`);
-      else agregarMensaje("⚠️ La foto es demasiado pesada. Intenta de nuevo.", "sistema");
+      subirArchivo(blob, `foto-${Date.now()}.jpg`);
+    }
+
+    $(".cam-cerrar").addEventListener("click", cerrarCamara);
+    btnDisparo.addEventListener("click", tomarFoto);
+    $(".cam-repetir").addEventListener("click", modoCamara);
+    $(".cam-enviar").addEventListener("click", enviarFoto);
+    $(".cam-galeria").addEventListener("click", () => { cerrarCamara(); $archivoInputFotos.click(); });
+    btnGirar.addEventListener("click", async () => {
+      btnGirar.disabled = true;
+      const anterior = facing;
+      facing = facing === "environment" ? "user" : "environment";
+      try { await iniciarStream(facing); }
+      catch (e) { facing = anterior; try { await iniciarStream(facing); } catch (_) { /* nada */ } }
+      btnGirar.disabled = false;
     });
+    btnLuz.addEventListener("click", async () => {
+      if (!track) return;
+      try {
+        await track.applyConstraints({ advanced: [{ torch: !luzEncendida }] });
+        luzEncendida = !luzEncendida;
+        btnLuz.classList.toggle("encendido", luzEncendida);
+      } catch (_) { btnLuz.classList.add("oculto"); }
+    });
+
+    // Zoom de la cámara (pellizco en el celular, rueda en la laptop) — solo si la cámara lo soporta.
+    let ocultarZoomT = null;
+    async function aplicarZoom(valor) {
+      if (!zoomCap || !track) return;
+      const v = Math.min(zoomCap.max, Math.max(zoomCap.min, valor));
+      zoomActual = v;
+      $zoom.textContent = (v / (zoomCap.min || 1)).toFixed(1) + "x";
+      $zoom.classList.add("visible");
+      clearTimeout(ocultarZoomT);
+      ocultarZoomT = setTimeout(() => $zoom.classList.remove("visible"), 1500);
+      try { await track.applyConstraints({ advanced: [{ zoom: v }] }); } catch (_) { /* nada */ }
+    }
+    const dedos = new Map();
+    let distIni = 0, zoomIni = 1;
+    const vista = $(".cam-vista");
+    vista.addEventListener("pointerdown", (e) => {
+      dedos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (dedos.size === 2) {
+        const [a, b] = [...dedos.values()];
+        distIni = Math.hypot(a.x - b.x, a.y - b.y); zoomIni = zoomActual;
+      }
+    });
+    vista.addEventListener("pointermove", (e) => {
+      if (!dedos.has(e.pointerId)) return;
+      dedos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (dedos.size === 2 && distIni && !video.classList.contains("cam-oculto")) {
+        const [a, b] = [...dedos.values()];
+        aplicarZoom(zoomIni * Math.hypot(a.x - b.x, a.y - b.y) / distIni);
+      }
+    });
+    const finDedo = (e) => { dedos.delete(e.pointerId); if (dedos.size < 2) distIni = 0; };
+    vista.addEventListener("pointerup", finDedo);
+    vista.addEventListener("pointercancel", finDedo);
+    vista.addEventListener("wheel", (e) => {
+      if (!zoomCap || video.classList.contains("cam-oculto")) return;
+      e.preventDefault();
+      aplicarZoom(zoomActual + (e.deltaY < 0 ? 1 : -1) * Math.max(zoomCap.step || 0.1, (zoomCap.max - zoomCap.min) / 20));
+    }, { passive: false });
+
+    // Teclado (laptop): Esc cierra (o vuelve desde la revisión), Espacio/Enter toma la foto o la envía.
+    function teclas(e) {
+      if (e.repeat) return;
+      // Que un botón con foco no se "clickee" además con la misma tecla (doble acción).
+      if (root.activeElement && overlay.contains(root.activeElement)) root.activeElement.blur();
+      if (e.key === "Escape") {
+        e.preventDefault(); e.stopPropagation();
+        if (enRevision) modoCamara(); else cerrarCamara();
+      } else if (e.key === " " || e.key === "Enter") {
+        e.preventDefault(); e.stopPropagation();
+        if (enRevision) enviarFoto(); else tomarFoto();
+      }
+    }
+    document.addEventListener("keydown", teclas, true);
   }
+
+  // Extensiones de foto que se previsualizan como en WhatsApp (HEIC/AVIF/TIFF el servidor los pasa a JPG).
+  const EXT_FOTO_LOCAL = /\.(jpe?g|jpe|jfif|png|gif|webp|bmp|heic|heif|avif|tiff?)$/i;
 
   async function subirArchivo(file, nombreForzado) {
     const nombre = nombreForzado || file.name || "archivo";
     const respondidoAId = respondiendoAId;
-    agregarMensaje(`📎 Subiendo ${nombre}...`, "usuario", null, null, { respondidoA: respondiendoAPreview });
+    // Como WhatsApp: si es una foto, la burbuja la muestra AL INSTANTE (copia local, semitransparente
+    // mientras sube) y al terminar se cambia por la del servidor (ya en JPG). Documentos: nombre del archivo.
+    const esFoto = (file.type || "").startsWith("image/") || EXT_FOTO_LOCAL.test(nombre);
+    const div = agregarMensaje(esFoto ? "" : `📎 ${nombre}`, "usuario", null, null,
+      { respondidoA: respondiendoAPreview, esArchivo: true });
+    div.classList.add("subiendo");
+    const spanTexto = div.querySelector(".texto-mensaje");
+    const estadoSubida = document.createElement("span");
+    estadoSubida.className = "estado-subida";
+    estadoSubida.textContent = "⏳ Enviando...";
+    spanTexto.after(estadoSubida);
+    let localUrl = null;
+    let img = null;
+    if (esFoto) {
+      img = document.createElement("img");
+      img.className = "msg-imagen";
+      try { localUrl = URL.createObjectURL(file); } catch (_) { localUrl = null; }
+      // HEIC no se puede dibujar en Chrome/Android: queda un recuadro gris hasta que llegue el JPG del servidor.
+      img.onerror = () => { img.onerror = null; img.removeAttribute("src"); img.classList.add("sin-previa"); };
+      if (localUrl) img.src = localUrl; else img.classList.add("sin-previa");
+      img.addEventListener("click", () => { const u = img.dataset.urlServidor || localUrl; if (u) abrirLightbox(u); });
+      spanTexto.before(img);
+      spanTexto.style.display = "none";
+      scrollAlFinal();
+    }
+    const liberarLocal = () => { if (localUrl) { try { URL.revokeObjectURL(localUrl); } catch (_) { /* nada */ } localUrl = null; } };
     agregarMensaje(textoEsperaSubida, "sistema");
     cancelarRespuesta();
     $textoInput.disabled = true;
@@ -3090,7 +3417,39 @@
       if (!resp.ok) throw new Error("upload falló");
       const data = await resp.json();
       enviar({ type: "archivo_subido", payload: { url: data.url, ruta: data.ruta, respondido_a_id: respondidoAId } });
+      div.classList.remove("subiendo");
+      estadoSubida.remove();
+      const urlServidor = urlArchivoWidget(data.ruta);
+      if (img && esImagen(data.ruta)) {
+        img.dataset.urlServidor = urlServidor;
+        const definitiva = new Image();
+        definitiva.onload = () => { img.onerror = null; img.classList.remove("sin-previa"); img.src = urlServidor; liberarLocal(); };
+        definitiva.onerror = () => { /* se queda la copia local; al recargar se verá la del servidor */ };
+        definitiva.src = urlServidor;
+      } else {
+        // Documento (o una foto que el servidor no pudo convertir): enlace para abrirlo.
+        if (img) { img.remove(); liberarLocal(); }
+        spanTexto.style.display = "";
+        spanTexto.textContent = "";
+        const a = document.createElement("a");
+        a.href = urlServidor; a.target = "_blank"; a.rel = "noopener noreferrer";
+        a.className = "msg-archivo-link"; a.style.color = "inherit";
+        a.textContent = `📄 ${nombre}`;
+        spanTexto.appendChild(a);
+      }
     } catch (e) {
+      // No llegó al servidor: la burbuja queda marcada y se saca de la cola de ✓ para que el
+      // siguiente mensaje no reciba el id de esta.
+      div.classList.remove("subiendo");
+      estadoSubida.textContent = "⚠️ No se envió";
+      const check = div.querySelector(".check");
+      if (check) {
+        const i = checksPendientesRecibido.indexOf(check);
+        if (i >= 0) checksPendientesRecibido.splice(i, 1);
+        check.remove();
+      }
+      const j = divsPendientesId.indexOf(div);
+      if (j >= 0) divsPendientesId.splice(j, 1);
       agregarMensaje("⚠️ No se pudo subir el archivo. Intenta de nuevo.", "sistema");
     } finally {
       $textoInput.disabled = false;

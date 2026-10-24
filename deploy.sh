@@ -24,9 +24,7 @@
 # Mismo formato (51XXXXXXXXX separados por comas, celulares ya verificados por SMS en el webchat).
 # Para apagarlo sin desplegar: UPDATE bot_menus SET activo = FALSE WHERE codigo = 'mad_inicio';
 #
-# ALLOWED_ORIGINS incluye "https://marketeru.pe" SOLO mientras se prueba ahí
-# (galería de dentista) — cuando el widget quede embebido en www.sanitasperu.com
-# hay que QUITAR marketeru.pe de esta lista y volver a desplegar.
+# ALLOWED_ORIGINS: solo los dominios de Sanitas (marketeru.pe, que se usó para pruebas, ya se retiró).
 
 # UNA SOLA INSTANCIA (--max-instances=1, --concurrency=400): el estado de los WebSockets (quién esta conectado,
 # quién escucha cada conversación) vive en la memoria del proceso. Con 2+ instancias, el cliente puede quedar en
@@ -43,6 +41,6 @@
 gcloud run deploy webchat-api --source . \
   --project=sanitas-recetas-prod --region=us-central1 \
   --add-cloudsql-instances=sanitas-recetas-prod:us-central1:sanitas-recetas-db \
-  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com,https://marketeru.pe;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483" \
+  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483" \
   --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest,VAPID_PRIVATE_KEY=webchat-vapid-private:latest \
   --min-instances=1 --max-instances=1 --concurrency=400 --no-cpu-throttling --timeout=3600 --allow-unauthenticated

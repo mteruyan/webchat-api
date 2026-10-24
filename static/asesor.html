@@ -863,6 +863,17 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
       <h3 style="margin:0 0 8px;font-size:16px;">Invitar por SMS a escribirnos</h3>
       <p style="margin:0 0 12px;font-size:12.5px;color:var(--texto-suave);">Envía un SMS a un número que todavía no ha iniciado una conversación, con el enlace para escribirnos por el webchat. (Para un cliente que ya tiene conversación usa el botón 📲 SMS de esa conversación.)</p>
       <input id="smsInvitacionCelular" inputmode="numeric" maxlength="15" placeholder="Celular (9 dígitos, ej. 987654321)" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:14px;font-family:inherit;" />
+      <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Campaña de destino</label>
+      <select id="smsInvitacionCampana" style="padding:9px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;background:white;">
+        <option value="">Sin destino (enlace general: empieza con el bot)</option>
+      </select>
+      <div id="smsInvitacionAsesorWrap" style="display:none;">
+        <label style="margin:10px 0 4px;font-size:12px;color:var(--texto-suave);display:block;">Asesor</label>
+        <select id="smsInvitacionAsesor" style="width:100%;padding:9px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;background:white;">
+          <option value="">Cualquier asesor disponible de la campaña</option>
+        </select>
+        <div style="font-size:11.5px;color:var(--texto-suave);margin-top:4px;">Al abrir el enlace, el cliente habla con este asesor; si no está disponible, con otro de la misma campaña. Fuera de horario verá el mensaje de fuera de horario.</div>
+      </div>
       <label style="margin:12px 0 4px;font-size:12px;color:var(--texto-suave);">Mensaje que se enviará</label>
       <textarea id="smsInvitacionTexto" rows="4" maxlength="160" style="padding:10px 12px;border:1px solid var(--borde);border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical;"></textarea>
       <div id="smsInvitacionContador" style="text-align:right;font-size:12px;margin-top:3px;color:var(--texto-suave);">0 / 160</div>
@@ -2389,6 +2400,9 @@ function conectarWs() {
       case 'texto_sms_invitacion':
         if (window.__textoSmsInvitacion) window.__textoSmsInvitacion(p);
         break;
+      case 'destinos_sms_directo':
+        if (window.__destinosSmsDirecto) window.__destinosSmsDirecto(p);
+        break;
       case 'resultados_busqueda':
         renderResultadosBusqueda(p.resultados || []);
         break;
@@ -3024,11 +3038,34 @@ const EMOJIS_COMUNES = ['😀','😃','😄','😁','😆','😅','😂','🤣',
   const texto = document.getElementById('smsInvitacionTexto');
   const contador = document.getElementById('smsInvitacionContador');
   const MAX_SMS = 160;
+  const EXTRA_ENLACE_DIRECTO = 8;   // el enlace con token es unos 8 caracteres más largo que el general
+  const selCampana = document.getElementById('smsInvitacionCampana');
+  const selAsesor = document.getElementById('smsInvitacionAsesor');
+  const asesorWrap = document.getElementById('smsInvitacionAsesorWrap');
+  let destinosSms = [];
+  window.__destinosSmsDirecto = (p) => {
+    destinosSms = (p && p.campanas) || [];
+    const previa = selCampana.value;
+    selCampana.innerHTML = '<option value="">Sin destino (enlace general: empieza con el bot)</option>' +
+      destinosSms.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+    if (previa && destinosSms.some(c => String(c.id) === previa)) selCampana.value = previa;
+    pintarAsesoresSms();
+  };
+  function pintarAsesoresSms() {
+    const c = destinosSms.find(x => String(x.id) === selCampana.value);
+    asesorWrap.style.display = c ? 'block' : 'none';
+    selAsesor.innerHTML = '<option value="">Cualquier asesor disponible de la campaña</option>' +
+      (c ? (c.asesores || []).map(a => `<option value="${a.id}">${a.conectado ? '🟢' : '⚪'} ${escapeHtml(a.nombre)}${a.conectado ? '' : ' (desconectado)'}</option>`).join('') : '');
+    actualizarContador();
+  }
+  selCampana.addEventListener('change', pintarAsesoresSms);
+  function maxEfectivo() { return MAX_SMS - (selCampana.value ? EXTRA_ENLACE_DIRECTO : 0); }
   function actualizarContador() {
     const n = texto.value.length;
-    contador.textContent = n + ' / ' + MAX_SMS;
-    contador.style.color = n > MAX_SMS ? '#C0392B' : (n > MAX_SMS - 15 ? '#B7791F' : '');
-    btnEnviar.disabled = n === 0 || n > MAX_SMS;
+    const tope = maxEfectivo();
+    contador.textContent = n + ' / ' + tope + (selCampana.value ? ' (el enlace directo ocupa unos ' + EXTRA_ENLACE_DIRECTO + ' caracteres más)' : '');
+    contador.style.color = n > tope ? '#C0392B' : (n > tope - 15 ? '#B7791F' : '');
+    btnEnviar.disabled = n === 0 || n > tope;
   }
   texto.addEventListener('input', actualizarContador);
   window.__textoSmsInvitacion = (p) => { texto.value = p.texto || ''; actualizarContador(); };
@@ -3039,9 +3076,13 @@ const EMOJIS_COMUNES = ['😀','😃','😄','😁','😆','😅','😂','🤣',
     btnEnviar.disabled = false;
     btnEnviar.textContent = 'Enviar SMS';
     texto.value = '';
-    actualizarContador();
+    selCampana.value = '';
+    pintarAsesoresSms();
     overlay.style.display = 'flex';
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'texto_sms_invitacion', payload: {} }));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'texto_sms_invitacion', payload: {} }));
+      ws.send(JSON.stringify({ type: 'destinos_sms_directo', payload: {} }));
+    }
     setTimeout(() => input.focus(), 50);
   };
   document.getElementById('btnCancelarSmsInvitacion').onclick = () => { overlay.style.display = 'none'; };
@@ -3052,13 +3093,20 @@ const EMOJIS_COMUNES = ['😀','😃','😄','😁','😆','😅','😂','🤣',
     if (!ws || ws.readyState !== WebSocket.OPEN) { mostrar('Sin conexión con el servidor. Intenta de nuevo en un momento.', false); return; }
     const msg = texto.value.trim();
     if (!msg) { mostrar('El mensaje no puede estar vacío.', false); return; }
-    if (msg.length > MAX_SMS) { mostrar('El mensaje supera los ' + MAX_SMS + ' caracteres (' + msg.length + ').', false); return; }
+    if (msg.length > maxEfectivo()) { mostrar('El mensaje supera los ' + maxEfectivo() + ' caracteres (' + msg.length + ').', false); return; }
     if (!msg.includes('https://sanitasperu.com/?ac=1')) { mostrar('El mensaje debe incluir el enlace https://sanitasperu.com/?ac=1', false); return; }
-    if (!confirm('¿Enviar el SMS de invitación al ' + celular + '?')) return;
+    const campanaId = selCampana.value ? Number(selCampana.value) : null;
+    const asesorId = campanaId && selAsesor.value ? Number(selAsesor.value) : null;
+    let destinoTxt = '';
+    if (campanaId) {
+      const nc = selCampana.options[selCampana.selectedIndex].textContent;
+      destinoTxt = '\n\nDestino: ' + nc + ' — ' + (asesorId ? selAsesor.options[selAsesor.selectedIndex].textContent.replace(/^[^\s]+\s/, '') : 'cualquier asesor disponible');
+    }
+    if (!confirm('¿Enviar el SMS de invitación al ' + celular + '?' + destinoTxt)) return;
     btnEnviar.disabled = true;
     btnEnviar.textContent = 'Enviando...';
     mostrar('', true);
-    ws.send(JSON.stringify({ type: 'enviar_sms_invitacion', payload: { celular, texto: msg } }));
+    ws.send(JSON.stringify({ type: 'enviar_sms_invitacion', payload: { celular, texto: msg, campana_id: campanaId, asesor_destino_id: asesorId } }));
   }
   btnEnviar.onclick = enviarInvitacion;
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarInvitacion(); });
