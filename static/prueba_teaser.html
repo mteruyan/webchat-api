@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prueba del teaser de Sofi</title>
+<style>
+  :root { --verde: #7AC143; --azul: #0B2A8A; --texto: #1A2B3C; --suave: #5B6B7C; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Trebuchet MS", "Segoe UI", sans-serif; color: var(--texto); background: #F5F7FA; }
+  .controles { position: sticky; top: 0; z-index: 10; background: #1A2B3C; color: #fff; padding: 8px 16px; font-size: 13px;
+               display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .controles b { margin-right: 6px; }
+  .controles button, .controles a { background: #fff; color: #1A2B3C; border: 0; border-radius: 6px; padding: 6px 10px;
+               font: inherit; cursor: pointer; text-decoration: none; }
+  header { background: #fff; display: flex; align-items: center; justify-content: space-between; padding: 14px 24px;
+           box-shadow: 0 1px 0 #E1E8EF; gap: 12px; flex-wrap: wrap; }
+  header .logo { font-weight: 800; color: var(--azul); font-size: 22px; letter-spacing: .5px; }
+  header nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+  header nav a { color: var(--texto); text-decoration: none; }
+  header nav a.sofi { color: var(--azul); font-weight: 700; }
+  .banner { background: linear-gradient(120deg, #0B2A8A, #1C4FC4); color: #fff; padding: 56px 24px 72px; }
+  .banner h1 { margin: 0 0 12px; font-size: clamp(26px, 5vw, 42px); max-width: 640px; }
+  .banner p { margin: 0 0 24px; font-size: 17px; max-width: 560px; opacity: .92; }
+  .cta { display: inline-block; background: var(--verde); color: #0E2A00; font-weight: 800; padding: 14px 26px; border-radius: 999px;
+         text-decoration: none; font-size: 16px; }
+  main { padding: 32px 24px 300px; max-width: 980px; }
+  main h2 { color: var(--azul); }
+  .tarjetas { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+  .tarjetas div { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .nota { font-size: 13px; color: var(--suave); }
+</style>
+</head>
+<body>
+  <div class="controles">
+    <b>Prueba del teaser</b>
+    <button type="button" id="reiniciar">↺ Reiniciar teaser (borra "cerrado" y "chat abierto")</button>
+    <a href="?intent=compra_sctr">Enlace con ?intent=compra_sctr</a>
+    <a href="#chat-sofi">Enlace a #chat-sofi</a>
+    <span class="nota" style="color:#CFD8E3">El teaser aparece a los segundos configurados en el Editor. Las conversaciones que abras aquí son reales.</span>
+  </div>
+  <header>
+    <div class="logo">sanitas</div>
+    <nav>
+      <a href="#">Planes de salud</a>
+      <a href="#">EPS</a>
+      <a href="#">Clínicas</a>
+      <a href="#" class="sofi" data-sofi-abrir>Chatea con Sofi</a>
+      <a href="#" data-sofi-abrir data-sofi-intent="contratar_eps">Cotiza tu EPS</a>
+    </nav>
+  </header>
+  <section class="banner">
+    <h1>Cuidamos lo más valioso: tu salud</h1>
+    <p>Simulación del banner principal del portal, para comprobar que el teaser no tape el botón principal.</p>
+    <a class="cta" href="#">Conoce nuestros planes</a>
+  </section>
+  <main>
+    <h2>Contenido del portal</h2>
+    <div class="tarjetas">
+      <div><b>Entrega de medicamentos</b><p class="nota">Recibe tus medicinas en casa.</p></div>
+      <div><b>SCTR</b><p class="nota">Seguro Complementario de Trabajo de Riesgo.</p></div>
+      <div><b>EPS</b><p class="nota">Para tu empresa o tu familia.</p></div>
+      <div><b>Consultas</b><p class="nota">Resolvemos tus dudas.</p></div>
+    </div>
+    <p class="nota" style="margin-top:24px">En el menú, «Chatea con Sofi» y «Cotiza tu EPS» prueban los enlaces del portal
+      (<code>data-sofi-abrir</code>, el segundo con <code>data-sofi-intent="contratar_eps"</code>).</p>
+  </main>
+  <script>
+    document.getElementById("reiniciar").onclick = function () {
+      try {
+        ["sofi_teaser_cerrado", "sofi_webchat_abierto"].forEach(function (k) { sessionStorage.removeItem(k); });
+        localStorage.removeItem("sofi_teaser_cerrado_hasta");
+      } catch (e) {}
+      location.href = location.pathname;
+    };
+    window.dataLayer = window.dataLayer || [];
+    var pushOriginal = window.dataLayer.push.bind(window.dataLayer);
+    window.dataLayer.push = function (e) { console.log("[dataLayer]", JSON.stringify(e)); return pushOriginal(e); };
+  </script>
+  <script src="/widget.js" data-api-base="" defer></script>
+  <script>
+    // El widget necesita la URL de la API: en esta página es el mismo servidor.
+    document.currentScript.previousElementSibling.dataset.apiBase = location.origin;
+  </script>
+</body>
+</html>

@@ -648,6 +648,7 @@ async function cargarEstadisticas() {
 
   renderDashboard(data, desde, hasta);
   cargarEncuesta(desde, hasta);
+  cargarAvisos(desde, hasta);
   cargarConsultas(desde, hasta);
   cargarApp();
   document.getElementById('cargando').classList.remove('activo');
@@ -935,6 +936,46 @@ async function cargarConsultas(desde, hasta) {
   }
 }
 
+// ---- Respuestas del asesor: ¿el cliente las lee? ¿qué avisos le mandamos? (ver avisos_cliente.py) ----
+function renderAvisos(d) {
+  if (!d || !d.respuestas) return '<div class="vacio-panel">No hubo respuestas de asesores en este período.</div>';
+  const kpi = (num, et, det, color) => `<div class="enc-kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${num}</div><div class="etiqueta">${et}</div>${det ? `<div class="detalle">${det}</div>` : ''}</div>`;
+  const a = d.avisos || {};
+  const push = a.push || { enviados: 0, leidos_30min: 0 }, sms = a.sms || { enviados: 0, fallidos: 0, leidos_30min: 0 };
+  let html = `<div class="enc-kpis">
+    ${kpi(fmtPct(d.pct_leidas_5min), 'Leídas en menos de 5 min', `${d.leidas_5min} de ${d.respuestas} respuestas del asesor`, 'var(--verde)')}
+    ${kpi(fmtNum(d.mediana_min, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> min</small>', 'Tiempo típico hasta leerla', 'mediana, de las que sí se leyeron')}
+    ${kpi(fmtPct(d.pct_nunca_leidas), 'Nunca leídas', `${d.nunca_leidas} respuestas`, 'var(--rojo)')}`;
+  if (a.disponible === false) {
+    html += `</div><div class="vacio-panel">Para ver los avisos enviados falta ejecutar <b>migracion_avisos_cliente.sql</b>.</div>`;
+  } else {
+    html += `${kpi(push.enviados, 'Notificaciones push', push.enviados ? `${fmtPct(push.pct_leidos_30min)} leyó en los 30 min siguientes` : 'clientes con avisos activados')}
+    ${kpi(sms.enviados, 'SMS «te respondieron»', (sms.enviados ? `${fmtPct(sms.pct_leidos_30min)} leyó en los 30 min siguientes` : 'a los 3 min sin leer') + (sms.fallidos ? ` · ${sms.fallidos} fallidos` : ''))}
+    </div>`;
+  }
+  if (d.por_dia && d.por_dia.length > 1) {
+    const maxR = Math.max(...d.por_dia.map(x => x.respuestas), 1);
+    html += `<h3 style="font-size:13px;margin:6px 0 4px">Por día <span class="sub" style="font-weight:400;color:var(--texto-suave);font-size:12px">alto = respuestas del asesor · número = % leídas en menos de 5 min</span></h3>
+      <div class="enc-dias">${d.por_dia.map(x => `<div class="d" title="${escapaHtml(x.dia.split('-').reverse().join('/'))}: ${x.respuestas} respuestas · ${fmtPct(x.pct_5min)} leídas en menos de 5 min">
+        <span>${x.pct_5min == null ? '' : Math.round(x.pct_5min) + '%'}</span><i style="height:${x.respuestas / maxR * 85}%;background:${x.pct_5min >= 70 ? 'var(--verde)' : (x.pct_5min >= 40 ? 'var(--naranja)' : 'var(--rojo)')}"></i></div>`).join('')}</div>`;
+  }
+  html += `<p class="nota-panel">«Leída» = el cliente tenía el chat abierto y visible en pantalla (o le contestó al asesor). Si no la lee, se le avisa: notificación push al instante si la activó, y un SMS a los 3 minutos si no le llegó ninguna notificación (máximo 1 SMS cada 30 minutos por conversación).</p>`;
+  return html;
+}
+async function cargarAvisos(desde, hasta) {
+  const el = document.getElementById('panelAvisos');
+  if (!el) return;
+  const h2 = `<h2>Respuestas del asesor y avisos al cliente <span class="sub">¿el cliente se entera cuando le responden?${campanaSeleccionadaTexto()}</span></h2>`;
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/dashboard/avisos?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}${paramCampana()}`,
+      { headers: { 'Authorization': `Bearer ${tokenGuardado}` } });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    el.innerHTML = h2 + renderAvisos(await resp.json());
+  } catch (e) {
+    el.innerHTML = h2 + '<div class="vacio-panel">No se pudo cargar este panel.</div>';
+  }
+}
+
 // ---- Encuesta de satisfacción (ver encuesta.py) ----
 let encuestaDatos = null, encuestaFiltroTextos = 'todos';
 function fmtPct(v) { return v == null ? '–' : (Math.round(v * 10) / 10).toString().replace('.', ',') + '%'; }
@@ -967,7 +1008,7 @@ function renderEncuesta(d) {
   const s = d.satisfaccion, f = d.facilidad;
   const kpi = (num, et, det, color) => `<div class="enc-kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${num}</div><div class="etiqueta">${et}</div>${det ? `<div class="detalle">${det}</div>` : ''}</div>`;
   let html = `<div class="enc-kpis">
-    ${kpi(d.respondidas, 'Respuestas', `de ${d.enviadas} enviadas · ${fmtPct(d.tasa_respuesta)} responde${d.omitidas ? ' · ' + d.omitidas + ' «Ahora no»' : ''}`)}
+    ${kpi(d.respondidas, 'Respuestas', `de ${d.enviadas} enviadas · ${fmtPct(d.tasa_respuesta)} responde${d.omitidas ? ' · ' + d.omitidas + ' «Ahora no»' : ''}${d.sms && d.sms.enviados ? ' · por SMS: ' + d.sms.respondidas + ' de ' + d.sms.enviados + ' (' + fmtPct(d.sms.tasa_respuesta) + ')' : ''}`)}
     ${kpi(fmtNum(s.promedio, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> / 5</small>', 'Satisfacción promedio', 'pregunta 1', s.promedio == null ? null : colorSatisf(Math.round(s.promedio)))}
     ${kpi(fmtPct(s.csat), 'Satisfechos (4 y 5)', `${fmtPct(s.insatisfechos_pct)} insatisfechos (1 y 2)`, 'var(--verde)')}
     ${kpi(fmtPct(f.ces), 'Le resultó fácil', `fácil o muy fácil · ${fmtPct(f.dificil_pct)} difícil`, 'var(--azul)')}
@@ -1112,6 +1153,11 @@ function renderDashboard(data, desde, hasta) {
       ${renderChartDias(data.por_dia)}
     </div>
 
+    <div class="panel" id="panelAvisos">
+      <h2>Respuestas del asesor y avisos al cliente</h2>
+      <div class="vacio-panel">Cargando…</div>
+    </div>
+
     <div class="panel" id="panelEncuesta">
       <h2>Encuesta de satisfacción</h2>
       <div class="vacio-panel">Cargando…</div>
@@ -1191,6 +1237,7 @@ function renderDashboard(data, desde, hasta) {
     <div class="panel">
       <h2>Origen de las conversaciones <span class="sub">de dónde abrió el chat cada persona</span></h2>
       ${renderTablaOrigen(data.por_origen, 'origen', 'Origen')}
+      ${data.por_intencion && data.por_intencion.length ? '<h2 style="margin:18px 0 8px;font-size:13px">Opción elegida desde el teaser de Sofi o un enlace <span class="sub">la conversación arrancó directo en esa opción</span></h2>' + renderTablaOrigen(data.por_intencion, 'intencion', 'Opción') : ''}
     </div>
 
     <div class="panel">

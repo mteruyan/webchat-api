@@ -54,6 +54,7 @@ import push
 import temas_consulta
 import verificacion_whatsapp
 import encuesta
+import avisos_cliente
 
 LIMA_TZ = timezone(timedelta(hours=-5))
 
@@ -96,6 +97,14 @@ def health():
     finally:
         if conn is not None:
             release_connection(conn)
+
+
+@app.get("/prueba-teaser")
+def pagina_prueba_teaser():
+    """Página de prueba del teaser de Sofi: un portal simulado con el widget REAL (ver static/prueba_teaser.html).
+    Las conversaciones que se abran desde aquí son reales (quedan con la página /prueba-teaser como origen)."""
+    return FileResponse("static/prueba_teaser.html", media_type="text/html",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/widget.js")
@@ -164,10 +173,19 @@ def _celular_tester_de_sesion(sesion_token: str, variable: str = "IA_TESTERS"):
 _tareas_push: set = set()
 
 
+def _push_y_registrar(conversacion_id: int, tipo: str = "respuesta", ctx: dict | None = None,
+                      motivo: str = "inmediato") -> int:
+    """Manda el push y, si llegó a algún dispositivo, lo deja registrado (ver avisos_cliente.py)."""
+    r = push.avisar_conversacion(conversacion_id, tipo, ctx) or {}
+    if r.get("enviados"):
+        avisos_cliente.registrar(conversacion_id, "push", motivo)
+    return r.get("enviados") or 0
+
+
 def _lanzar_aviso_push(conversacion_id: int, tipo: str = "respuesta", ctx: dict | None = None):
     """Dispara el aviso sin frenar al asesor (la red del servicio push puede tardar)."""
     try:
-        t = asyncio.get_running_loop().create_task(asyncio.to_thread(push.avisar_conversacion, conversacion_id, tipo, ctx))
+        t = asyncio.get_running_loop().create_task(asyncio.to_thread(_push_y_registrar, conversacion_id, tipo, ctx))
     except RuntimeError:
         return
     _tareas_push.add(t)
@@ -847,6 +865,9 @@ async def descargar_conversacion_pdf(conversacion_id: int, token: str | None = N
 class ConnectionManager:
     def __init__(self):
         self.widget_connections: dict[int, WebSocket] = {}       # conversacion_id -> ws
+        # ¿El cliente está mirando el chat? (pestaña visible y panel abierto; lo informa el widget).
+        # Si no, el aviso push sale al instante aunque la conexión siga abierta en segundo plano.
+        self.widget_visible: dict[int, bool] = {}
         self.asesor_connections: dict[int, WebSocket] = {}       # asesor_id -> ws
         self.supervisor_connections: dict[int, WebSocket] = {}   # supervisor_id -> ws
         # Alcance de cada supervisor (None = máximo, ve todo; si no, las campañas que puede ver).
@@ -860,6 +881,7 @@ class ConnectionManager:
         await ws.accept()
         anterior = self.widget_connections.get(conversacion_id)
         self.widget_connections[conversacion_id] = ws
+        self.widget_visible[conversacion_id] = True
         if anterior is not None and anterior is not ws:
             # La misma conversación se abrió en otro dispositivo o pestaña (p. ej. tras
             # escanear el QR): la conexión vieja se cierra avisándole, para que no
@@ -875,6 +897,7 @@ class ConnectionManager:
         reusa la misma conexión ya aceptada bajo un conversacion_id nuevo
         (iniciar_nueva_conversacion / reiniciar_datos)."""
         self.widget_connections[conversacion_id] = ws
+        self.widget_visible[conversacion_id] = True
 
     def disconnect_widget(self, conversacion_id: int, ws: WebSocket = None):
         """Con `ws`, solo quita el registro si esa sigue siendo LA conexión vigente
@@ -882,10 +905,29 @@ class ConnectionManager:
         if ws is not None and self.widget_connections.get(conversacion_id) is not ws:
             return
         self.widget_connections.pop(conversacion_id, None)
+        self.widget_visible.pop(conversacion_id, None)
+
+    def cliente_mirando(self, conversacion_id: int) -> bool:
+        return conversacion_id in self.widget_connections and self.widget_visible.get(conversacion_id, True)
 
     async def connect_asesor(self, asesor_id: int, ws: WebSocket):
         await ws.accept()
+        anterior = self.asesor_connections.get(asesor_id)
         self.asesor_connections[asesor_id] = ws
+        await self._cerrar_conexion_anterior(anterior, ws)
+
+    @staticmethod
+    async def _cerrar_conexion_anterior(anterior, nueva):
+        """La consola se abrió en otra pestaña o equipo: la conexión vieja se cierra AVISÁNDOLE. Antes seguía
+        abierta mostrando "En línea" sin recibir nada, y si luego se cerraba la nueva, el asesor quedaba como
+        desconectado mientras seguía trabajando en la vieja (el supervisor no podía transferirle)."""
+        if anterior is None or anterior is nueva:
+            return
+        try:
+            await anterior.send_json({"type": "sesion_en_otra_pestana", "payload": {}})
+            await anterior.close(code=4000)
+        except Exception:
+            pass
 
     def es_conexion_vigente_asesor(self, asesor_id: int, ws: WebSocket) -> bool:
         """True si `ws` sigue siendo LA conexión registrada de ese asesor. Al
@@ -911,8 +953,10 @@ class ConnectionManager:
 
     async def connect_supervisor(self, supervisor_id: int, ws: WebSocket, alcance: dict | None = None):
         await ws.accept()
+        anterior = self.supervisor_connections.get(supervisor_id)
         self.supervisor_connections[supervisor_id] = ws
         self.supervisor_alcance[supervisor_id] = alcance
+        await self._cerrar_conexion_anterior(anterior, ws)
 
     def es_conexion_vigente_supervisor(self, supervisor_id: int, ws: WebSocket) -> bool:
         """True si `ws` sigue siendo LA conexión registrada de ese supervisor (el socket
@@ -934,9 +978,12 @@ class ConnectionManager:
     async def enviar_a_widget(self, conversacion_id: int, evento: dict):
         ws = self.widget_connections.get(conversacion_id)
         if ws:
-            await ws.send_json(evento)
-        elif evento.get("type") in ("mensaje_asesor", "archivo_asesor"):
-            # El cliente cerró la ventana/app: le llega un aviso push (si activó avisos).
+            try:
+                await ws.send_json(evento)
+            except Exception:
+                ws = None   # conexión muerta (celular en segundo plano): que igual le llegue el aviso
+        if evento.get("type") in ("mensaje_asesor", "archivo_asesor") and not (ws and self.widget_visible.get(conversacion_id, True)):
+            # El cliente cerró la ventana/app o no está mirando el chat: le llega un aviso push (si activó avisos).
             _lanzar_aviso_push(conversacion_id,
                                "archivo" if evento.get("type") == "archivo_asesor" else "respuesta",
                                {"asesor": (evento.get("payload") or {}).get("asesor_nombre")})
@@ -1032,7 +1079,8 @@ def _crear_o_reanudar_conversacion(sesion_token: str):
         release_connection(conn)
 
 
-_ORIGENES_VALIDOS = {"burbuja", "invitacion_sms", "enlace_sms", "enlace_directo", "nueva_conversacion", "traspaso_qr"}
+_ORIGENES_VALIDOS = {"burbuja", "invitacion_sms", "enlace_sms", "enlace_directo", "nueva_conversacion", "traspaso_qr",
+                     "teaser", "menu_portal", "enlace_intencion"}
 
 
 def _registrar_origen(conversacion_id: int, origen, pagina=None):
@@ -1560,7 +1608,9 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
         datos_encuesta = await asyncio.to_thread(encuesta.crear_si_corresponde, conversacion_id)
         if datos_encuesta and conversacion_id in manager.widget_connections:
             await manager.enviar_a_widget(conversacion_id, {"type": "encuesta_satisfaccion", "payload": datos_encuesta})
-            await asyncio.to_thread(encuesta.marcar_entregada, datos_encuesta["encuesta_id"])
+            # Solo cuenta como vista si tenía el chat a la vista; si no, puede recibirla por SMS (encuesta_sms_activo).
+            if manager.cliente_mirando(conversacion_id):
+                await asyncio.to_thread(encuesta.marcar_entregada, datos_encuesta["encuesta_id"])
     except Exception:
         logger.warning("No se pudo enviar la encuesta de la conversación %s", conversacion_id, exc_info=True)
 
@@ -2263,6 +2313,47 @@ async def _crear_o_reanudar_async(sesion_token: str):
         return await asyncio.to_thread(_crear_o_reanudar_conversacion, sesion_token)
 
 
+# Intención inicial (teaser de Sofi, enlaces del portal o ?intent=): se ejecuta como si el cliente hubiera tocado
+# ese botón del menú inicial, así se reutiliza el flujo de siempre (validación de celular incluida).
+INTENCIONES = {
+    "entrega_medicamentos": "med",
+    "compra_sctr": "sctr",
+    "consultas_generales": "con",
+    "contratar_eps": "eps",
+}
+_NODOS_MENU_INTENCION = ("webchat_bienvenida", "webchat_menu_principal")
+
+
+def _opcion_para_intencion(conversacion_id: int, intencion: str) -> str | None:
+    """El id del botón a "tocar" si la conversación está en el menú inicial y ese botón existe; si no, None
+    (conversación en curso, en cola o con asesor, o la opción todavía no está activada)."""
+    opcion = INTENCIONES.get(intencion or "")
+    if not opcion:
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT b.opciones FROM conversaciones c JOIN bot_menus b ON b.codigo = c.nodo_actual
+                   WHERE c.id = %s AND c.estado = 'bot' AND c.nodo_actual = ANY(%s) AND b.activo""",
+                (conversacion_id, list(_NODOS_MENU_INTENCION)))
+            fila = cur.fetchone()
+            if fila and any(isinstance(o, dict) and o.get("id") == opcion for o in (fila[0] or [])):
+                try:
+                    cur.execute("SAVEPOINT sp_hito")
+                    cur.execute("""INSERT INTO conversacion_hitos (conversacion_id, hito, nodo) VALUES (%s, 'intencion', %s)
+                                   ON CONFLICT (conversacion_id, hito) DO NOTHING""", (conversacion_id, intencion))
+                    cur.execute("RELEASE SAVEPOINT sp_hito")
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_hito")
+                conn.commit()
+                return opcion
+        conn.rollback()
+        return None
+    finally:
+        release_connection(conn)
+
+
 TEXTO_UNION_CLIENTE = "✅ Te reconocimos: seguimos en tu conversación anterior."
 _TEXTO_UNION_NUEVA = "Continuó en su conversación anterior #{id} (abrió el chat desde otro navegador o enlace)."
 _TEXTO_UNION_ANTERIOR = ("ℹ️ El cliente volvió a entrar desde otro navegador o enlace "
@@ -2489,6 +2580,10 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                                 logger.warning("No se pudo revisar la encuesta pendiente", exc_info=True)
                         continue
 
+                    if tipo == "visibilidad":
+                        manager.widget_visible[conversacion_id] = bool(payload.get("visible"))
+                        continue
+
                     if tipo == "ping":
                         continue  # latido del widget: mantiene viva la conexión, no hace nada más
 
@@ -2510,6 +2605,18 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     if tipo == "registrar_origen":
                         await asyncio.to_thread(
                             _registrar_origen, conversacion_id, payload.get("origen"), payload.get("pagina"))
+                        continue
+
+                    if tipo == "iniciar_intencion":
+                        intencion = str(payload.get("intent") or "")[:40]
+                        opcion = await asyncio.to_thread(_opcion_para_intencion, conversacion_id, intencion)
+                        if opcion:
+                            # Primero el "eco" (el widget muestra la opción como si la hubiera tocado), luego el bot.
+                            await websocket.send_json({"type": "intencion_aplicada", "payload": {"intent": intencion}})
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id, opcion_id=opcion)
+                            await _procesar_eventos_bot(conversacion_id, websocket, eventos)
+                        else:
+                            await websocket.send_json({"type": "intencion_ignorada", "payload": {"intent": intencion}})
                         continue
 
                     if tipo == "responder_encuesta":
@@ -3162,6 +3269,82 @@ async def _revisar_espera_asesor():
         })
 
 
+_push_intentado: dict = {}   # conversacion_id -> respuestas ya avisadas por push "a los 30 s" (aunque no llegara)
+
+
+def _enviar_sms_respuesta(accion: dict) -> bool:
+    """SMS "tu asesor te respondió" con el enlace que vuelve a SU conversación (mismo enlace que el SMS manual)."""
+    widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
+    if not widget_url or not accion.get("telefono") or not accion.get("sesion_token"):
+        return False
+    separador = "&" if "?" in widget_url else "?"
+    link = f"{widget_url}{separador}wcs={accion['sesion_token']}"
+    plantilla = (supervisor.obtener_configuracion("mensaje_sms_respuesta_asesor")
+                 or MENSAJES_AUTOMATICOS["mensaje_sms_respuesta_asesor"]["default"])
+    asesor = (accion.get("asesor") or "").split()[0] if accion.get("asesor") else ""
+    mensaje = plantilla.replace("{{ASESOR}}", asesor or "Tu asesor").replace("{{LINK}}", link)
+    if "{{LINK}}" not in plantilla:
+        mensaje = f"{mensaje} {link}"
+    return bool(enviar_sms_danaconnect(accion["telefono"], mensaje))
+
+
+async def _revisar_avisos_no_leidos():
+    """Push a los 30 s y SMS a los 3 min si el cliente no leyó la respuesta del asesor (ver avisos_cliente.py)."""
+    acciones = await asyncio.to_thread(avisos_cliente.pendientes)
+    acciones.sort(key=lambda x: x["canal"] != "push")   # primero los push: si llega uno, ese cliente no recibe SMS
+    con_push = set()
+    for a in acciones:
+        cid = a["conversacion_id"]
+        if manager.cliente_mirando(cid):
+            continue   # lo está viendo ahora: se marcará como leído
+        try:
+            if a["canal"] == "push":
+                if _push_intentado.get(cid) == a.get("sin_push_desde"):
+                    continue   # ya se intentó para estas mismas respuestas (no tiene avisos activos)
+                _push_intentado[cid] = a.get("sin_push_desde")
+                if await asyncio.to_thread(_push_y_registrar, cid, "respuesta", {"asesor": a.get("asesor")}, "sin_leer_30s"):
+                    con_push.add(cid)
+            elif a["canal"] == "sms" and cid not in con_push:
+                ok = await asyncio.to_thread(_enviar_sms_respuesta, a)
+                await asyncio.to_thread(avisos_cliente.registrar, cid, "sms", "sin_leer_3min", ok)
+                logger.info("Aviso por SMS al cliente de la conversación %s: %s", cid, "enviado" if ok else "falló")
+        except Exception:
+            logger.warning("No se pudo avisar al cliente de la conversación %s", cid, exc_info=True)
+    if len(_push_intentado) > 5000:
+        _push_intentado.clear()
+
+
+def _cfg_entero(clave: str, minimo: int, maximo: int, defecto: int) -> int:
+    try:
+        v = int(str(supervisor.obtener_configuracion(clave) or "").strip())
+    except (TypeError, ValueError):
+        return defecto
+    return max(minimo, min(maximo, v))
+
+
+def _enviar_encuestas_sms():
+    """SMS con la encuesta a quien no la vio en el chat (ver encuesta.pendientes_sms). Corre cada minuto."""
+    if (supervisor.obtener_configuracion("encuesta_sms_activo") or "no").strip().lower() not in ("si", "sí"):
+        return
+    ahora = datetime.now(LIMA_TZ)
+    if not (8 <= ahora.hour < 21):
+        return
+    plantilla = (supervisor.obtener_configuracion("mensaje_sms_encuesta")
+                 or MENSAJES_AUTOMATICOS["mensaje_sms_encuesta"]["default"])
+    widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip() or "https://sanitasperu.com/"
+    campanas = [c.strip() for c in (supervisor.obtener_configuracion("encuesta_sms_campanas") or "").split(",") if c.strip()]
+    pendientes = encuesta.pendientes_sms(
+        _cfg_entero("encuesta_sms_espera_minutos", 5, 240, 10), campanas or None,
+        _cfg_entero("encuesta_sms_tope_diario", 0, 5000, 100), ahora)
+    for p in pendientes:
+        separador = "&" if "?" in widget_url else "?"
+        link = f"{widget_url}{separador}es={p['codigo']}"
+        mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
+        ok = bool(enviar_sms_danaconnect(p["telefono"], mensaje))
+        encuesta.resultado_sms(p["encuesta_id"], ok)
+        logger.info("Encuesta por SMS %s: %s", p["encuesta_id"], "enviada" if ok else "falló")
+
+
 async def _loop_inactividad():
     # Deja que uvicorn termine de arrancar y pase el health check de Cloud Run
     # antes de tocar la base de datos por primera vez.
@@ -3179,6 +3362,16 @@ async def _loop_inactividad():
                 await _revisar_inactividad()
             except Exception:
                 logger.exception("Error revisando inactividad de conversaciones")
+        if vuelta % 6 == 5:   # cada minuto: encuestas por SMS a quien no vio la encuesta en el chat
+            try:
+                await asyncio.to_thread(_enviar_encuestas_sms)
+            except Exception:
+                logger.exception("Error enviando encuestas por SMS")
+        if vuelta % 2 == 1:   # cada 20 s: respuestas del asesor que el cliente no ha leído
+            try:
+                await _revisar_avisos_no_leidos()
+            except Exception:
+                logger.exception("Error revisando avisos al cliente")
         vuelta += 1
         await asyncio.sleep(10)
 
@@ -4485,9 +4678,33 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": 'SMS que se manda al cliente para avisarle que le escriban de vuelta en el webchat. Usa {{LINK}} para el enlace directo a su conversación (obligatorio en el texto)',
         "default": "Sanitas: tienes un mensaje nuevo de tu asesor. Ingresa aquí para verlo: {{LINK}}",
     },
+    "mensaje_sms_respuesta_asesor": {
+        "etiqueta": "SMS automático cuando el asesor respondió y el cliente no lo leyó en 3 minutos (máximo 1 cada 30 minutos por conversación; no se envía si le llegó una notificación push). Usa {{ASESOR}} para el nombre del asesor y {{LINK}} para el enlace a su conversación. Sin tildes ni emojis el SMS admite 160 caracteres; con tildes, solo 70",
+        "default": "Sanitas: {{ASESOR}} te respondio en el chat. Ingresa aqui para ver su respuesta: {{LINK}}",
+    },
     "mensaje_sms_invitacion": {
         "etiqueta": 'SMS que se manda a un número NUEVO (que todavía no ha iniciado conversación) para invitarlo a escribirnos por el webchat. Usa {{LINK}} para el enlace al chat, que es siempre https://sanitasperu.com/?ac=1 (obligatorio en el texto)',
         "default": "Sanitas: te invitamos a escribirnos por nuestro chat. Ingresa aquí y te atendemos: {{LINK}}",
+    },
+    "encuesta_sms_activo": {
+        "etiqueta": "Encuesta de satisfacción por SMS a quien NO llegó a verla en el chat (salió antes del cierre): escribe si para activarla o no para apagarla. Requiere migracion_encuesta_sms.sql. Máximo 1 SMS de encuesta por celular cada 7 días y solo de 8:00 a 20:59",
+        "default": "no",
+    },
+    "encuesta_sms_espera_minutos": {
+        "etiqueta": "Encuesta por SMS: minutos después del cierre en que se envía el SMS si el cliente no vio la encuesta (de 5 a 240)",
+        "default": "10",
+    },
+    "encuesta_sms_campanas": {
+        "etiqueta": "Encuesta por SMS: códigos de las campañas a las que se les manda, separados por coma (por ejemplo medicamentos_entrega,venta_sctr). Vacío = todas las campañas con encuesta activa",
+        "default": "",
+    },
+    "encuesta_sms_tope_diario": {
+        "etiqueta": "Encuesta por SMS: máximo de SMS de encuesta por día (control de costo)",
+        "default": "100",
+    },
+    "mensaje_sms_encuesta": {
+        "etiqueta": "Texto del SMS de la encuesta. Usa {{LINK}} para el enlace (obligatorio). Sin tildes ni emojis el SMS admite 160 caracteres; con tildes, solo 70",
+        "default": "Sanitas: gracias por escribirnos. Cuentanos en 1 minuto como te fue en el chat: {{LINK}}",
     },
     "sonido_notificacion_widget": {
         "etiqueta": "URL del sonido que se reproduce en el widget del paciente cuando llega un mensaje nuevo y la pestaña no está en primer plano. Para usar un archivo propio: súbelo a static/sonidos/ (en el código) y pon aquí \"/static/sonidos/<nombre-del-archivo>\" (ej. /static/sonidos/notificacion.mp3). También puede ser una URL externa (https://...). Vacío = usar el sonido genérico (dos tonos) en vez de una voz/audio.",
@@ -4501,7 +4718,91 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "Título que aparece en el encabezado del widget (arriba de los mensajes)",
         "default": "Sofi, tu asistente virtual",
     },
+    "teaser_activo": {
+        "etiqueta": "Mensaje de Sofi sobre la burbuja (teaser) con accesos rápidos: escribe si para mostrarlo o no para apagarlo (aplica al instante, sin desplegar)",
+        "default": "no",
+    },
+    "teaser_mensaje": {
+        "etiqueta": "Teaser de Sofi: texto del mensaje",
+        "default": "Hola, soy Sofi. ¿En qué te ayudo hoy?",
+    },
+    "teaser_opciones": {
+        "etiqueta": "Teaser de Sofi: botones, uno por línea con el formato «Texto del botón | intención», en el orden en que se muestran. Intenciones válidas: entrega_medicamentos, compra_sctr, consultas_generales, contratar_eps",
+        "default": "Entrega de medicamentos | entrega_medicamentos\nCompra de SCTR | compra_sctr\nConsultas generales | consultas_generales\nContratar una EPS | contratar_eps",
+    },
+    "teaser_retraso_segundos": {
+        "etiqueta": "Teaser de Sofi: segundos que espera después de cargar la página antes de aparecer",
+        "default": "6",
+    },
+    "teaser_dias_sin_mostrar": {
+        "etiqueta": "Teaser de Sofi: si la persona lo cierra, cuántos días no se le vuelve a mostrar en ese navegador (0 = solo durante esa visita)",
+        "default": "0",
+    },
+    "teaser_rutas_excluidas": {
+        "etiqueta": "Teaser de Sofi: páginas del sitio donde NO se muestra, separadas por coma (empiezan con /, ej. /pagos, /checkout). Se excluye la página y todo lo que esté debajo",
+        "default": "",
+    },
+    "teaser_no_tapar": {
+        "etiqueta": "Teaser de Sofi: elementos del portal que NUNCA debe tapar (por ejemplo el botón principal del banner), como selectores CSS separados por coma (ej. .banner .btn-principal, #cotizar). Mientras los taparía, el teaser espera y aparece cuando la persona hace scroll",
+        "default": "",
+    },
+    "teaser_en_celular": {
+        "etiqueta": "Teaser de Sofi: escribe si para mostrarlo también en celulares o no para mostrarlo solo en computadoras",
+        "default": "si",
+    },
 }
+
+
+def _opciones_menu_inicial() -> set | None:
+    """Ids de los botones del menú de bienvenida (los que puede "tocar" una intención). None si no se pudo leer."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT opciones FROM bot_menus WHERE codigo = 'webchat_bienvenida' AND activo")
+            fila = cur.fetchone()
+        conn.rollback()
+        return {o.get("id") for o in (fila[0] or []) if isinstance(o, dict)} if fila else None
+    except Exception:
+        conn.rollback()
+        return None
+    finally:
+        release_connection(conn)
+
+
+def _config_teaser() -> dict:
+    """Configuración pública del teaser (la lee el widget al cargar, junto con sus textos)."""
+    def cfg(clave):
+        return (supervisor.obtener_configuracion(clave) or MENSAJES_AUTOMATICOS[clave]["default"]).strip()
+    def si(clave):
+        return cfg(clave).lower() in ("si", "sí", "s", "1", "true", "on")
+    def entero(clave, minimo, maximo):
+        try:
+            return max(minimo, min(maximo, int(float(cfg(clave)))))
+        except ValueError:
+            return int(MENSAJES_AUTOMATICOS[clave]["default"])
+    opciones = []
+    for linea in cfg("teaser_opciones").splitlines():
+        if "|" not in linea:
+            continue
+        texto, intencion = (x.strip() for x in linea.rsplit("|", 1))
+        if texto and intencion in INTENCIONES and all(o["intent"] != intencion for o in opciones):
+            opciones.append({"label": texto[:60], "intent": intencion})
+    # Solo los botones cuya opción existe hoy en el menú del bot (p. ej. EPS aparece recién al activarla).
+    disponibles = _opciones_menu_inicial()
+    if disponibles is not None:
+        opciones = [o for o in opciones if INTENCIONES[o["intent"]] in disponibles]
+    rutas = [r.strip() for r in cfg("teaser_rutas_excluidas").split(",") if r.strip().startswith("/")]
+    no_tapar = [x.strip()[:200] for x in cfg("teaser_no_tapar").split(",") if x.strip()]
+    return {
+        "activo": si("teaser_activo") and bool(opciones),
+        "mensaje": cfg("teaser_mensaje")[:200],
+        "opciones": opciones,
+        "retraso_ms": entero("teaser_retraso_segundos", 0, 120) * 1000,
+        "dias_sin_mostrar": entero("teaser_dias_sin_mostrar", 0, 365),
+        "rutas_excluidas": rutas[:50],
+        "en_celular": si("teaser_en_celular"),
+        "no_tapar": no_tapar[:20],
+    }
 
 
 @app.get("/editor/configuracion")
@@ -4545,6 +4846,7 @@ _PASOS_BOT = {
 _FLUJOS_BOT = (
     ("consultas_", "Consultas generales"),
     ("sctr_", "Venta de SCTR"),
+    ("eps_", "Venta de EPS"),
     ("pases_", "Pase de atención"),
     ("mad_", "Médico a domicilio / Ambulancia"),
     ("med_", "Medicamentos"),
@@ -4653,7 +4955,19 @@ _ETIQUETAS_ORIGEN = {
     "enlace_sms": "SMS para volver a su conversación",
     "enlace_directo": "SMS con enlace directo a campaña/asesor",
     "nueva_conversacion": "Volvió a empezar tras cerrar",
+    "teaser": "Mensaje de Sofi sobre la burbuja (teaser)",
+    "menu_portal": "Enlace del portal (menú u otro botón)",
+    "enlace_intencion": "Enlace con opción preseleccionada (?intent=)",
+    "traspaso_qr": "Pasó la conversación al celular (QR)",
     "otro": "Otro",
+}
+
+
+_ETIQUETAS_INTENCION = {
+    "entrega_medicamentos": "Entrega de medicamentos",
+    "compra_sctr": "Compra de SCTR",
+    "consultas_generales": "Consultas generales",
+    "contratar_eps": "Contratar una EPS",
 }
 
 
@@ -4688,11 +5002,28 @@ def _estadisticas_origen(conn, cur, desde, hasta):
             {"pagina": pg, "total": t, "sin_escribir": se, "con_asesor": ca}
             for pg, t, se, ca in cur.fetchall()
         ]
-        return por_origen, por_pagina
+        try:   # opción elegida en el teaser / enlaces con intención (hito "intencion")
+            cur.execute("SAVEPOINT sp_intencion")
+            cur.execute(
+                f"""SELECT h.nodo, {base} FROM conversaciones c
+                    JOIN conversacion_hitos h ON h.conversacion_id = c.id AND h.hito = 'intencion'
+                    WHERE c.iniciado_en >= %s AND c.iniciado_en < %s
+                    GROUP BY h.nodo ORDER BY total DESC""",
+                (desde, hasta),
+            )
+            por_intencion = [
+                {"intencion": _ETIQUETAS_INTENCION.get(i, i), "total": t, "sin_escribir": se, "con_asesor": ca}
+                for i, t, se, ca in cur.fetchall()
+            ]
+            cur.execute("RELEASE SAVEPOINT sp_intencion")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_intencion")
+            por_intencion = []
+        return por_origen, por_pagina, por_intencion
     except Exception as e:
         logger.warning("Estadísticas de origen no disponibles: %s", e)
         conn.rollback()
-        return [], []
+        return [], [], []
 
 
 @app.get("/dashboard/app")
@@ -4873,7 +5204,7 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
                 )
                 por_dia_hora = [{"fecha": d.isoformat(), "hora": h, "cantidad": n} for d, h, n in cur.fetchall()]
 
-            por_origen, por_pagina = _estadisticas_origen(conn, cur, fecha_desde, fecha_hasta)
+            por_origen, por_pagina, por_intencion = _estadisticas_origen(conn, cur, fecha_desde, fecha_hasta)
 
             por_metodo_token = []
             try:
@@ -5088,6 +5419,7 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
         "embudo": embudo,
         "embudo_desde": embudo_desde,
         "por_origen": por_origen,
+        "por_intencion": por_intencion,
         "por_metodo_token": por_metodo_token,
         "por_pagina": por_pagina,
     }
@@ -5106,6 +5438,30 @@ def _rango_dashboard(desde: str, hasta: str):
             datetime.combine(d_hasta, datetime.min.time()).replace(tzinfo=LIMA_TZ) + timedelta(days=1))
 
 
+# Encuesta abierta desde el enlace del SMS (?es=<código>): el widget la muestra sin iniciar una conversación.
+@app.get("/widget/encuesta-sms/{codigo}")
+def encuesta_sms_abrir(codigo: str, request: Request):
+    _limitar_push(request, "encuesta_sms", 20, 60)
+    return encuesta.abrir_por_sms(codigo)
+
+
+@app.post("/widget/encuesta-sms/{codigo}/responder")
+async def encuesta_sms_responder(codigo: str, request: Request):
+    _limitar_push(request, "encuesta_sms_resp", 10, 60)
+    try:
+        cuerpo = await request.json()
+    except Exception:
+        cuerpo = {}
+    respuestas = cuerpo.get("respuestas") if isinstance(cuerpo, dict) else None
+    return await asyncio.to_thread(encuesta.responder_por_sms, codigo, respuestas if isinstance(respuestas, dict) else {})
+
+
+@app.post("/widget/encuesta-sms/{codigo}/omitir")
+def encuesta_sms_omitir(codigo: str, request: Request):
+    _limitar_push(request, "encuesta_sms_resp", 10, 60)
+    return encuesta.omitir_por_sms(codigo)
+
+
 @app.get("/dashboard/encuesta")
 def encuesta_dashboard(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
     """Resultados de la encuesta de satisfacción (encuestas ENVIADAS en el período). Ver encuesta.py."""
@@ -5113,6 +5469,15 @@ def encuesta_dashboard(desde: str, hasta: str, campana_id: int | None = None, au
     campanas_filtro = supervisor.campanas_efectivas(alcance, campana_id)
     _, _, f_desde, f_hasta = _rango_dashboard(desde, hasta)
     return encuesta.estadisticas(f_desde, f_hasta, campanas_filtro)
+
+
+@app.get("/dashboard/avisos")
+def avisos_dashboard(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
+    """Qué tan rápido leen los clientes las respuestas del asesor y qué avisos (push / SMS) se les enviaron."""
+    alcance = supervisor.obtener_alcance(_verificar_editor(authorization))
+    campanas_filtro = supervisor.campanas_efectivas(alcance, campana_id)
+    _, _, f_desde, f_hasta = _rango_dashboard(desde, hasta)
+    return avisos_cliente.estadisticas(f_desde, f_hasta, campanas_filtro)
 
 
 @app.get("/dashboard/encuesta.xlsx")
@@ -5224,6 +5589,7 @@ def textos_publicos_widget():
         or MENSAJES_AUTOMATICOS["sonido_notificacion_widget"]["default"],
         "titulo_widget": supervisor.obtener_configuracion("titulo_widget")
         or MENSAJES_AUTOMATICOS["titulo_widget"]["default"],
+        "teaser": _config_teaser(),
     }
 
 

@@ -8,6 +8,11 @@ Entrega: en vivo al cerrar (si el cliente tiene el chat abierto). Si no lo tení
 sin responder, se le vuelve a mostrar al abrir el chat dentro de las 24 h siguientes (máximo 3 veces), salvo
 que haya tocado "Ahora no".
 
+Encuesta por SMS (opcional, migracion_encuesta_sms.sql + "encuesta_sms_activo" en el Editor): si el cliente no
+llegó a ver la encuesta (salió del chat antes del cierre), a los N minutos se le manda un SMS con un enlace
+corto (?es=<código>) que abre el widget SOLO con la encuesta, sin iniciar una conversación nueva. Un SMS de
+encuesta por celular cada 7 días, solo de 8:00 a 20:59 y con tope diario. Ver pendientes_sms().
+
 Las respuestas se guardan como CÓDIGOS estables; los textos viven aquí (PREGUNTAS). Si un día se cambia la
 redacción de una opción, los datos históricos siguen siendo comparables.
 """
@@ -15,6 +20,7 @@ redacción de una opción, los datos históricos siguen siendo comparables.
 import io
 import logging
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from db import get_connection, release_connection
@@ -25,6 +31,9 @@ VIGENCIA_HORAS = 24          # hasta cuándo se le vuelve a mostrar una encuesta
 MAX_ENTREGAS = 3
 MAX_TEXTO_OTRA = 300
 MAX_COMENTARIO = 1000
+SMS_VIGENCIA_HORAS = 72      # el enlace del SMS sirve 3 días
+SMS_VENTANA_HORAS = 12       # no se manda SMS por encuestas de cierres más antiguos que esto
+SMS_UNO_CADA_DIAS = 7        # máximo 1 SMS de encuesta por celular cada 7 días
 
 SATISFACCION = [  # (valor, emoji, texto)
     (1, "😞", "Muy insatisfecho"), (2, "🙁", "Insatisfecho"), (3, "😐", "Neutral"),
@@ -259,6 +268,210 @@ def omitir(encuesta_id, sesion_token: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Encuesta por SMS (para quien no llegó a verla en el chat)
+# ---------------------------------------------------------------------------
+_aviso_migracion_sms = False
+
+
+def _falta_migracion_sms(e: Exception) -> bool:
+    global _aviso_migracion_sms
+    if "sms_codigo" in str(e) or "sms_enviado_en" in str(e) or "sms_telefono" in str(e):
+        if not _aviso_migracion_sms:
+            logger.warning("encuesta: falta ejecutar migracion_encuesta_sms.sql (no se envían encuestas por SMS)")
+            _aviso_migracion_sms = True
+        return True
+    return False
+
+
+_RE_CELULAR = re.compile(r"^9\d{8}$")
+
+
+def _celular_valido(t) -> str | None:
+    d = re.sub(r"\D", "", str(t or ""))
+    if d.startswith("51") and len(d) == 11:
+        d = d[2:]
+    return d if _RE_CELULAR.match(d) else None
+
+
+def pendientes_sms(espera_min: int, campanas_codigos: list[str] | None, tope_diario: int,
+                   ahora: datetime | None = None, limite: int = 20) -> list[dict]:
+    """Encuestas a las que corresponde mandarles el SMS ahora. Reserva cada una (pone sms_codigo y
+    sms_enviado_en) para no mandarla dos veces: [{"encuesta_id", "telefono", "codigo"}].
+    Después de enviar, llamar a resultado_sms(encuesta_id, ok)."""
+    ahora = ahora or datetime.now(LIMA_TZ)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SELECT COUNT(*) FROM encuestas_satisfaccion WHERE sms_enviado_en >= %s",
+                            (ahora.replace(hour=0, minute=0, second=0, microsecond=0),))
+            except Exception as e:  # noqa: BLE001
+                conn.rollback()
+                if not _falta_migracion_sms(e):
+                    logger.exception("encuesta: no se pudo revisar las encuestas por SMS")
+                return []
+            ya_hoy = cur.fetchone()[0]
+            cupo = min(limite, max(0, tope_diario - ya_hoy))
+            if cupo <= 0:
+                conn.rollback()
+                return []
+            filtro_cam, params_cam = "", []
+            if campanas_codigos:
+                filtro_cam, params_cam = " AND cam.codigo = ANY(%s)", [list(campanas_codigos)]
+            cur.execute(
+                f"""SELECT e.id, COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR')
+                    FROM encuestas_satisfaccion e
+                    JOIN conversaciones c ON c.id = e.conversacion_id
+                    JOIN usuarios_webchat u ON u.id = e.usuario_id
+                    JOIN campanas cam ON cam.id = e.campana_id
+                    LEFT JOIN etiquetas_cierre et ON et.id = c.etiqueta_cierre_id
+                    WHERE e.respondida_en IS NULL AND e.omitida_en IS NULL AND e.sms_enviado_en IS NULL
+                      AND e.entregas = 0
+                      AND e.enviada_en <= %s AND e.enviada_en > %s
+                      AND COALESCE(et.nombre, '') NOT ILIKE '%%prueba%%'
+                      -- si volvió a escribir y está en cola o con un asesor, no se le interrumpe
+                      AND NOT EXISTS (SELECT 1 FROM conversaciones c2 WHERE c2.usuario_id = e.usuario_id
+                                        AND c2.estado IN ('en_cola', 'asignada')){filtro_cam}
+                    ORDER BY e.enviada_en
+                    LIMIT 200""",
+                [ahora - timedelta(minutes=espera_min), ahora - timedelta(hours=SMS_VENTANA_HORAS)] + params_cam,
+            )
+            candidatos = [(i, _celular_valido(t)) for i, t in cur.fetchall()]
+            candidatos = [(i, t) for i, t in candidatos if t]
+            if not candidatos:
+                conn.rollback()
+                return []
+            cur.execute("""SELECT DISTINCT sms_telefono FROM encuestas_satisfaccion
+                           WHERE sms_telefono = ANY(%s) AND sms_enviado_en > %s""",
+                        ([t for _, t in candidatos], ahora - timedelta(days=SMS_UNO_CADA_DIAS)))
+            recientes = {r[0] for r in cur.fetchall()}
+            salida = []
+            for i, t in candidatos:
+                if len(salida) >= cupo:
+                    break
+                if t in recientes:
+                    continue
+                recientes.add(t)   # tampoco dos encuestas del mismo celular en esta vuelta
+                codigo = secrets.token_urlsafe(8)   # 11 caracteres: corto para el SMS, imposible de adivinar
+                cur.execute("""UPDATE encuestas_satisfaccion SET sms_codigo = %s, sms_enviado_en = %s, sms_telefono = %s
+                               WHERE id = %s AND sms_enviado_en IS NULL RETURNING id""", (codigo, ahora, t, i))
+                if cur.fetchone():
+                    salida.append({"encuesta_id": i, "telefono": t, "codigo": codigo})
+        conn.commit()
+        return salida
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("encuesta: no se pudo preparar las encuestas por SMS")
+        return []
+    finally:
+        release_connection(conn)
+
+
+def resultado_sms(encuesta_id: int, ok: bool):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE encuestas_satisfaccion SET sms_ok = %s WHERE id = %s", (ok, encuesta_id))
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+    finally:
+        release_connection(conn)
+
+
+def _por_codigo(cur, codigo: str):
+    """(id, respondida_en, omitida_en, vigente, sesion_token) o None."""
+    if not isinstance(codigo, str) or not re.fullmatch(r"[A-Za-z0-9_-]{6,32}", codigo):
+        return None
+    cur.execute("""SELECT e.id, e.respondida_en, e.omitida_en, e.sms_enviado_en > %s, u.sesion_token
+                   FROM encuestas_satisfaccion e JOIN usuarios_webchat u ON u.id = e.usuario_id
+                   WHERE e.sms_codigo = %s""",
+                (datetime.now(LIMA_TZ) - timedelta(hours=SMS_VIGENCIA_HORAS), codigo))
+    return cur.fetchone()
+
+
+def abrir_por_sms(codigo: str) -> dict:
+    """Lo que ve el cliente al abrir el enlace del SMS."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            fila = _por_codigo(cur, codigo)
+            if not fila:
+                conn.rollback()
+                return {"ok": False, "estado": "no_existe"}
+            eid, respondida, omitida, vigente, token = fila
+            if respondida:
+                conn.rollback()
+                return {"ok": False, "estado": "respondida", "sesion_token": token}
+            if not vigente:
+                conn.rollback()
+                return {"ok": False, "estado": "vencida", "sesion_token": token}
+            # Abrir el enlace la "reactiva" aunque antes haya tocado "Ahora no" en el chat.
+            cur.execute("UPDATE encuestas_satisfaccion SET entregas = entregas + 1, omitida_en = NULL WHERE id = %s", (eid,))
+        conn.commit()
+        return {"ok": True, "payload": {**_payload(eid, True), "codigo_sms": codigo}, "sesion_token": token}
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.warning("encuesta: no se pudo abrir la encuesta por SMS", exc_info=True)
+        return {"ok": False, "estado": "error"}
+    finally:
+        release_connection(conn)
+
+
+def responder_por_sms(codigo: str, datos: dict) -> dict:
+    valores, motivo = _validar(datos or {})
+    if motivo:
+        return {"ok": False, "motivo": motivo}
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            fila = _por_codigo(cur, codigo)
+            if not fila:
+                conn.rollback()
+                return {"ok": False, "motivo": "Esta encuesta ya no está disponible."}
+            eid, respondida, _omitida, vigente, _token = fila
+            if respondida:
+                conn.rollback()
+                return {"ok": False, "ya_respondida": True, "motivo": "Esta encuesta ya fue respondida."}
+            if not vigente:
+                conn.rollback()
+                return {"ok": False, "motivo": "Esta encuesta ya venció. ¡Gracias de todas formas!"}
+            cur.execute(
+                """UPDATE encuestas_satisfaccion
+                   SET respondida_en = %s, omitida_en = NULL, satisfaccion = %s, facilidad = %s, dificultad = %s,
+                       dificultad_otra = %s, mejoras = %s, mejora_otra = %s, comentario = %s, respondida_por_sms = TRUE
+                   WHERE id = %s AND respondida_en IS NULL""",
+                (datetime.now(LIMA_TZ), valores["satisfaccion"], valores["facilidad"], valores["dificultad"],
+                 valores["dificultad_otra"], valores["mejoras"], valores["mejora_otra"], valores["comentario"], eid),
+            )
+        conn.commit()
+        return {"ok": True}
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("No se pudo guardar la encuesta por SMS")
+        return {"ok": False, "motivo": "No pudimos guardar tus respuestas. Intenta de nuevo."}
+    finally:
+        release_connection(conn)
+
+
+def omitir_por_sms(codigo: str) -> dict:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            fila = _por_codigo(cur, codigo)
+            if fila and not fila[1]:
+                cur.execute("UPDATE encuestas_satisfaccion SET omitida_en = %s WHERE id = %s AND respondida_en IS NULL",
+                            (datetime.now(LIMA_TZ), fila[0]))
+        conn.commit()
+        return {"ok": True}
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        return {"ok": False}
+    finally:
+        release_connection(conn)
+
+
+# ---------------------------------------------------------------------------
 # Resultados (dashboard y Excel)
 # ---------------------------------------------------------------------------
 def _filtro_campanas(campana_ids) -> tuple[str, list]:
@@ -328,6 +541,21 @@ def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict
                         "promedio": round(float(p), 2) if p is not None else None}
                        for d, env, resp, s, p in cur.fetchall()]
 
+            # Encuesta por SMS (si ya se corrió migracion_encuesta_sms.sql)
+            sms = None
+            try:
+                cur.execute("SAVEPOINT sp_sms")
+                cur.execute(f"""SELECT COUNT(*) FILTER (WHERE e.sms_enviado_en IS NOT NULL AND e.sms_ok IS NOT FALSE),
+                                       COUNT(*) FILTER (WHERE e.sms_ok IS FALSE),
+                                       COUNT(*) FILTER (WHERE e.respondida_por_sms)
+                                FROM encuestas_satisfaccion e WHERE {donde}""", base)
+                env_sms, fall_sms, resp_sms = cur.fetchone()
+                sms = {"enviados": env_sms, "fallidos": fall_sms, "respondidas": resp_sms,
+                       "tasa_respuesta": _pct(resp_sms, env_sms)}
+                cur.execute("RELEASE SAVEPOINT sp_sms")
+            except Exception:  # noqa: BLE001
+                cur.execute("ROLLBACK TO SAVEPOINT sp_sms")
+
             cur.execute(f"""SELECT e.respondida_en, e.conversacion_id, COALESCE(cam.nombre, ''), COALESCE(a.nombre_display, ''),
                                    e.satisfaccion, e.facilidad, e.dificultad, e.dificultad_otra, e.mejoras, e.mejora_otra, e.comentario
                             FROM encuestas_satisfaccion e
@@ -364,6 +592,7 @@ def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict
         "disponible": True,
         "enviadas": enviadas, "respondidas": resp, "omitidas": omitidas,
         "tasa_respuesta": _pct(resp, enviadas),
+        "sms": sms,
         "satisfaccion": {"promedio": round(prom_sat, 2) if prom_sat is not None else None,
                          "csat": _pct(satisfechos, resp), "insatisfechos_pct": _pct(insatisfechos, resp),
                          "distribucion": [{"valor": v, "emoji": e, "texto": t, "cantidad": dist_sat.get(v, 0),

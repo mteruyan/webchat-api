@@ -111,6 +111,52 @@
       z-index: 999999; transition: transform .15s ease, box-shadow .15s ease; overflow: visible;
     }
     .burbuja img { width: 100%; height: 100%; display: block; border-radius: 50%; object-fit: cover; }
+    /* ---- Teaser de Sofi: mensaje con accesos rápidos sobre la burbuja (no toca la burbuja) ---- */
+    .sofi-teaser {
+      position: fixed; top: 0; left: 0; z-index: 999998; /* sobre la página, debajo de la ventana del chat */
+      width: min(320px, calc(100vw / var(--k, 1) - 32px));
+      background: #fff; color: #1A2B3C; border-radius: 18px; padding: 14px 14px 14px 16px;
+      box-shadow: 0 12px 32px rgba(11, 42, 138, .18), 0 2px 8px rgba(11, 42, 138, .10);
+      font-family: var(--sofi-fuente, inherit); font-size: 14px; line-height: 1.4; text-align: left;
+      transform-origin: top left; transform: translateY(8px) scale(var(--k, 1)); opacity: 0;
+      transition: opacity .22s ease-out, transform .22s ease-out; cursor: pointer; visibility: hidden;
+    }
+    .sofi-teaser.visible { opacity: 1; transform: translateY(0) scale(var(--k, 1)); visibility: visible; }
+    .sofi-teaser.midiendo { visibility: hidden; transition: none; }
+    .sofi-teaser::after {
+      content: ""; position: absolute; bottom: -7px; left: var(--cola-x, 260px); width: 14px; height: 14px;
+      background: #fff; transform: rotate(45deg); border-radius: 0 0 3px 0;
+      box-shadow: 4px 4px 8px rgba(11, 42, 138, .08);
+    }
+    .sofi-teaser .st-cab { display: flex; align-items: center; gap: 10px; padding-right: 30px; }
+    .sofi-teaser .st-cab img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #E9EEF8; }
+    .sofi-teaser .st-nombre { font-weight: 700; font-size: 15px; color: #0B2A8A; line-height: 1.2; }
+    .sofi-teaser .st-sub { font-size: 12.5px; color: #4A5868; display: flex; align-items: center; gap: 5px; line-height: 1.3; }
+    .sofi-teaser .st-punto { width: 8px; height: 8px; border-radius: 50%; background: #1F9D55; flex-shrink: 0; }
+    .sofi-teaser .st-msg { margin: 10px 0 12px; font-size: 14.5px; color: #1A2B3C; }
+    .sofi-teaser .st-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sofi-teaser .st-chip {
+      min-height: 44px; padding: 8px 10px; border: 1.5px solid #0B2A8A; border-radius: 12px; background: #fff;
+      color: #0B2A8A; font: inherit; font-size: 13.5px; font-weight: 600; line-height: 1.2; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      transition: background-color .15s ease, color .15s ease;
+    }
+    @media (hover: hover) { .sofi-teaser .st-chip:hover { background: #0B2A8A; color: #fff; } }
+    .sofi-teaser .st-chip:active { background: #0B2A8A; color: #fff; }
+    .sofi-teaser .st-chip:focus-visible, .sofi-teaser .st-cerrar:focus-visible {
+      outline: 3px solid rgba(11, 42, 138, .45); outline-offset: 2px;
+    }
+    .sofi-teaser .st-cerrar {
+      position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; border: none; border-radius: 50%;
+      background: transparent; color: #4A5868; font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .sofi-teaser .st-cerrar:hover { background: #EEF2F8; color: #1A2B3C; }
+    @media (max-width: 599px) { .sofi-teaser .st-chips { grid-template-columns: 1fr; } }
+    :host(.movil) .sofi-teaser .st-chips { grid-template-columns: 1fr; }
+    @media (prefers-reduced-motion: reduce) {
+      .sofi-teaser, .sofi-teaser.visible { transition: none; transform: scale(var(--k, 1)); }
+    }
     .burbuja.oculta { display: none; }
     .burbuja:hover { transform: scale(1.05); box-shadow: 0 12px 30px rgba(10,30,50,.34); }
     .burbuja .badge {
@@ -453,6 +499,25 @@
     .encuesta.enc-gracias { text-align: center; padding: 18px 14px; }
     .encuesta.enc-gracias .enc-icono { font-size: 30px; }
     .encuesta.enc-gracias p { margin: 6px 0 0; font-size: calc(13.5px + var(--fs, 0px)); }
+    .encuesta .enc-chat {
+      display: inline-block; margin-top: 14px; background: ${TOKENS.azul}; color: white; border: none; border-radius: 10px;
+      padding: 10px 16px; font-size: calc(13.5px + var(--fs, 0px)); font-family: inherit; cursor: pointer;
+    }
+    /* Encuesta abierta desde el SMS: solo la encuesta, sin caja de texto hasta que elija escribirnos */
+    .panel.modo-encuesta .pie, .panel.modo-encuesta .pie-extra { display: none; }
+    /* Imágenes pegadas (Ctrl+V): vista previa antes de enviarlas */
+    .pegado-overlay {
+      position: absolute; inset: 0; z-index: 50; background: rgba(255,255,255,.97); display: flex; flex-direction: column;
+      padding: 16px; gap: 12px; font-family: inherit;
+    }
+    .pegado-overlay h5 { margin: 0; font-size: calc(15px + var(--fs, 0px)); color: ${TOKENS.azul}; }
+    .pegado-overlay .peg-fotos { flex: 1; min-height: 0; overflow: auto; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; justify-content: center; }
+    .pegado-overlay .peg-fotos img { max-width: 100%; max-height: 260px; border-radius: 10px; border: 1px solid ${TOKENS.borde}; object-fit: contain; background: #F4F6F8; }
+    .pegado-overlay .peg-fotos.varias img { max-width: calc(50% - 4px); max-height: 160px; }
+    .pegado-overlay .peg-botones { display: flex; gap: 8px; }
+    .pegado-overlay .peg-botones button { flex: 1; border-radius: 10px; padding: 11px; font-size: calc(14px + var(--fs, 0px)); font-family: inherit; cursor: pointer; }
+    .pegado-overlay .peg-cancelar { background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul}; }
+    .pegado-overlay .peg-enviar { background: ${TOKENS.azul}; color: white; border: none; font-weight: 700; }
     .acciones-cierre { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
     .acciones-cierre button {
       background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
@@ -605,6 +670,15 @@
 
   root.innerHTML += `
     <button class="burbuja" aria-label="Abrir chat"><img src="${API_BASE}/static/imagenes/sofiwebchat.png" alt="Sofi" /><span class="badge" style="display:none;"></span></button>
+    <div class="sofi-teaser" role="dialog" aria-label="Mensaje de Sofi" hidden>
+      <button type="button" class="st-cerrar" aria-label="Cerrar mensaje de Sofi">✕</button>
+      <div class="st-cab">
+        <img src="${API_BASE}/static/imagenes/sofi-cara-chica.png" alt="" />
+        <div><div class="st-nombre">Sofi</div><div class="st-sub"><span class="st-punto" aria-hidden="true"></span>Asistente virtual · En línea</div></div>
+      </div>
+      <p class="st-msg"></p>
+      <div class="st-chips"></div>
+    </div>
     <div class="panel">
       <div class="cabecera">
         ${LOGO_URL ? `<img src="${LOGO_URL}" alt="Sanitas" />` : ""}
@@ -1066,6 +1140,7 @@
     .then((data) => {
       if (!data) { console.warn("[webchat] /widget/textos no respondió OK"); return; }
       if (data.mensaje_subiendo_archivo) textoEsperaSubida = data.mensaje_subiendo_archivo;
+      if (data.teaser) setTimeout(() => iniciarTeaser(data.teaser), 0);
       if (data.titulo_widget) {
         const $titulo = root.querySelector(".titulo");
         if ($titulo) $titulo.textContent = data.titulo_widget;
@@ -1163,6 +1238,50 @@
     return document.visibilityState === "visible" && document.hasFocus();
   }
 
+  // ¿La persona está viendo el chat? (pestaña visible + panel abierto). Solo así una respuesta cuenta como
+  // leída (✓✓ azul para el asesor). Si no la lee, el servidor la avisa por push y, a los 3 min, por SMS.
+  function clienteViendoChat() {
+    return panelAbierto && document.visibilityState === "visible";
+  }
+  function marcarLeidoSiLoVe() {
+    if (clienteViendoChat()) enviar({ type: "marcar_leido", payload: {} });
+  }
+  let ultimaVisibilidadInformada = null;
+  function reportarVisibilidad() {
+    const visible = clienteViendoChat();
+    if (visible === ultimaVisibilidadInformada || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ultimaVisibilidadInformada = visible;
+    enviar({ type: "visibilidad", payload: { visible } });
+  }
+  document.addEventListener("visibilitychange", () => {
+    reportarVisibilidad();
+    if (document.visibilityState === "visible") marcarLeidoSiLoVe();
+  });
+  window.addEventListener("pagehide", () => { ultimaVisibilidadInformada = null; reportarVisibilidad(); });
+
+  // El navegador solo deja sonar audio después de un toque de la persona. Antes se pedía solo en la burbuja y el
+  // botón enviar: quien entraba por el SMS (el chat se abre solo), tocaba opciones del bot o enviaba con Enter
+  // quedaba sin sonido. Ahora cualquier toque o tecla dentro del chat lo habilita (y "despierta" el audio propio).
+  let audioPropioDesbloqueado = false;
+  function desbloquearSonido() {
+    inicializarAudioWidget();
+    if (audioNotificacion && !audioPropioDesbloqueado) {
+      audioPropioDesbloqueado = true;
+      try {
+        audioNotificacion.muted = true;
+        const pr = audioNotificacion.play();
+        const fin = () => { try { audioNotificacion.pause(); audioNotificacion.currentTime = 0; } catch (e) { /* nada */ } audioNotificacion.muted = false; };
+        if (pr && pr.then) pr.then(fin).catch(() => { audioNotificacion.muted = false; audioPropioDesbloqueado = false; });
+        else fin();
+      } catch (e) { audioNotificacion.muted = false; audioPropioDesbloqueado = false; }
+    }
+  }
+  ["pointerdown", "keydown", "touchstart"].forEach((ev) => root.addEventListener(ev, desbloquearSonido, { capture: true, passive: true }));
+
+  function vibrarAviso() {
+    try { if (navigator.vibrate) navigator.vibrate([180, 90, 180]); } catch (e) { /* no soportado */ }
+  }
+
   function iniciarParpadeoTitulo() {
     if (intervaloParpadeoTitulo) return;
     let mostrandoAviso = false;
@@ -1181,9 +1300,10 @@
   }
 
   function avisarMensajeNuevoSiNoMiraPantalla() {
-    if (pestanaEnPrimerPlano()) return;
+    if (pestanaEnPrimerPlano() && panelAbierto) return;   // lo está viendo
     reproducirAvisoMensajeNuevo();
-    iniciarParpadeoTitulo();
+    vibrarAviso();
+    if (!pestanaEnPrimerPlano()) iniciarParpadeoTitulo();
   }
 
   document.addEventListener("visibilitychange", () => { if (pestanaEnPrimerPlano()) detenerParpadeoTitulo(); });
@@ -1195,15 +1315,26 @@
   // De dónde abre el chat la persona (métrica del dashboard). Por defecto
   // es un clic en la burbuja; los enlaces de SMS lo cambian antes de abrir.
   let origenApertura = "burbuja";
+  let modoEncuestaSms = null;   // código del enlace ?es= del SMS de encuesta (mientras se muestra solo la encuesta)
+  let sesionEncuestaSms = null;
+
+  // Medición (GTM): eventos al dataLayer. Si la página no tiene GTM no pasa nada.
+  function medir(evento, datos) {
+    try { (window.dataLayer = window.dataLayer || []).push(Object.assign({ event: evento }, datos || {})); } catch (e) { /* nada */ }
+  }
+  const CLAVE_CHAT_ABIERTO = "sofi_webchat_abierto";
 
   function abrirPanel() {
+    try { sessionStorage.setItem(CLAVE_CHAT_ABIERTO, "1"); } catch (e) { /* sin almacenamiento */ }
+    try { ocultarTeaser(); } catch (e) { /* el teaser todavía no existe */ }
     panelAbierto = true;
     $panel.classList.add("abierto");
     $burbuja.classList.add("oculta");
     noLeidos = 0;
     actualizarBadge();
+    if (modoEncuestaSms) { scrollAlFinal(); return; }   // solo la encuesta del SMS: sin conversación hasta que quiera escribir
     if (!ws) conectar();
-    else enviar({ type: "marcar_leido", payload: {} });
+    else { marcarLeidoSiLoVe(); reportarVisibilidad(); }
     scrollAlFinal();
     revisarHistorialPrevio(700);
   }
@@ -1211,8 +1342,53 @@
     panelAbierto = false;
     $panel.classList.remove("abierto");
     $burbuja.classList.remove("oculta");
+    reportarVisibilidad();
   }
-  $burbuja.addEventListener("click", () => (panelAbierto ? cerrarPanel() : abrirPanel()));
+  $burbuja.addEventListener("click", () => {
+    if (panelAbierto) { cerrarPanel(); return; }
+    medir("webchat_opened", { source: "widget_marketing" });
+    abrirPanel();
+  });
+
+  // ---------------------------------------------------------------------
+  // Intención inicial: abrir el chat ya en una opción del menú (teaser, enlaces del portal, ?intent=).
+  // El servidor la aplica solo si la conversación está en el menú inicial; si el cliente tenía una
+  // conversación en curso, se ignora y se retoma donde estaba.
+  // ---------------------------------------------------------------------
+  const INTENCIONES = {
+    entrega_medicamentos: "Entrega de medicamentos",
+    compra_sctr: "Compra de SCTR",
+    consultas_generales: "Consultas generales",
+    contratar_eps: "Contratar una EPS",
+  };
+  let intencionPendiente = null;
+  const etiquetasIntencion = Object.assign({}, INTENCIONES);
+  function solicitarIntencion(intencion) {
+    if (!intencion || !INTENCIONES[intencion]) return;
+    if (ws && ws.readyState === WebSocket.OPEN && conversacionIdActual && conexionLista) {
+      enviar({ type: "iniciar_intencion", payload: { intent: intencion } });
+    } else {
+      intencionPendiente = intencion;   // se envía al recibir "sesion_iniciada"
+    }
+  }
+  function abrirConFuente(fuente, origen, intencion) {
+    if (!panelAbierto) {
+      if (!ws) origenApertura = origen;   // el origen se registra en la primera conexión
+      medir("webchat_opened", { source: fuente });
+      abrirPanel();
+    }
+    if (intencion) solicitarIntencion(intencion);
+  }
+
+  // Enlaces del portal: cualquier elemento con data-sofi-abrir (opcional data-sofi-intent) o un enlace a #chat-sofi.
+  document.addEventListener("click", (e) => {
+    const el = e.target && e.target.closest && e.target.closest("[data-sofi-abrir], a[href$='#chat-sofi']");
+    if (!el) return;
+    e.preventDefault();
+    const intencion = el.getAttribute("data-sofi-intent");
+    abrirConFuente("menu", "menu_portal", INTENCIONES[intencion] ? intencion : null);
+  }, true);
+  if (window.location.hash === "#chat-sofi") setTimeout(() => abrirConFuente("menu", "menu_portal", null), 300);
   $cerrar.addEventListener("click", cerrarPanel);
 
   // -----------------------------------------------------------------------
@@ -1240,6 +1416,7 @@
     const codigoTraspaso = params.get("wct");
     const tokenArchivoSms = params.get("af");   // enlace único de un archivo que nos envió un asesor/supervisor por SMS
     if (tokenArchivoSms) origenApertura = "enlace_sms";
+    const codigoEncuestaSms = params.get("es");  // SMS de encuesta: abre solo la encuesta, sin iniciar conversación
     const tokenDirecto = params.get("ad");      // enlace directo a una campaña/asesor, enviado por SMS desde el panel
     if (tokenDirecto) origenApertura = "enlace_directo";
     if (tokenEnlace) {
@@ -1290,6 +1467,27 @@
             "⚠️ Ese enlace venció o ya se usó. Escríbenos por aquí y te ayudamos.",
             "sistema"), 1500);
         });
+    }
+    const intencionUrl = params.get("intent");
+    if (intencionUrl && INTENCIONES[intencionUrl] && !tokenEnlace && !codigoTraspaso && !tokenArchivoSms && !tokenDirecto) {
+      if (!abrirDesdeInvitacion) origenApertura = "enlace_intencion";
+      intencionPendiente = intencionUrl;
+      params.delete("intent");
+      medir("webchat_opened", { source: "enlace" });
+      if (!abrirDesdeInvitacion) {
+        const resto0 = params.toString();
+        window.history.replaceState({}, "", window.location.pathname + (resto0 ? "?" + resto0 : "") + window.location.hash);
+        setTimeout(abrirPanel, 300);
+      }
+    }
+    if (codigoEncuestaSms && !tokenEnlace && !codigoTraspaso && !tokenArchivoSms && !tokenDirecto) {
+      modoEncuestaSms = codigoEncuestaSms;
+      params.delete("es");
+      const resto1 = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (resto1 ? "?" + resto1 : "") + window.location.hash);
+      $panel.classList.add("modo-encuesta");
+      $estadoTexto.textContent = "Encuesta de satisfacción";
+      setTimeout(() => { abrirPanel(); cargarEncuestaSms(); }, 300);
     }
     if (tokenEnlace || abrirDesdeInvitacion || codigoTraspaso || tokenArchivoSms || tokenDirecto) {
       params.delete("ad");
@@ -1518,7 +1716,7 @@
   }
   $nuevoMensaje.addEventListener("click", () => {
     scrollAlFinal();
-    if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
+    marcarLeidoSiLoVe();
   });
 
   function formatearHora(fecha) {
@@ -1995,6 +2193,53 @@
   // Encuesta de satisfacción: tarjeta dentro del chat con las 5 preguntas (textos desde el servidor,
   // ver encuesta.py). Preguntas 1 a 4 obligatorias; la 5 es opcional.
   // ---------------------------------------------------------------------
+  async function cargarEncuestaSms() {
+    const codigo = modoEncuestaSms;
+    let d = null;
+    try {
+      const r = await fetch(`${API_BASE}/widget/encuesta-sms/${encodeURIComponent(codigo)}`);
+      d = r.ok ? await r.json() : null;
+    } catch (e) { d = null; }
+    if (d && d.sesion_token) sesionEncuestaSms = d.sesion_token;
+    if (d && d.ok && d.payload) { mostrarEncuesta(d.payload); return; }
+    const card = document.createElement("div");
+    card.className = "encuesta enc-gracias";
+    const ic = document.createElement("div"); ic.className = "enc-icono";
+    const h = document.createElement("h4");
+    const t = document.createElement("p");
+    if (d && d.estado === "respondida") {
+      ic.textContent = "💙"; h.textContent = "¡Ya respondiste esta encuesta!"; t.textContent = "Gracias por ayudarnos a mejorar.";
+    } else if (d && (d.estado === "vencida" || d.estado === "no_existe")) {
+      ic.textContent = "⏰"; h.textContent = "Esta encuesta ya no está disponible"; t.textContent = "Gracias de todas formas.";
+    } else {
+      ic.textContent = "⚠️"; h.textContent = "No pudimos abrir la encuesta"; t.textContent = "Revisa tu conexión e intenta abrir el enlace otra vez.";
+    }
+    card.appendChild(ic); card.appendChild(h); card.appendChild(t);
+    agregarBotonChatEncuesta(card);
+    $cuerpo.appendChild(card);
+  }
+
+  // Después de la encuesta del SMS: si quiere, sigue con un chat normal (retoma su sesión si en este navegador no tenía una).
+  function agregarBotonChatEncuesta(card) {
+    if (!modoEncuestaSms && !card.dataset.sms) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "enc-chat";
+    b.textContent = "¿Necesitas algo más? Escríbenos";
+    b.onclick = () => {
+      modoEncuestaSms = null;
+      $panel.classList.remove("modo-encuesta");
+      try {
+        if (sesionEncuestaSms && !localStorage.getItem("sanitas_webchat_sesion")) localStorage.setItem("sanitas_webchat_sesion", sesionEncuestaSms);
+      } catch (e) { /* sin almacenamiento */ }
+      origenApertura = "enlace_sms";
+      card.remove();
+      if (!ws) conectar();
+    };
+    card.appendChild(document.createElement("br"));
+    card.appendChild(b);
+  }
+
   function mostrarEncuesta(p) {
     const P = p.preguntas || {};
     if (!p.encuesta_id || !P.satisfaccion) return;
@@ -2003,6 +2248,7 @@
     const card = document.createElement("div");
     card.className = "encuesta";
     card.dataset.id = String(p.encuesta_id);
+    if (p.codigo_sms) card.dataset.sms = p.codigo_sms;
     card.setAttribute("role", "form");
     card.setAttribute("aria-label", P.titulo || "Encuesta");
 
@@ -2120,21 +2366,39 @@
     $btnEnviar.disabled = true;
     $btnEnviar.onclick = () => {
       if ($btnEnviar.disabled) return;
-      if (!ws || ws.readyState !== WebSocket.OPEN) { $error.textContent = "Sin conexión. Intenta de nuevo en un momento."; return; }
+      if (!p.codigo_sms && (!ws || ws.readyState !== WebSocket.OPEN)) { $error.textContent = "Sin conexión. Intenta de nuevo en un momento."; return; }
       $btnEnviar.disabled = true;
       $btnEnviar.textContent = "Enviando...";
       $error.textContent = "";
-      enviar({ type: "responder_encuesta", payload: { encuesta_id: p.encuesta_id, respuestas: {
+      const respuestas = {
         satisfaccion: resp.satisfaccion, facilidad: resp.facilidad, dificultad: resp.dificultad, mejoras: resp.mejoras,
         dificultad_otra: resp.dificultad === "otra" ? resp.dificultad_otra : "",
         mejora_otra: resp.mejoras.includes("otra") ? resp.mejora_otra : "",
         comentario: resp.comentario,
-      } } });
+      };
+      if (p.codigo_sms) {
+        // Encuesta abierta desde el SMS: se responde por HTTP (no hay conversación abierta).
+        fetch(`${API_BASE}/widget/encuesta-sms/${encodeURIComponent(p.codigo_sms)}/responder`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ respuestas }),
+        }).then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+          .then((r) => resultadoEncuesta({ ...r, encuesta_id: p.encuesta_id }))
+          .catch(() => resultadoEncuesta({ ok: false, encuesta_id: p.encuesta_id, motivo: "Sin conexión. Intenta de nuevo en un momento." }));
+        return;
+      }
+      enviar({ type: "responder_encuesta", payload: { encuesta_id: p.encuesta_id, respuestas } });
     };
     card.appendChild($btnEnviar);
     const omitir = el("button", "enc-omitir", "Ahora no");
     omitir.type = "button";
     omitir.onclick = () => {
+      if (p.codigo_sms) {
+        fetch(`${API_BASE}/widget/encuesta-sms/${encodeURIComponent(p.codigo_sms)}/omitir`, { method: "POST" }).catch(() => {});
+        cerrarPanel();
+        card.remove();
+        modoEncuestaSms = null;
+        $panel.classList.remove("modo-encuesta");
+        return;
+      }
       enviar({ type: "omitir_encuesta", payload: { encuesta_id: p.encuesta_id } });
       card.remove();
     };
@@ -2144,7 +2408,7 @@
     const acciones = $cuerpo.querySelectorAll(".acciones-cierre");
     const ancla = acciones.length ? acciones[acciones.length - 1] : null;
     if (ancla) $cuerpo.insertBefore(card, ancla); else $cuerpo.appendChild(card);
-    if (estaCercaDelFinal() || ancla) card.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (estaCercaDelFinal() || ancla || p.codigo_sms) card.scrollIntoView({ block: "start", behavior: p.codigo_sms ? "auto" : "smooth" });
     else mostrarIndicadorNuevoMensaje();
     if (!panelAbierto) { noLeidos++; actualizarBadge(); }
   }
@@ -2159,12 +2423,169 @@
       const h = document.createElement("h4"); h.textContent = "¡Gracias por tu opinión!";
       const t = document.createElement("p"); t.textContent = "Tus respuestas nos ayudan a mejorar nuestro canal digital.";
       card.appendChild(ic); card.appendChild(h); card.appendChild(t);
+      agregarBotonChatEncuesta(card);
       return;
     }
     const btn = card.querySelector(".enc-enviar");
     const err = card.querySelector(".enc-error");
     if (err) err.textContent = p.motivo || "No pudimos guardar tus respuestas. Intenta de nuevo.";
     if (btn) { btn.disabled = false; btn.textContent = "Enviar respuestas"; }
+  }
+
+  // "Puedes salir": que la persona sepa que no tiene que quedarse mirando la pantalla (igual que en WhatsApp).
+  // Se muestra una sola vez por conversación.
+  function avisoPuedesSalir() {
+    const clave = "sanitas_webchat_aviso_salir_" + conversacionIdActual;
+    try { if (sessionStorage.getItem(clave) || localStorage.getItem(clave)) return; } catch (e) { /* sin almacenamiento */ }
+    if (avisoPuedesSalir.mostrado === conversacionIdActual) return;
+    avisoPuedesSalir.mostrado = conversacionIdActual;
+    try { localStorage.setItem(clave, "1"); } catch (e) { /* nada */ }
+    agregarMensaje("🔔 Puedes salir del chat tranquilo: cuando el asesor te responda te avisaremos con una notificación o un SMS a tu celular.", "sistema");
+  }
+
+  // ---------------------------------------------------------------------
+  // Teaser de Sofi: mensaje con 4 accesos rápidos justo encima de la burbuja. Se configura (y se apaga) desde
+  // el Editor; la configuración llega con /widget/textos. Reglas: aparece a los N segundos; no aparece si ya
+  // abrió el chat en esta visita, si lo cerró (en esta visita o durante N días), en las páginas excluidas, ni
+  // con el chat abierto. No toca la burbuja (imagen, tamaño y posición son los de siempre).
+  // ---------------------------------------------------------------------
+  const $teaser = root.querySelector(".sofi-teaser");
+  const CLAVE_TEASER_CERRADO = "sofi_teaser_cerrado";
+  const CLAVE_TEASER_HASTA = "sofi_teaser_cerrado_hasta";
+  let teaserVisible = false;
+  let teaserProgramado = false;
+
+  function leerSesion(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+  function leerLocal(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  function rutaExcluida(rutas) {
+    const ruta = window.location.pathname.replace(/\/+$/, "") || "/";
+    return (rutas || []).some((r) => {
+      const base = r.replace(/\/+$/, "") || "/";
+      return base === "/" ? ruta === "/" : (ruta === base || ruta.startsWith(base + "/"));
+    });
+  }
+  function teaserPermitido(cfg) {
+    if (!cfg || !cfg.activo || !(cfg.opciones || []).length) return false;
+    if (panelAbierto || leerSesion(CLAVE_CHAT_ABIERTO) || leerSesion(CLAVE_TEASER_CERRADO)) return false;
+    const hasta = Number(leerLocal(CLAVE_TEASER_HASTA) || 0);
+    if (hasta && Date.now() < hasta) return false;
+    if (host.classList.contains("movil") && !cfg.en_celular) return false;
+    if (rutaExcluida(cfg.rutas_excluidas)) return false;
+    if ($burbuja.classList.contains("oculta") || !$burbuja.getBoundingClientRect().width) return false;
+    return true;
+  }
+
+  let cfgTeaser = null;        // configuración, una vez cumplido el tiempo de espera
+  let teaserArmado = false;    // contenido (texto y botones) ya puesto
+  let teaserMedido = false;    // "sofi_teaser_shown" se mide una sola vez por página
+
+  // ¿El teaser taparía alguno de los elementos que no debe tapar (p. ej. el botón principal del banner)?
+  function tapariaElementos(caja) {
+    const selectores = (cfgTeaser && cfgTeaser.no_tapar) || [];
+    for (const sel of selectores) {
+      let els = [];
+      try { els = document.querySelectorAll(sel); } catch (e) { continue; }   // selector mal escrito: se ignora
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.left < caja.right + 8 && r.right > caja.left - 8 && r.top < caja.bottom + 8 && r.bottom > caja.top - 8) return true;
+      }
+    }
+    return false;
+  }
+
+  function armarTeaser() {
+    if (teaserArmado) return;
+    teaserArmado = true;
+    try {
+      const fuente = getComputedStyle(document.body).fontFamily;
+      if (fuente) $teaser.style.setProperty("--sofi-fuente", fuente);   // la tipografía del portal
+    } catch (e) { /* nada */ }
+    $teaser.querySelector(".st-msg").textContent = cfgTeaser.mensaje || "Hola, soy Sofi. ¿En qué te ayudo hoy?";
+    const $chips = $teaser.querySelector(".st-chips");
+    $chips.innerHTML = "";
+    (cfgTeaser.opciones || []).forEach((o) => {
+      etiquetasIntencion[o.intent] = o.label;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "st-chip";
+      b.textContent = o.label;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        medir("sofi_teaser_chip_click", { intent: o.intent });
+        ocultarTeaser();
+        abrirConFuente("teaser", "teaser", o.intent);
+      });
+      $chips.appendChild(b);
+    });
+  }
+
+  // Decide si el teaser se ve ahora y dónde. Se llama al cumplirse la espera, al hacer scroll y al cambiar el tamaño.
+  function actualizarTeaser() {
+    if (!cfgTeaser) return;
+    if (!teaserPermitido(cfgTeaser)) { ocultarTeaser(); return; }
+    armarTeaser();
+    const r = $burbuja.getBoundingClientRect();
+    const k = parseFloat(getComputedStyle(host).getPropertyValue("--k")) || 1;
+    const estabaVisible = teaserVisible;
+    $teaser.hidden = false;
+    if (!estabaVisible) $teaser.classList.add("midiendo");
+    const ancho = $teaser.offsetWidth * k, alto = $teaser.offsetHeight * k;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const left = Math.max(8 * k, Math.min(r.right, vw - 8 * k) - ancho);   // alineado al borde derecho de la burbuja
+    const top = r.top - 12 * k - alto;                                       // 12px sobre el borde superior de la burbuja
+    const caja = { left, top, right: left + ancho, bottom: top + alto };
+    if (top < 4 || tapariaElementos(caja)) {   // no entra o taparía algo importante: espera (sin darlo por cerrado)
+      $teaser.classList.remove("midiendo");
+      ocultarTeaser();
+      return;
+    }
+    $teaser.style.left = left + "px";
+    $teaser.style.top = top + "px";
+    // La cola apunta al centro de la burbuja (sin salirse de los bordes redondeados).
+    const centro = (r.left + r.width / 2 - left) / k - 7;
+    $teaser.style.setProperty("--cola-x", Math.max(22, Math.min($teaser.offsetWidth - 36, centro)) + "px");
+    $teaser.classList.remove("midiendo");
+    if (!estabaVisible) {
+      teaserVisible = true;
+      requestAnimationFrame(() => $teaser.classList.add("visible"));
+      if (!teaserMedido) { teaserMedido = true; medir("sofi_teaser_shown", {}); }
+    }
+  }
+  let rafTeaser = 0;
+  function reposicionar() {
+    if (!cfgTeaser || rafTeaser) return;
+    rafTeaser = requestAnimationFrame(() => { rafTeaser = 0; actualizarTeaser(); });
+  }
+  window.addEventListener("resize", reposicionar);
+  window.addEventListener("scroll", reposicionar, { passive: true });
+
+  function ocultarTeaser() {
+    if (!teaserVisible && $teaser.hidden) return;
+    teaserVisible = false;
+    $teaser.classList.remove("visible", "midiendo");
+    $teaser.hidden = true;
+  }
+  function cerrarTeaser(cfg) {
+    medir("sofi_teaser_closed", {});
+    ocultarTeaser();
+    try { sessionStorage.setItem(CLAVE_TEASER_CERRADO, "1"); } catch (e) { /* nada */ }
+    const dias = Number((cfg && cfg.dias_sin_mostrar) || 0);
+    if (dias > 0) { try { localStorage.setItem(CLAVE_TEASER_HASTA, String(Date.now() + dias * 86400000)); } catch (e) { /* nada */ } }
+  }
+  function iniciarTeaser(cfg) {
+    if (teaserProgramado || !cfg || !cfg.activo) return;
+    teaserProgramado = true;
+    $teaser.querySelector(".st-cerrar").addEventListener("click", (e) => { e.stopPropagation(); cerrarTeaser(cfg); });
+    // Clic en el cuerpo del mensaje (fuera de los botones) = abrir el chat sin intención.
+    $teaser.addEventListener("click", () => {
+      medir("sofi_teaser_body_click", {});
+      ocultarTeaser();
+      abrirConFuente("teaser", "teaser", null);
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && teaserVisible) cerrarTeaser(cfg); });
+    setTimeout(() => { cfgTeaser = cfg; actualizarTeaser(); }, Math.max(0, Number(cfg.retraso_ms) || 0));
   }
 
   function agregarAccionesCierre() {
@@ -2825,6 +3246,16 @@
         case "encuesta_satisfaccion":
           mostrarEncuesta(p);
           break;
+        case "intencion_aplicada": {
+          // Como si hubiera tocado el botón del menú: se muestra su elección y se quitan los botones del saludo.
+          const ops = $cuerpo.querySelectorAll(".opciones");
+          if (ops.length) ops[ops.length - 1].remove();
+          agregarMensaje(etiquetasIntencion[p.intent] || INTENCIONES[p.intent] || p.intent, "usuario");
+          break;
+        }
+        case "intencion_ignorada":
+          medir("sofi_intent_ignored", { intent: p.intent });
+          break;
         case "encuesta_resultado":
           resultadoEncuesta(p);
           break;
@@ -2874,6 +3305,13 @@
           break;
         }
         case "sesion_iniciada":
+          if (intencionPendiente) {
+            const intencion = intencionPendiente;
+            intencionPendiente = null;
+            setTimeout(() => enviar({ type: "iniciar_intencion", payload: { intent: intencion } }), 0);
+          }
+          ultimaVisibilidadInformada = null;
+          setTimeout(reportarVisibilidad, 0);
           $infoGuardada.classList.add("visible");
           if (!guardadaMostradaAlAbrir) { guardadaMostradaAlAbrir = true; mostrarGuardada(); }
           try { localStorage.setItem("sanitas_webchat_sesion", p.sesion_token); } catch (e) { /* bloqueado: queda en memoria */ }
@@ -2903,7 +3341,8 @@
           scrollAlFinal();
           revisarHistorialPrevio(500);
           marcarConexionLista(true);
-          if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
+          marcarLeidoSiLoVe();
+          reportarVisibilidad();
           break;
         case "historial_previo":
           mostrarHistorialPrevio(p);
@@ -2950,12 +3389,12 @@
         case "mensaje_asesor":
           agregarMensaje(p.asesor_nombre ? `${p.asesor_nombre}: ${p.texto}` : p.texto, "bot", null, null,
                          { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
-          if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
+          marcarLeidoSiLoVe();
           avisarMensajeNuevoSiNoMiraPantalla();
           break;
         case "archivo_asesor":
           agregarMensaje("", "bot", urlArchivoWidget(p.ruta), p.ruta, { mensajeId: p.mensaje_id });
-          if (panelAbierto) enviar({ type: "marcar_leido", payload: {} });
+          marcarLeidoSiLoVe();
           avisarMensajeNuevoSiNoMiraPantalla();
           break;
         case "mensajes_leidos":
@@ -3002,12 +3441,14 @@
         case "en_cola":
           $estadoTexto.textContent = "En cola";
           agregarMensaje("⏳ En breve te atenderá un asesor...", "sistema");
+          avisoPuedesSalir();
           atendidoPorAsesor = false;
           actualizarIconoEnviar();
           break;
         case "asignado":
           $estadoTexto.textContent = `Con ${p.asesor_nombre}`;
           agregarMensaje(`✅ Te está atendiendo ${p.asesor_nombre}`, "sistema");
+          avisoPuedesSalir();
           atendidoPorAsesor = true;
           actualizarIconoEnviar();
           break;
@@ -3136,7 +3577,7 @@
   window.addEventListener("online", () => {
     if (cerradoManualmente || movidoAOtroDispositivo) return;
     if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch (e) { /* ya cerrada */ } }
-    else if (!ws) { intentosReconexion = 0; conectar(); }
+    else if (!ws && !modoEncuestaSms) { intentosReconexion = 0; conectar(); }
   });
 
   // ---------------------------------------------------------------------
@@ -3391,7 +3832,94 @@
   $cuerpo.addEventListener("drop", (e) => {
     e.preventDefault();
     $cuerpo.classList.remove("arrastrando");
-    if (e.dataTransfer.files.length > 0) subirArchivo(e.dataTransfer.files[0]);
+    const archivos = Array.from(e.dataTransfer.files || []);
+    if (!archivos.length || modoEncuestaSms) return;
+    if (archivos.length > 1 && archivos.every((f) => (f.type || "").startsWith("image/"))) { confirmarPegadas(archivos); return; }
+    subirArchivo(archivos[0]);
+  });
+
+  // Pegar imágenes (Ctrl+V en la computadora, "Pegar" en el celular): vista previa y confirmación antes de
+  // enviarlas, como en WhatsApp Web. Si lo que se pega es texto, se pega normal en la caja.
+  const MAX_PEGADAS = 5;
+  function imagenesDelPortapapeles(e) {
+    const dt = e.clipboardData;
+    if (!dt) return [];
+    const archivos = [];
+    if (dt.files && dt.files.length) {
+      for (const f of dt.files) if ((f.type || "").startsWith("image/")) archivos.push(f);
+    }
+    if (!archivos.length && dt.items) {
+      for (const it of dt.items) {
+        if (it.kind === "file" && (it.type || "").startsWith("image/")) { const f = it.getAsFile(); if (f) archivos.push(f); }
+      }
+    }
+    return archivos;
+  }
+  function nombrePegada(f, i) {
+    if (f.name && f.name !== "image.png" && f.name !== "image") return f.name;
+    const ext = ((f.type || "image/png").split("/")[1] || "png").replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "");
+    return `imagen-pegada-${Date.now()}${i ? "-" + (i + 1) : ""}.${ext || "png"}`;
+  }
+  function confirmarPegadas(archivos) {
+    if (root.querySelector(".pegado-overlay")) return;
+    const lista = archivos.slice(0, MAX_PEGADAS);
+    const urls = lista.map((f) => { try { return URL.createObjectURL(f); } catch (_) { return null; } });
+    const overlay = document.createElement("div");
+    overlay.className = "pegado-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-label", "Enviar imagen pegada");
+    const h = document.createElement("h5");
+    h.textContent = lista.length > 1 ? `¿Enviar estas ${lista.length} imágenes?` : "¿Enviar esta imagen?";
+    const fotos = document.createElement("div");
+    fotos.className = "peg-fotos" + (lista.length > 1 ? " varias" : "");
+    urls.forEach((u) => {
+      const img = document.createElement("img");
+      img.alt = "Imagen pegada";
+      if (u) img.src = u;
+      fotos.appendChild(img);
+    });
+    const botones = document.createElement("div");
+    botones.className = "peg-botones";
+    const cancelar = document.createElement("button"); cancelar.type = "button"; cancelar.className = "peg-cancelar"; cancelar.textContent = "Cancelar";
+    const enviarB = document.createElement("button"); enviarB.type = "button"; enviarB.className = "peg-enviar"; enviarB.textContent = "Enviar ➤";
+    botones.appendChild(cancelar); botones.appendChild(enviarB);
+    overlay.appendChild(h);
+    if (archivos.length > MAX_PEGADAS) {
+      const nota = document.createElement("div");
+      nota.style.cssText = "font-size:12.5px;color:#5B6B7C";
+      nota.textContent = `Se enviarán las primeras ${MAX_PEGADAS}.`;
+      overlay.appendChild(nota);
+    }
+    overlay.appendChild(fotos);
+    overlay.appendChild(botones);
+    const cerrar = () => {
+      urls.forEach((u) => { if (u) { try { URL.revokeObjectURL(u); } catch (_) { /* nada */ } } });
+      overlay.remove();
+      document.removeEventListener("keydown", teclas, true);
+      $textoInput.focus();
+    };
+    const teclas = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); cerrar(); }
+      else if (e.key === "Enter") { e.preventDefault(); enviarB.click(); }
+    };
+    cancelar.onclick = cerrar;
+    enviarB.onclick = async () => {
+      cerrar();
+      for (let i = 0; i < lista.length; i++) await subirArchivo(lista[i], nombrePegada(lista[i], i));
+    };
+    document.addEventListener("keydown", teclas, true);
+    $panel.appendChild(overlay);
+    setTimeout(() => enviarB.focus(), 0);
+  }
+  $textoInput.addEventListener("paste", (e) => {
+    const archivos = imagenesDelPortapapeles(e);
+    if (!archivos.length) return;            // texto: se pega normal
+    e.preventDefault();
+    if ($adjuntarBtn.disabled || modoEncuestaSms || !conversacionIdActual) {
+      agregarMensaje("⚠️ Espera un momento a que termine el envío anterior para pegar otra imagen.", "sistema");
+      return;
+    }
+    confirmarPegadas(archivos);
   });
 
   async function abrirCamara() {

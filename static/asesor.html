@@ -2090,6 +2090,26 @@ document.getElementById('btnSalir').onclick = () => {
   renderNotaBanner();
 };
 
+// La consola se abrió en otra pestaña o equipo: el servidor cierra esta conexión con el código 4000.
+// No se reconecta sola (si no, las dos pestañas se quitarían la conexión una a otra sin fin).
+function mostrarAvisoOtraPestana() {
+  if (document.getElementById('avisoOtraPestana')) return;
+  const ov = document.createElement('div');
+  ov.id = 'avisoOtraPestana';
+  ov.setAttribute('role', 'alertdialog');
+  ov.setAttribute('aria-label', 'Consola abierta en otra pestaña');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,20,30,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:420px;padding:22px 22px 18px;font-family:inherit;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+    + '<h3 style="margin:0 0 8px;font-size:17px">Esta pestaña quedó desconectada</h3>'
+    + '<p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#3A4A5A">Abriste la consola en otra pestaña o en otro equipo, y solo una puede estar conectada a la vez. '
+    + 'Mientras tanto aquí no te llegan conversaciones.</p>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" id="btnUsarEstaPestana" style="padding:10px 16px;border:0;border-radius:8px;background:#0A4C8C;color:#fff;font-weight:600;cursor:pointer">Usar esta pestaña</button></div></div>';
+  document.body.appendChild(ov);
+  const btn = document.getElementById('btnUsarEstaPestana');
+  btn.onclick = () => { ov.remove(); intentosReconexion = 0; conectarWs(); };
+  btn.focus();
+}
+
 function conectarWs() {
   const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
   // Si se reconecta estando en pausa (caída de red, deploy), se lo decimos al
@@ -2125,6 +2145,11 @@ function conectarWs() {
   ws.onclose = (e) => {
     ws = null;
     if (cerradoManualmente) return;
+    if (e.code === 4000) {
+      document.getElementById('estadoTexto').textContent = 'Sin conexión: la consola está abierta en otra pestaña';
+      mostrarAvisoOtraPestana();
+      return;
+    }
     if (e.code === 4401 || e.code === 4403) {
       document.getElementById('estadoTexto').textContent = 'Sesión expirada — vuelve a conectarte';
       return;
