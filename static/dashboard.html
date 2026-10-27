@@ -77,6 +77,41 @@
   .fila-tema .cant small { font-weight: 400; color: var(--texto-suave); }
   .spark { display: flex; align-items: flex-end; gap: 1px; height: 22px; }
   .spark i { flex: 1; min-width: 1px; background: #8FB3DA; border-radius: 1px 1px 0 0; min-height: 1px; }
+  /* Encuesta de satisfacción */
+  .enc-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .enc-cab h2 { margin-bottom: 4px; }
+  .enc-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0 16px; }
+  .enc-kpi { border: 1px solid var(--borde); border-radius: 10px; padding: 12px 14px; }
+  .enc-kpi .numero { font-size: 24px; font-weight: 700; line-height: 1.15; }
+  .enc-kpi .etiqueta { font-size: 12px; color: var(--texto-suave); font-weight: 600; margin-top: 2px; }
+  .enc-kpi .detalle { font-size: 11.5px; color: var(--texto-suave); margin-top: 3px; }
+  .enc-hallazgos { background: #F2F7FC; border: 1px solid #D5E4F3; border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; }
+  .enc-hallazgos b { font-size: 13px; color: var(--azul); }
+  .enc-hallazgos ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+  .enc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 18px 28px; }
+  .enc-grid h3 { font-size: 13px; margin: 0 0 10px; }
+  .enc-grid h3 .sub { font-weight: 400; color: var(--texto-suave); font-size: 12px; }
+  .enc-fila { display: grid; grid-template-columns: minmax(120px, 44%) 1fr 74px; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 12.5px; }
+  .enc-fila .n { line-height: 1.3; }
+  .enc-fila .p { background: var(--fondo); border-radius: 5px; height: 16px; overflow: hidden; }
+  .enc-fila .p i { display: block; height: 100%; border-radius: 5px; background: var(--azul); }
+  .enc-fila .c { text-align: right; font-weight: 700; white-space: nowrap; }
+  .enc-fila .c small { font-weight: 400; color: var(--texto-suave); }
+  .enc-fila .s { grid-column: 1 / -1; margin-top: -4px; font-size: 11px; color: var(--texto-suave); padding-left: 2px; }
+  .enc-dias { display: flex; align-items: flex-end; gap: 3px; height: 110px; padding-top: 18px; }
+  .enc-dias .d { flex: 1; max-width: 34px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
+  .enc-dias .d i { width: 100%; background: var(--azul); border-radius: 3px 3px 0 0; min-height: 2px; }
+  .enc-dias .d span { font-size: 9.5px; color: var(--texto-suave); margin-bottom: 2px; }
+  .enc-comentarios { display: flex; flex-direction: column; gap: 10px; max-height: 520px; overflow-y: auto; padding-right: 4px; }
+  .enc-com { border: 1px solid var(--borde); border-left: 4px solid var(--gris); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  .enc-com.bajo { border-left-color: var(--rojo); }
+  .enc-com.alto { border-left-color: var(--verde); }
+  .enc-com .meta { font-size: 11.5px; color: var(--texto-suave); margin-bottom: 4px; }
+  .enc-com .txt { white-space: pre-wrap; line-height: 1.45; }
+  .enc-com .extra { font-size: 12px; margin-top: 4px; color: var(--texto); }
+  .enc-filtros { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .enc-filtros button { padding: 5px 11px; font-size: 12px; background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
+  .enc-filtros button.activo { background: var(--azul); color: white; border-color: var(--azul); }
   .nota-panel { font-size: 12px; color: var(--texto-suave); margin: 10px 0 0; line-height: 1.5; }
   .chips-palabras { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chips-palabras span { background: var(--fondo); border: 1px solid var(--borde); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
@@ -612,6 +647,7 @@ async function cargarEstadisticas() {
   }
 
   renderDashboard(data, desde, hasta);
+  cargarEncuesta(desde, hasta);
   cargarConsultas(desde, hasta);
   cargarApp();
   document.getElementById('cargando').classList.remove('activo');
@@ -899,6 +935,123 @@ async function cargarConsultas(desde, hasta) {
   }
 }
 
+// ---- Encuesta de satisfacción (ver encuesta.py) ----
+let encuestaDatos = null, encuestaFiltroTextos = 'todos';
+function fmtPct(v) { return v == null ? '–' : (Math.round(v * 10) / 10).toString().replace('.', ',') + '%'; }
+function fmtNum(v, dec) { return v == null ? '–' : Number(v).toFixed(dec).replace('.', ','); }
+function colorSatisf(v) { return v >= 4 ? 'var(--verde)' : (v <= 2 ? 'var(--rojo)' : 'var(--naranja)'); }
+function filaEnc(nombre, cantidad, pct, maxCant, color, sub) {
+  const ancho = maxCant ? Math.max(cantidad / maxCant * 100, cantidad ? 2 : 0) : 0;
+  return `<div class="enc-fila"><div class="n" title="${escapaHtml(nombre)}">${escapaHtml(nombre)}</div>
+    <div class="p"><i style="width:${ancho}%;background:${color || 'var(--azul)'}"></i></div>
+    <div class="c">${cantidad} <small>${fmtPct(pct)}</small></div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+}
+function renderTextosEncuesta() {
+  const d = encuestaDatos;
+  const cont = document.querySelector('#panelEncuesta .enc-comentarios');
+  if (!d || !cont) return;
+  const lista = (d.textos || []).filter(t => encuestaFiltroTextos === 'todos' || (encuestaFiltroTextos === 'bajos' ? t.satisfaccion <= 2 : t.satisfaccion >= 4));
+  if (!lista.length) { cont.innerHTML = '<div class="vacio-panel">No hay comentarios con este filtro.</div>'; return; }
+  const caras = { 1: '😞', 2: '🙁', 3: '😐', 4: '🙂', 5: '🤩' };
+  cont.innerHTML = lista.map(t => `<div class="enc-com ${t.satisfaccion <= 2 ? 'bajo' : (t.satisfaccion >= 4 ? 'alto' : '')}">
+      <div class="meta">${caras[t.satisfaccion] || ''} ${t.satisfaccion}/5 · ${escapaHtml(t.fecha)} · ${escapaHtml(t.campana)}${t.asesor ? ' · ' + escapaHtml(t.asesor) : ''} · conv. #${Number(t.conversacion_id)}</div>
+      ${t.comentario ? `<div class="txt">${escapaHtml(t.comentario)}</div>` : ''}
+      ${t.dificultad_otra ? `<div class="extra"><b>Otra dificultad:</b> ${escapaHtml(t.dificultad_otra)}</div>` : ''}
+      ${t.mejora_otra ? `<div class="extra"><b>Otra mejora:</b> ${escapaHtml(t.mejora_otra)}</div>` : ''}
+      <div class="extra" style="color:var(--texto-suave)">Facilidad: ${escapaHtml(t.facilidad || '–')} · Dificultad: ${escapaHtml(t.dificultad || '–')}${t.mejoras && t.mejoras.length ? ' · Pidió: ' + escapaHtml(t.mejoras.join(', ')) : ''}</div>
+    </div>`).join('');
+}
+function renderEncuesta(d) {
+  if (!d || d.disponible === false) return '<div class="vacio-panel">Aún no hay datos: falta ejecutar <b>migracion_encuesta_satisfaccion.sql</b> en la base de datos.</div>';
+  if (!d.enviadas) return '<div class="vacio-panel">No se enviaron encuestas en este período. Se envían al cerrar una conversación atendida por un asesor en las campañas que tienen la encuesta activada (Supervisor › Campañas › 📝 Encuesta).</div>';
+  const s = d.satisfaccion, f = d.facilidad;
+  const kpi = (num, et, det, color) => `<div class="enc-kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${num}</div><div class="etiqueta">${et}</div>${det ? `<div class="detalle">${det}</div>` : ''}</div>`;
+  let html = `<div class="enc-kpis">
+    ${kpi(d.respondidas, 'Respuestas', `de ${d.enviadas} enviadas · ${fmtPct(d.tasa_respuesta)} responde${d.omitidas ? ' · ' + d.omitidas + ' «Ahora no»' : ''}`)}
+    ${kpi(fmtNum(s.promedio, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> / 5</small>', 'Satisfacción promedio', 'pregunta 1', s.promedio == null ? null : colorSatisf(Math.round(s.promedio)))}
+    ${kpi(fmtPct(s.csat), 'Satisfechos (4 y 5)', `${fmtPct(s.insatisfechos_pct)} insatisfechos (1 y 2)`, 'var(--verde)')}
+    ${kpi(fmtPct(f.ces), 'Le resultó fácil', `fácil o muy fácil · ${fmtPct(f.dificil_pct)} difícil`, 'var(--azul)')}
+  </div>`;
+  if (!d.respondidas) return html + '<div class="vacio-panel">Todavía nadie respondió en este período.</div>';
+  if (d.hallazgos && d.hallazgos.length) {
+    html += `<div class="enc-hallazgos"><b>💡 Qué nos dicen los datos</b><ul>${d.hallazgos.map(h => `<li>${escapaHtml(h)}</li>`).join('')}</ul></div>`;
+  }
+  const maxS = Math.max(...s.distribucion.map(x => x.cantidad), 1);
+  const maxF = Math.max(...f.distribucion.map(x => x.cantidad), 1);
+  const coloresF = { 5: 'var(--verde)', 4: '#7CCDAE', 3: 'var(--gris)', 2: '#EE9B92', 1: 'var(--rojo)' };
+  const dif = d.dificultades;
+  const maxD = Math.max(...dif.map(x => x.cantidad), 1);
+  const mej = d.mejoras;
+  const maxM = Math.max(...mej.map(x => x.cantidad), 1);
+  const promTxt = (v) => v == null ? '' : `satisfacción de quienes la marcaron: <b>${fmtNum(v, 1)}</b> / 5`;
+  html += `<div class="enc-grid">
+    <div><h3>1. Satisfacción con la atención</h3>${s.distribucion.slice().reverse().map(x => filaEnc(`${x.emoji} ${x.valor} · ${x.texto}`, x.cantidad, x.pct, maxS, colorSatisf(x.valor))).join('')}</div>
+    <div><h3>2. Facilidad para usar el webchat</h3>${f.distribucion.map(x => filaEnc(x.texto, x.cantidad, x.pct, maxF, coloresF[x.valor])).join('')}</div>
+    <div><h3>3. Dificultades al usar el webchat <span class="sub">una por persona</span></h3>${dif.map(x => filaEnc(x.texto, x.cantidad, x.pct, maxD, x.codigo === 'ninguna' ? 'var(--verde)' : 'var(--naranja)', x.codigo === 'ninguna' ? '' : promTxt(x.satisfaccion_prom))).join('')}</div>
+    <div><h3>4. Qué quieren que mejoremos <span class="sub">pueden elegir varias · % de las respuestas</span></h3>${mej.map(x => filaEnc(x.texto, x.cantidad, x.pct, maxM, x.codigo === 'ninguna' ? 'var(--verde)' : 'var(--azul)')).join('')}</div>
+  </div>`;
+  const tabla = (filas, cols) => `<div style="overflow-x:auto"><table class="tabla-tiempos"><thead><tr>${cols.map(c => `<th class="${c[2] || ''}">${c[0]}</th>`).join('')}</tr></thead>
+    <tbody>${filas.map(r => `<tr>${cols.map(c => `<td class="${c[2] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  html += `<div class="enc-grid" style="margin-top:22px">
+    <div><h3>Por campaña</h3>${tabla(d.por_campana, [
+      ['Campaña', r => escapaHtml(r.campana)], ['Enviadas', r => r.enviadas, 'num'], ['Resp.', r => r.respondidas, 'num'],
+      ['Prom.', r => fmtNum(r.promedio, 1), 'num'], ['Satisf.', r => fmtPct(r.csat), 'num'], ['Fácil', r => fmtPct(r.ces), 'num']])}</div>
+    <div><h3>Por asesor <span class="sub">la pregunta 1 evalúa la atención recibida</span></h3>${tabla(d.por_asesor.filter(r => r.respondidas), [
+      ['Asesor', r => escapaHtml(r.asesor)], ['Resp.', r => r.respondidas, 'num'], ['Prom.', r => fmtNum(r.promedio, 1), 'num'],
+      ['Satisf.', r => fmtPct(r.csat), 'num'], ['1 y 2', r => r.bajas || 0, 'num']])}</div>
+  </div>`;
+  if (d.por_dia && d.por_dia.length > 1) {
+    const maxR = Math.max(...d.por_dia.map(x => x.respondidas), 1);
+    html += `<h3 style="font-size:13px;margin:22px 0 4px">Evolución por día <span class="sub" style="font-weight:400;color:var(--texto-suave);font-size:12px">alto de la barra = respuestas · número = % satisfechos · color = promedio</span></h3>
+      <div class="enc-dias">${d.por_dia.map(x => `<div class="d" title="${escapaHtml(x.dia.split('-').reverse().join('/'))}: ${x.respondidas} respuestas de ${x.enviadas} · ${fmtPct(x.csat)} satisfechos">
+        <span>${x.respondidas ? Math.round(x.csat || 0) + '%' : ''}</span><i style="height:${x.respondidas / maxR * 85}%;background:${x.promedio == null ? 'var(--borde)' : colorSatisf(Math.round(x.promedio))}"></i></div>`).join('')}</div>`;
+  }
+  html += `<h3 style="font-size:13px;margin:22px 0 8px">Comentarios y otras respuestas <span class="sub" style="font-weight:400;color:var(--texto-suave);font-size:12px">los 100 más recientes</span></h3>
+    <div class="enc-filtros"><button data-f="todos" class="${encuestaFiltroTextos === 'todos' ? 'activo' : ''}">Todos</button><button data-f="bajos" class="${encuestaFiltroTextos === 'bajos' ? 'activo' : ''}">😞 Insatisfechos (1 y 2)</button><button data-f="altos" class="${encuestaFiltroTextos === 'altos' ? 'activo' : ''}">🙂 Satisfechos (4 y 5)</button></div>
+    <div class="enc-comentarios"></div>
+    <p class="nota-panel">Base: encuestas enviadas entre las fechas elegidas. «Satisfechos» = quienes marcaron 4 o 5 en la pregunta 1. El Excel trae cada respuesta completa para analizarla o cruzarla con la conversación.</p>`;
+  return html;
+}
+async function cargarEncuesta(desde, hasta) {
+  const el = document.getElementById('panelEncuesta');
+  if (!el) return;
+  const cab = `<div class="enc-cab"><h2>Encuesta de satisfacción <span class="sub">encuestas enviadas en el período${campanaSeleccionadaTexto()}</span></h2>
+    <button class="gris" id="btnExcelEncuesta" style="padding:7px 12px;font-size:12.5px">⬇ Descargar Excel</button></div>`;
+  try {
+    const resp = await fetch(`${urlBaseGuardada}/dashboard/encuesta?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}${paramCampana()}`,
+      { headers: { 'Authorization': `Bearer ${tokenGuardado}` } });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    encuestaDatos = await resp.json();
+    el.innerHTML = cab + renderEncuesta(encuestaDatos);
+  } catch (e) {
+    encuestaDatos = null;
+    el.innerHTML = cab + '<div class="vacio-panel">No se pudo cargar este panel.</div>';
+  }
+  el.querySelectorAll('.enc-filtros [data-f]').forEach(b => b.onclick = () => {
+    encuestaFiltroTextos = b.dataset.f;
+    el.querySelectorAll('.enc-filtros [data-f]').forEach(x => x.classList.toggle('activo', x === b));
+    renderTextosEncuesta();
+  });
+  renderTextosEncuesta();
+  const btn = document.getElementById('btnExcelEncuesta');
+  if (btn) btn.onclick = async () => {
+    btn.disabled = true; const txt = btn.textContent; btn.textContent = 'Generando…';
+    try {
+      const r = await fetch(`${urlBaseGuardada}/dashboard/encuesta.xlsx?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}${paramCampana()}`,
+        { headers: { 'Authorization': `Bearer ${tokenGuardado}` } });
+      if (r.status === 403) throw new Error('Solo los supervisores pueden descargar las respuestas.');
+      if (!r.ok) throw new Error('No se pudo generar el Excel (HTTP ' + r.status + ').');
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `encuesta_satisfaccion_${desde}_a_${hasta}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    } catch (e) { alert(e.message); }
+    btn.disabled = false; btn.textContent = txt;
+  };
+}
+
 function renderApp(d) {
   if (!d || d.disponible === false) return '<div class="vacio-panel">Aún no hay datos: falta ejecutar <b>migracion_push_avisos.sql</b> en la base de datos.</div>';
   if (!d.dispositivos) return '<div class="vacio-panel">Todavía nadie abrió el app. Los datos aparecen desde que se publica esta versión.</div>';
@@ -957,6 +1110,11 @@ function renderDashboard(data, desde, hasta) {
     <div class="panel">
       <h2>Conversaciones por día</h2>
       ${renderChartDias(data.por_dia)}
+    </div>
+
+    <div class="panel" id="panelEncuesta">
+      <h2>Encuesta de satisfacción</h2>
+      <div class="vacio-panel">Cargando…</div>
     </div>
 
     <div class="panel">

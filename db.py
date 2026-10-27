@@ -5,12 +5,16 @@ import time
 import psycopg2
 from psycopg2 import pool
 
-# Pools chicos a propósito: la instancia de Cloud SQL (db-f1-micro) solo admite 25 conexiones EN TOTAL y la
-# comparten sofi-apis y otros sistemas. Con UNA instancia de Cloud Run, el webchat usa como máximo 8 + 2.
-# Si se sube el tipo de máquina de Cloud SQL, estos números se pueden volver a subir.
+# Pools chicos a propósito: la instancia de Cloud SQL se comparte con sofi-apis y otros sistemas. Con UNA
+# instancia de Cloud Run, el webchat usa como máximo 8 + 2. El 2026-10-23 se pasó de db-f1-micro (25 conexiones)
+# a db-g1-small: estos números se pueden subir después de revisar las métricas de conexiones de esa semana.
 _MAX_WEBCHAT = 8
 _MAX_SOFI = 2
 _ESPERA_MAX_SEG = 3.0   # si el pool está lleno, se espera un momento a que se libere una conexión
+# Una conexión que estuvo quieta más de esto se prueba (SELECT 1) antes de entregarla: si la base se
+# reinició (cambio de tipo de máquina, mantenimiento), la conexión vieja está muerta y fallaría al usarla.
+_VALIDAR_SI_QUIETA_SEG = 10.0
+_ultimo_uso: dict = {}   # id(conexión) -> time.monotonic() de cuando se devolvió al pool
 
 # Inicializamos un pool de conexiones global
 _pool = None
@@ -30,20 +34,53 @@ def get_connection():
 
 def _tomar(p):
     """psycopg2 lanza PoolError al instante si el pool está lleno; aquí se espera un poco a que se libere una
-    conexión antes de rendirse (un pico corto no debe verse como error para el cliente)."""
+    conexión antes de rendirse (un pico corto no debe verse como error para el cliente).
+    Además nunca entrega una conexión muerta: si lo está, la cierra y pide otra (el pool abre una nueva)."""
     limite = time.monotonic() + _ESPERA_MAX_SEG
     while True:
         try:
-            return p.getconn()
+            conn = p.getconn()
         except pool.PoolError:
             if time.monotonic() >= limite:
                 raise
             time.sleep(0.05)
+            continue
+        if _esta_viva(conn):
+            return conn
+        _ultimo_uso.pop(id(conn), None)
+        try:
+            p.putconn(conn, close=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _esta_viva(conn) -> bool:
+    if conn.closed:
+        return False
+    devuelta = _ultimo_uso.get(id(conn))
+    if devuelta is None or time.monotonic() - devuelta < _VALIDAR_SI_QUIETA_SEG:
+        return True   # recién abierta o usada hace poco: no hace falta probarla
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        conn.rollback()   # que quede igual que antes de la prueba (sin transacción abierta)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _devolver(p, conn):
+    if conn.closed:
+        _ultimo_uso.pop(id(conn), None)
+    else:
+        _ultimo_uso[id(conn)] = time.monotonic()
+    p.putconn(conn)
 
 
 def release_connection(conn):
     if _pool and conn:
-        _pool.putconn(conn)
+        _devolver(_pool, conn)
 
 
 # Segundo pool, hacia la base "sofi_whatsapp" -- MISMA instancia Cloud SQL
@@ -71,4 +108,4 @@ def get_connection_sofi():
 
 def release_connection_sofi(conn):
     if _pool_sofi and conn:
-        _pool_sofi.putconn(conn)
+        _devolver(_pool_sofi, conn)

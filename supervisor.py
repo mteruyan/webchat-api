@@ -912,6 +912,51 @@ def editar_asesor(asesor_id: int, nombre_display: str = None, rol: str = None,
         release_connection(conn)
 
 
+def editar_campanas_asesor(asesor_id, campana_ids: list, alcance) -> dict:
+    """Agrega o quita campañas a un ASESOR (no a supervisores, editores ni al máximo).
+    Con alcance (supervisor de campaña): solo toca las campañas de su alcance y deja intactas las demás
+    que tenga el asesor. Sin alcance (máximo): las reemplaza todas.
+    Devuelve {"ok": True, "nombre": ...} o {"ok": False, "motivo": ...}."""
+    if not str(asesor_id or "").isdigit():
+        return {"ok": False, "motivo": "Falta el asesor."}
+    pedidas = set(_ids_validos(campana_ids))
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT rol, activo, nombre_display FROM asesores WHERE id = %s", (int(asesor_id),))
+            fila = cur.fetchone()
+            if fila is None:
+                conn.rollback()
+                return {"ok": False, "motivo": "Ese asesor no existe."}
+            rol, activo, nombre = fila
+            if rol != "asesor" or _es_maximo_cur(cur, int(asesor_id)):
+                conn.rollback()
+                return {"ok": False, "motivo": "Solo se pueden cambiar las campañas de un asesor."}
+            if alcance is not None and not activo:
+                conn.rollback()
+                return {"ok": False, "motivo": f"{nombre} está desactivado."}
+            if pedidas:
+                cur.execute("SELECT id FROM campanas WHERE id = ANY(%s)", (list(pedidas),))
+                if len({r[0] for r in cur.fetchall()}) != len(pedidas):
+                    conn.rollback()
+                    return {"ok": False, "motivo": "Alguna de las campañas elegidas no existe."}
+            if alcance is None:
+                cur.execute("DELETE FROM asesor_campanas WHERE asesor_id = %s", (int(asesor_id),))
+            else:
+                cur.execute("DELETE FROM asesor_campanas WHERE asesor_id = %s AND campana_id = ANY(%s)",
+                            (int(asesor_id), list(alcance["ids"])))
+                pedidas &= set(alcance["ids"])
+            for campana_id in sorted(pedidas):
+                cur.execute(
+                    "INSERT INTO asesor_campanas (asesor_id, campana_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (int(asesor_id), campana_id),
+                )
+        conn.commit()
+        return {"ok": True, "nombre": nombre}
+    finally:
+        release_connection(conn)
+
+
 def resetear_password_asesor(asesor_id: int, password: str):
     conn = get_connection()
     try:
@@ -1116,8 +1161,19 @@ def filtrar_evento(evento: dict, alcance):
         return {**evento, "payload": _recortar_asesor(p, alcance)} if _asesor_de_alcance(p, alcance) else None
     if tipo == "lista_asesores":
         return {**evento, "payload": {**p, "asesores": [a for a in (p.get("asesores") or []) if _asesor_de_alcance(a, alcance)]}}
-    if tipo in ("asesores_admin", "campanas_admin"):
-        return None  # solo el supervisor máximo administra usuarios y campañas
+    if tipo == "asesores_admin":
+        # El supervisor de campaña puede agregar o quitar SUS campañas a los asesores (no crear usuarios ni
+        # cambiar nada más): ve solo los asesores activos, y de cada uno solo las campañas de su alcance.
+        ids = set(alcance["ids"])
+        asesores = [{"asesor_id": a["asesor_id"], "usuario": a.get("usuario"), "nombre_display": a.get("nombre_display"),
+                     "rol": "asesor", "activo": True, "cupo_maximo": a.get("cupo_maximo"), "es_maximo": False,
+                     "dosfa": False, "campana_ids": [c for c in (a.get("campana_ids") or []) if c in ids]}
+                    for a in (p.get("asesores") or [])
+                    if a.get("rol") == "asesor" and a.get("activo") and not a.get("es_maximo")]
+        return {**evento, "payload": {"asesores": asesores, "limitado": True,
+                                      "campanas": [c for c in (p.get("campanas") or []) if c.get("id") in ids]}}
+    if tipo == "campanas_admin":
+        return None  # solo el supervisor máximo administra campañas
     if tipo == "respuestas_rapidas_disponibles":
         out = {**p, "respuestas": [r for r in (p.get("respuestas") or []) if r.get("campana_id") in alcance["ids"]]}
         if "campanas" in p:
@@ -1145,7 +1201,9 @@ def filtrar_evento(evento: dict, alcance):
 
 
 _SOLO_MAXIMO = {
-    "obtener_asesores_admin", "crear_asesor", "editar_asesor", "quitar_2fa_asesor", "resetear_password_asesor",
+    # "obtener_asesores_admin" ya no: el supervisor de campaña ve la lista recortada (ver filtrar_evento) para
+    # agregar o quitar sus campañas con "editar_campanas_asesor". Crear y editar usuarios sigue siendo del máximo.
+    "crear_asesor", "editar_asesor", "quitar_2fa_asesor", "resetear_password_asesor",
     "listar_campanas_admin", "crear_campana", "editar_campana",
     # Ajustes que valen para todo el chat, no para una campaña:
     "guardar_mensaje_cierre", "guardar_mensaje_bienvenida", "guardar_inactividad_minutos",
@@ -1211,6 +1269,11 @@ def motivo_denegado(tipo: str, payload: dict, alcance):
     if payload.get("conversacion_id") is not None and not conversacion_en_alcance(payload.get("conversacion_id"), alcance):
         return otra
     ids = alcance["ids"]
+    if tipo == "editar_campanas_asesor":
+        pedidas = payload.get("campana_ids")
+        if not isinstance(pedidas, list) or len(_ids_validos(pedidas)) != len(pedidas) \
+                or not set(_ids_validos(pedidas)) <= set(ids):
+            return "Solo puedes agregar o quitar campañas que tengas asignadas."
     if tipo in ("cambiar_cupo",) and not asesor_en_alcance(payload.get("asesor_id"), alcance):
         return "Ese asesor no atiende ninguna de tus campañas."
     if tipo in ("transferir_conversacion", "asignar_conversacion_manual") \
@@ -1270,8 +1333,20 @@ def listar_campanas_admin():
                             WHERE ac.campana_id = c.id AND a.activo = TRUE AND a.rol = 'asesor')
                    FROM campanas c ORDER BY c.activo DESC, c.nombre"""
             )
-            return [{"id": i, "codigo": cod, "nombre": n, "activo": a, "mensaje_fuera_horario": m, "asesores": q}
-                    for i, cod, n, a, m, q in cur.fetchall()]
+            filas = [{"id": i, "codigo": cod, "nombre": n, "activo": a, "mensaje_fuera_horario": m, "asesores": q}
+                     for i, cod, n, a, m, q in cur.fetchall()]
+            # Encuesta de satisfacción por campaña (columna de migracion_encuesta_satisfaccion.sql).
+            try:
+                cur.execute("SAVEPOINT sp_encuesta")
+                cur.execute("SELECT id, encuesta_satisfaccion FROM campanas")
+                con_encuesta = {i for i, e in cur.fetchall() if e}
+                cur.execute("RELEASE SAVEPOINT sp_encuesta")
+                for f in filas:
+                    f["encuesta"] = f["id"] in con_encuesta
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_encuesta")   # migración sin correr: no se muestra
+        conn.rollback()
+        return filas
     finally:
         release_connection(conn)
 
@@ -1329,7 +1404,7 @@ def crear_campana(nombre: str, mensaje_fuera_horario: str = "", dias: list = Non
         release_connection(conn)
 
 
-def editar_campana(campana_id, nombre: str = None, activo: bool = None) -> dict:
+def editar_campana(campana_id, nombre: str = None, activo: bool = None, encuesta: bool = None) -> dict:
     try:
         campana_id = int(campana_id)
     except (TypeError, ValueError):
@@ -1347,6 +1422,8 @@ def editar_campana(campana_id, nombre: str = None, activo: bool = None) -> dict:
                 cur.execute("UPDATE campanas SET nombre = %s WHERE id = %s", (nombre, campana_id))
             if activo is not None:
                 cur.execute("UPDATE campanas SET activo = %s WHERE id = %s", (bool(activo), campana_id))
+            if encuesta is not None:
+                cur.execute("UPDATE campanas SET encuesta_satisfaccion = %s WHERE id = %s", (bool(encuesta), campana_id))
         conn.commit()
         return {"ok": True}
     except Exception:

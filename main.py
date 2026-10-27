@@ -16,7 +16,10 @@ import uuid
 import secrets
 import json
 import asyncio
+import contextlib
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,6 +53,7 @@ import recordatorios
 import push
 import temas_consulta
 import verificacion_whatsapp
+import encuesta
 
 LIMA_TZ = timezone(timedelta(hours=-5))
 
@@ -75,13 +79,23 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    """Usado por Cloud Run para healthchecks; también sirve para probar la conexión a BD a mano."""
+    """Usado por Cloud Run para healthchecks; también sirve para probar la conexión a BD a mano.
+    Es pública: solo dice "ok"/"error" (el detalle del error queda en los logs, no se le muestra a nadie).
+    Responde 200 aunque la base falle a propósito: reiniciar la instancia no arregla la base y cortaría
+    todos los WebSockets."""
+    conn = None
     try:
         conn = get_connection()
-        release_connection(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
         return {"status": "ok", "db": "ok"}
-    except Exception as e:
-        return {"status": "ok", "db": f"error: {e}"}
+    except Exception:
+        logger.warning("Healthcheck: la base de datos no respondió", exc_info=True)
+        return {"status": "ok", "db": "error"}
+    finally:
+        if conn is not None:
+            release_connection(conn)
 
 
 @app.get("/widget.js")
@@ -491,6 +505,13 @@ def _tipo_imagen_real(contenido: bytes) -> str | None:
     return None
 
 
+# Conversión de HEIC/AVIF/TIFF a JPG: tope de tamaño y de conversiones simultáneas, para que una o varias
+# imágenes enormes no agoten la memoria de la única instancia. 50 MP deja pasar las fotos de 48 MP de los
+# iPhone recientes (~150 MB al decodificar); 2 a la vez como máximo.
+_MAX_PIXELES_CONVERSION = 50_000_000
+_conversiones_imagen = threading.BoundedSemaphore(2)
+
+
 def _normalizar_imagen(contenido: bytes, content_type: str, nombre: str) -> tuple[bytes, str, str] | None:
     """Para imágenes: (contenido, extension, content_type) ya normalizados, o None si NO es una imagen.
     - La extensión sale del formato real, no del nombre (un 'Captura 10.44.12' ya no queda como archivo '.12').
@@ -508,16 +529,25 @@ def _normalizar_imagen(contenido: bytes, content_type: str, nombre: str) -> tupl
         return contenido, real, tipo
     try:
         from PIL import Image, ImageOps
+        Image.MAX_IMAGE_PIXELS = _MAX_PIXELES_CONVERSION
         if real in ("heic", "avif"):
             import pillow_heif
             pillow_heif.register_heif_opener()
-        img = Image.open(io.BytesIO(contenido))
-        img = ImageOps.exif_transpose(img)
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        salida = io.BytesIO()
-        img.save(salida, format="JPEG", quality=92, optimize=True)
-        return salida.getvalue(), "jpg", "image/jpeg"
+        with _conversiones_imagen:
+            img = Image.open(io.BytesIO(contenido))   # solo lee la cabecera: aquí todavía no se decodifica
+            ancho, alto = img.size
+            if ancho * alto > _MAX_PIXELES_CONVERSION:
+                # Una imagen chica en bytes puede pedir GB de memoria al decodificarla (y hay UNA sola
+                # instancia: si se queda sin memoria se caen todas las conversaciones). Se guarda tal cual.
+                logging.getLogger(__name__).warning(
+                    "Imagen %s de %sx%s px supera el límite de conversión; se guarda sin convertir", real, ancho, alto)
+                return contenido, real if real != "heic" else (ext_nombre or "heic"), content_type or "application/octet-stream"
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            salida = io.BytesIO()
+            img.save(salida, format="JPEG", quality=92, optimize=True)
+            return salida.getvalue(), "jpg", "image/jpeg"
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("No se pudo convertir la imagen %s a JPEG; se guarda tal cual", real)
         return contenido, real if real != "heic" else (ext_nombre or "heic"), content_type or "application/octet-stream"
@@ -1058,17 +1088,19 @@ async def _notificar_escuchas_mensajes_nuevos(conversacion_id: int, desde_id: in
     """Reenvía a quienes escuchan/ayudan los mensajes guardados DESPUÉS de
     `desde_id` (lo que escribió el cliente y lo que respondió el bot en un
     turno del flujo del bot, que no pasa por ningún otro aviso en vivo)."""
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """SELECT id, emisor_tipo, tipo_contenido, contenido FROM mensajes
-                   WHERE conversacion_id = %s AND id > %s ORDER BY id ASC""",
-                (conversacion_id, desde_id),
-            )
-            filas = cur.fetchall()
-    finally:
-        release_connection(conn)
+    def _leer():
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id, emisor_tipo, tipo_contenido, contenido FROM mensajes
+                       WHERE conversacion_id = %s AND id > %s ORDER BY id ASC""",
+                    (conversacion_id, desde_id),
+                )
+                return cur.fetchall()
+        finally:
+            release_connection(conn)
+    filas = await asyncio.to_thread(_leer)
 
     for mid, emisor, tipo_contenido, contenido in filas:
         payload = {"conversacion_id": conversacion_id, "emisor_tipo": emisor, "mensaje_id": mid}
@@ -1087,12 +1119,14 @@ async def _procesar_eventos_bot(conversacion_id: int, websocket: WebSocket, even
     """Manda los eventos del bot al widget y, si alguno es 'en_cola', dispara
     el intento de asignación inmediata."""
     for evento in eventos:
+        if str(evento.get("type") or "").startswith("_"):
+            continue  # evento interno del motor (p. ej. "_celular_verificado"): no es para el widget
         await websocket.send_json(evento)
         if evento.get("type") == "en_cola":
             asignado = await asignacion.intentar_asignar_conversacion(conversacion_id, manager)
             if asignado is None:
                 # Nadie disponible: queda esperando. Se le tranquiliza sobre cerrar la ventana.
-                texto = (supervisor.obtener_configuracion("mensaje_en_cola_guardado")
+                texto = (await asyncio.to_thread(supervisor.obtener_configuracion, "mensaje_en_cola_guardado")
                          or MENSAJES_AUTOMATICOS["mensaje_en_cola_guardado"]["default"])
                 await websocket.send_json({"type": "aviso_cola", "payload": {"texto": texto}})
 
@@ -1519,6 +1553,16 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
     await manager.enviar_a_widget(conversacion_id, {
         "type": "conversacion_cerrada", "payload": {"motivo": cerrado_por},
     })
+
+    # Encuesta de satisfacción (solo campañas con la encuesta activada y si hubo un asesor; ver encuesta.py).
+    # Si el cliente no tiene el chat abierto, queda pendiente y se le muestra al volver (dentro de 24 h).
+    try:
+        datos_encuesta = await asyncio.to_thread(encuesta.crear_si_corresponde, conversacion_id)
+        if datos_encuesta and conversacion_id in manager.widget_connections:
+            await manager.enviar_a_widget(conversacion_id, {"type": "encuesta_satisfaccion", "payload": datos_encuesta})
+            await asyncio.to_thread(encuesta.marcar_entregada, datos_encuesta["encuesta_id"])
+    except Exception:
+        logger.warning("No se pudo enviar la encuesta de la conversación %s", conversacion_id, exc_info=True)
 
     # El conteo "Atendidas hoy" de la cabecera del asesor sube con cada cierre.
     asesor_de_la_conversacion = _obtener_asesor_actual(conversacion_id)
@@ -1993,7 +2037,7 @@ async def _difundir_mensaje_modificado(evento_type: str, conversacion_id: int, p
     pantalla de forma optimista (más simple, y siempre coincide con lo que
     de verdad quedó guardado)."""
     await manager.enviar_a_widget(conversacion_id, {"type": evento_type, "payload": payload})
-    estado = _obtener_estado_conversacion(conversacion_id)
+    estado = await asyncio.to_thread(_obtener_estado_conversacion, conversacion_id)
     if estado:
         _, asesor_id_actual = estado
         if asesor_id_actual:
@@ -2120,9 +2164,16 @@ async def _aplicar_verificacion_whatsapp(conversacion_id: int, websocket: WebSoc
     variables["ENVIO_SMS"] = {"status": 200, "response": {"enviado": True, "codigo": codigo}}
     variables["OTP_METODO"] = "whatsapp"
     await asyncio.to_thread(_guardar_variables_sesion, conversacion_id, variables)
-    desde_mensaje_id = _ultimo_mensaje_id(conversacion_id) if _hay_escuchas(conversacion_id) else None
+    desde_mensaje_id = (await asyncio.to_thread(_ultimo_mensaje_id, conversacion_id)
+                        if _hay_escuchas(conversacion_id) else None)
     eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id, texto=codigo)
     await websocket.send_json({"type": "verificacion_whatsapp_completada", "payload": {}})
+    celular_verificado = _celular_verificado_en(eventos)
+    if celular_verificado is not None:
+        union = await asyncio.to_thread(_unir_a_conversacion_abierta, conversacion_id, celular_verificado)
+        if union:
+            await _avisar_union(websocket, union)
+            return
     await _procesar_eventos_bot(conversacion_id, websocket, eventos)
     if desde_mensaje_id is not None:
         await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
@@ -2181,6 +2232,115 @@ def _registrar_cid_widget(token: str, cid: str) -> bool:
     return True
 
 
+class _Candados:
+    """Candados asyncio por clave (token o conversación), que se borran solos al quedar libres.
+    Las llamadas a la base del widget corren en hilos (asyncio.to_thread) para no congelar el servidor;
+    estos candados mantienen el orden que antes daba el event loop: dos pestañas con el mismo token no
+    crean dos conversaciones, y los mensajes de una misma conversación se procesan de a uno."""
+    def __init__(self):
+        self._d: dict = {}
+
+    @contextlib.asynccontextmanager
+    async def __call__(self, clave):
+        ent = self._d.get(clave)
+        if ent is None:
+            ent = self._d[clave] = [asyncio.Lock(), 0]
+        ent[1] += 1
+        try:
+            async with ent[0]:
+                yield
+        finally:
+            ent[1] -= 1
+            if ent[1] == 0 and self._d.get(clave) is ent:
+                del self._d[clave]
+
+
+_candado_widget = _Candados()
+
+
+async def _crear_o_reanudar_async(sesion_token: str):
+    async with _candado_widget(("token", sesion_token)):
+        return await asyncio.to_thread(_crear_o_reanudar_conversacion, sesion_token)
+
+
+TEXTO_UNION_CLIENTE = "✅ Te reconocimos: seguimos en tu conversación anterior."
+_TEXTO_UNION_NUEVA = "Continuó en su conversación anterior #{id} (abrió el chat desde otro navegador o enlace)."
+_TEXTO_UNION_ANTERIOR = ("ℹ️ El cliente volvió a entrar desde otro navegador o enlace "
+                         "y continúa en esta misma conversación.")
+
+
+def _unir_a_conversacion_abierta(conversacion_nueva: int, celular) -> dict | None:
+    """Evita conversaciones duplicadas de una misma persona. Si el celular (recién verificado con el código,
+    o ya reconocido en este navegador) tiene OTRA conversación abierta en cola o con un asesor, creada desde
+    otra llave de navegador, se cierra la nueva y se devuelve la llave de la abierta para que el widget
+    continúe ahí. Pasa sobre todo al tocar dos veces el enlace del SMS de invitación: muchas apps de mensajes
+    lo abren en un navegador interno con almacenamiento propio, y cada vez llega sin la llave anterior.
+    Solo une si la nueva sigue con el bot o en cola (nunca si ya la tomó un asesor).
+    Devuelve {"conversacion_id", "sesion_token"} o None."""
+    digitos = re.sub(r"\D", "", str(celular or ""))[-9:]
+    if len(digitos) != 9 or not conversacion_nueva:
+        return None
+    ahora = datetime.now(LIMA_TZ)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT c.id, u.sesion_token
+                   FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.estado IN ('en_cola', 'asignada') AND c.id <> %s
+                     AND c.usuario_id <> (SELECT usuario_id FROM conversaciones WHERE id = %s)
+                     AND c.iniciado_en > %s
+                     AND right(regexp_replace(COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR', ''),
+                                              '[^0-9]', '', 'g'), 9) = %s
+                   ORDER BY (c.estado = 'asignada') DESC, c.iniciado_en DESC
+                   LIMIT 1""",
+                (conversacion_nueva, conversacion_nueva, ahora - timedelta(hours=24), digitos),
+            )
+            fila = cur.fetchone()
+            if not fila or not fila[1]:
+                conn.rollback()
+                return None
+            anterior_id, token_anterior = fila
+            cur.execute(
+                """UPDATE conversaciones SET estado = 'cerrada', cerrado_en = %s, cerrado_por = 'sistema', nodo_actual = NULL
+                   WHERE id = %s AND estado IN ('bot', 'en_cola') AND asesor_id IS NULL
+                   RETURNING id""",
+                (ahora, conversacion_nueva),
+            )
+            if cur.fetchone() is None:
+                conn.rollback()
+                return None
+            cur.execute(
+                """INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                   VALUES (%s, 'bot', 'texto', %s, %s), (%s, 'sistema', 'texto', %s, %s)""",
+                (conversacion_nueva, _TEXTO_UNION_NUEVA.format(id=anterior_id), ahora,
+                 anterior_id, _TEXTO_UNION_ANTERIOR, ahora),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.warning("No se pudo unir la conversación %s a una abierta", conversacion_nueva, exc_info=True)
+        return None
+    finally:
+        release_connection(conn)
+    logger.info("Conversación %s unida a la abierta %s (mismo celular ***%s, otra llave de navegador)",
+                conversacion_nueva, anterior_id, digitos[-3:])
+    return {"conversacion_id": anterior_id, "sesion_token": token_anterior}
+
+
+async def _avisar_union(websocket: WebSocket, union: dict):
+    """El widget guarda la llave de la conversación abierta y se reconecta con ella (vuelve el historial)."""
+    await websocket.send_json({"type": "cambiar_sesion", "payload": {
+        "sesion_token": union["sesion_token"], "aviso": TEXTO_UNION_CLIENTE}})
+
+
+def _celular_verificado_en(eventos) -> str | None:
+    for e in eventos or []:
+        if e.get("type") == "_celular_verificado":
+            return (e.get("payload") or {}).get("celular") or ""
+    return None
+
+
 @app.websocket("/ws/widget")
 async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
     """
@@ -2191,12 +2351,18 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
     esto es lo que permite que la reconexión automática funcione bien.
     """
     nuevo_token = sesion_token or str(uuid.uuid4())
-    conversacion_id, estado_actual, es_nueva = _crear_o_reanudar_conversacion(nuevo_token)
+    conversacion_id, estado_actual, es_nueva = await _crear_o_reanudar_async(nuevo_token)
     await manager.connect_widget(conversacion_id, websocket)
 
     async def arrancar(conv_id: int, es_nueva_flag: bool, estado: str, forzar_pedir_datos: bool = False):
         if es_nueva_flag:
-            datos = None if forzar_pedir_datos else _obtener_datos_usuario(nuevo_token)
+            datos = None if forzar_pedir_datos else await asyncio.to_thread(_obtener_datos_usuario, nuevo_token)
+            if datos and datos.get("telefono") and datos.get("verificado"):
+                union = await asyncio.to_thread(_unir_a_conversacion_abierta, conv_id, datos["telefono"])
+                if union:
+                    await _avisar_union(websocket, union)
+                    return
+            nodo_visitante = await asyncio.to_thread(_nodo_inicio_visitante)
             if datos and datos.get("telefono") and datos.get("verificado"):
                 # Celular ya verificado en este navegador (no vence): no se
                 # vuelve a pedir ni a mandar SMS. También se recuerda el DNI.
@@ -2211,20 +2377,20 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     nodo_ini = "webchat_menu_principal"
                 else:
                     # Falta solo el nombre: sigue desde ahí, sin repetir celular/SMS.
-                    nodo_ini = ("webchat_bienvenida" if _nodo_inicio_visitante() == "webchat_bienvenida"
+                    nodo_ini = ("webchat_bienvenida" if nodo_visitante == "webchat_bienvenida"
                                 else "webchat_pide_nombre")
-                eventos = iniciar_conversacion(conv_id, nodo_inicial=nodo_ini,
-                                                variables_iniciales=variables_iniciales)
+                eventos = await asyncio.to_thread(iniciar_conversacion, conv_id, nodo_inicial=nodo_ini,
+                                                  variables_iniciales=variables_iniciales)
             else:
-                eventos = iniciar_conversacion(conv_id, nodo_inicial=_nodo_inicio_visitante())
+                eventos = await asyncio.to_thread(iniciar_conversacion, conv_id, nodo_inicial=nodo_visitante)
             await _procesar_eventos_bot(conv_id, websocket, eventos)
         else:
             # Reanudando: manda el historial para reconstruir la pantalla,
             # y el estado actual (en cola / asignado) si corresponde.
-            historial = _obtener_historial(conv_id)
+            historial = await asyncio.to_thread(_obtener_historial, conv_id)
             await websocket.send_json({"type": "historial", "payload": {"mensajes": historial}})
             if estado == "asignada":
-                nombre = _nombre_asesor_de_conversacion(conv_id)
+                nombre = await asyncio.to_thread(_nombre_asesor_de_conversacion, conv_id)
                 if nombre:
                     await websocket.send_json({"type": "asignado", "payload": {"asesor_nombre": nombre}})
             elif estado == "en_cola":
@@ -2233,7 +2399,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                 # Si se había quedado esperando el código SMS, los botones de
                 # "Reenviar código"/"Llamarme" no forman parte del historial:
                 # se vuelven a mandar para que no desaparezcan al reconectar.
-                nodo_actual, variables = _obtener_nodo_y_variables(conv_id)
+                nodo_actual, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conv_id)
                 if nodo_actual == "webchat_valida_pide_codigo":
                     reenvios = int(variables.get("OTP_REENVIOS") or 0)
                     await websocket.send_json({"type": "otp_acciones", "payload": {
@@ -2245,7 +2411,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
         await websocket.send_json({
             "type": "sesion_iniciada",
             "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
-                        "reconocido": _nombre_reconocido(nuevo_token)},
+                        "reconocido": await asyncio.to_thread(_nombre_reconocido, nuevo_token)},
         })
         try:
             try:
@@ -2272,6 +2438,16 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
         except Exception:
             logger.exception("Error entregando archivos pendientes de la conversación %s", conversacion_id)
 
+        # Encuesta de una atención anterior que quedó sin responder (cerró el chat antes, o recargó la página).
+        # Solo si ahora está con el bot: no se interrumpe una conversación en cola o con un asesor.
+        if estado_actual == "bot":
+            try:
+                pendiente = await asyncio.to_thread(encuesta.pendiente_para_token, nuevo_token)
+                if pendiente:
+                    await websocket.send_json({"type": "encuesta_satisfaccion", "payload": pendiente})
+            except Exception:
+                logger.warning("No se pudo revisar la encuesta pendiente", exc_info=True)
+
         while True:
             data = await websocket.receive_json()
             tipo = data.get("type")
@@ -2288,365 +2464,402 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     continue
 
             try:
-                if tipo == "iniciar_nueva_conversacion":
-                    # La anterior ya está cerrada (o no existía) — crea/reanuda y arranca de nuevo
-                    # sobre la MISMA conexión, sin pedir de nuevo celular/nombre si ya se conocen.
-                    manager.disconnect_widget(conversacion_id)
-                    conversacion_id, estado_actual, es_nueva = _crear_o_reanudar_conversacion(nuevo_token)
-                    manager.reasignar_widget(conversacion_id, websocket)
-                    if es_nueva:
-                        await asyncio.to_thread(_registrar_origen, conversacion_id, "nueva_conversacion")
-                    await websocket.send_json({
-                        "type": "sesion_iniciada",
-                        "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
-                        "reconocido": _nombre_reconocido(nuevo_token)},
-                    })
-                    await arrancar(conversacion_id, es_nueva, estado_actual)
-                    continue
-
-                if tipo == "ping":
-                    continue  # latido del widget: mantiene viva la conexión, no hace nada más
-
-                if tipo == "generar_traspaso":
-                    resultado = await asyncio.to_thread(_crear_traspaso, nuevo_token, payload.get("url"))
-                    if resultado.get("ok"):
-                        await websocket.send_json({"type": "traspaso_listo", "payload": resultado})
-                    else:
-                        await websocket.send_json({"type": "traspaso_error",
-                                                   "payload": {"motivo": resultado.get("motivo")}})
-                    continue
-
-                if tipo == "cargar_historial_previo":
-                    resultado = await asyncio.to_thread(
-                        _historial_previo, nuevo_token, conversacion_id, payload.get("antes_de"))
-                    await websocket.send_json({"type": "historial_previo", "payload": resultado})
-                    continue
-
-                if tipo == "registrar_origen":
-                    await asyncio.to_thread(
-                        _registrar_origen, conversacion_id, payload.get("origen"), payload.get("pagina"))
-                    continue
-
-                if tipo == "reiniciar_datos":
-                    _limpiar_datos_usuario(nuevo_token)
-                    manager.disconnect_widget(conversacion_id)
-                    conversacion_id, estado_actual, es_nueva = _crear_o_reanudar_conversacion(nuevo_token)
-                    manager.reasignar_widget(conversacion_id, websocket)
-                    await websocket.send_json({
-                        "type": "sesion_iniciada",
-                        "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
-                        "reconocido": _nombre_reconocido(nuevo_token)},
-                    })
-                    await arrancar(conversacion_id, es_nueva, estado_actual, forzar_pedir_datos=True)
-                    continue
-
-                estado, asesor_id = _obtener_estado_conversacion(conversacion_id)
-
-                if estado == "bot" and tipo == "reenviar_otp":
-                    resultado = _reenviar_codigo_otp(conversacion_id)
-                    if resultado["ok"]:
-                        texto = "📲 Te reenviamos el código por SMS."
-                        if resultado["puede_llamar"]:
-                            texto += " Si sigue sin llegarte, puedes pedir que te llamemos para dictártelo."
-                        await websocket.send_json({
-                            "type": "mensaje_bot",
-                            "payload": {
-                                "texto": texto,
-                                "otp_reenvios": resultado["reenvios"],
-                                "otp_puede_llamar": resultado["puede_llamar"],
-                            },
-                        })
-                    else:
-                        motivo = resultado.get("motivo")
-                        texto = ("⚠️ No pudimos reenviar el código en este momento. Inténtalo de nuevo en unos segundos."
-                                  if motivo == "error_envio" else
-                                  "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar.")
-                        await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
-                    continue
-
-                if estado == "bot" and tipo == "modificar_celular":
-                    # Disponible desde el primer intento de código (no hace
-                    # falta haber fallado ni haber reenviado) -- si la
-                    # persona se dio cuenta de que escribió mal su celular,
-                    # la manda de vuelta a webchat_pide_celular borrando todo
-                    # lo que ya se había guardado del intento anterior
-                    # (CELULAR, ENVIO_SMS, OTP_REENVIOS, etc.), igual que un
-                    # inicio de conversación nuevo.
-                    nodo_actual, _ = _obtener_nodo_y_variables(conversacion_id)
-                    if nodo_actual == "webchat_valida_pide_codigo":
-                        eventos = iniciar_conversacion(conversacion_id, nodo_inicial="webchat_pide_celular")
-                        await _procesar_eventos_bot(conversacion_id, websocket, eventos)
-                    else:
-                        await websocket.send_json({"type": "mensaje_bot", "payload": {
-                            "texto": "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar."}})
-                    continue
-
-                if estado == "bot" and tipo == "iniciar_verificacion_whatsapp":
-                    nodo_actual, variables = _obtener_nodo_y_variables(conversacion_id)
-                    celular = (variables.get("CELULAR") or "").strip()
-                    if nodo_actual != "webchat_valida_pide_codigo" or not celular:
-                        await websocket.send_json({"type": "verificacion_whatsapp_error",
-                                                   "payload": {"motivo": "fuera_de_flujo"}})
-                        continue
-                    res = await asyncio.to_thread(verificacion_whatsapp.iniciar, conversacion_id, celular)
-                    if not res.get("ok"):
-                        await websocket.send_json({"type": "verificacion_whatsapp_error",
-                                                   "payload": {"motivo": res.get("motivo")}})
-                        continue
-                    texto_wa = f"VERIFICAR-{res['codigo']}"
-                    numero = _numero_whatsapp_verificacion()
-                    enlace_wa = f"https://wa.me/{numero}?text={texto_wa}"
-                    qr_wa = None
-                    if payload.get("con_qr"):  # en computador la persona necesita escanearlo con su teléfono
-                        try:
-                            import segno
-                            qr_wa = segno.make(enlace_wa, error="m").svg_data_uri(
-                                scale=6, border=2, dark="#0A2540")
-                        except Exception:
-                            logger.exception("No se pudo generar el QR de WhatsApp")
-                    await websocket.send_json({"type": "verificacion_whatsapp_lista", "payload": {
-                        "codigo": res["codigo"], "texto": texto_wa, "numero": numero,
-                        "enlace": enlace_wa, "qr": qr_wa, "expira_seg": res["expira_seg"]}})
-                    continue
-
-                if estado == "bot" and tipo == "consultar_verificacion_whatsapp":
-                    codigo_wa = "".join(c for c in str(payload.get("codigo") or "") if c.isdigit())[:6]
-                    est = await asyncio.to_thread(verificacion_whatsapp.estado, conversacion_id, codigo_wa)
-                    if est == "verificado":
-                        await _aplicar_verificacion_whatsapp(conversacion_id, websocket, codigo_wa)
-                    elif est in ("vencido", "desconocido"):
-                        await websocket.send_json({"type": "verificacion_whatsapp_error",
-                                                   "payload": {"motivo": "vencido"}})
-                    continue
-
-                if estado == "bot" and tipo == "solicitar_llamada_otp":
-                    resultado = _solicitar_llamada_otp(conversacion_id)
-                    if resultado["ok"]:
-                        await websocket.send_json({
-                            "type": "mensaje_bot",
-                            "payload": {
-                                "texto": "📞 Te estamos llamando para dictarte el código. "
-                                         "Contesta la llamada y escribe aquí el código que escuches.",
-                                "otp_reenvios": resultado["reenvios"],
-                                "otp_puede_llamar": True,
-                            },
-                        })
-                    else:
-                        texto_err = ("⚠️ Ya solicitaste varias llamadas. Usa el código del SMS o verifica con WhatsApp."
-                                     if resultado.get("motivo") == "limite_llamadas" else
-                                     "⚠️ No pudimos iniciar la llamada en este momento. Inténtalo de nuevo en unos segundos.")
-                        await websocket.send_json({"type": "mensaje_bot", "payload": {
-                            "texto": texto_err, "otp_reenvios": int(_obtener_nodo_y_variables(conversacion_id)[1].get("OTP_REENVIOS") or 0),
-                            "otp_puede_llamar": True}})
-                    continue
-
-                # --- Agente de IA oculto: entrada (palabra clave + lista blanca) -----------------
-                en_ia = False
-                if tipo == "mensaje_usuario" and estado == "bot":
-                    if _es_palabra_clave_ia(payload.get("texto"), "MAD_PALABRA_CLAVE"):
-                        celular_mad = await asyncio.to_thread(_celular_tester_de_sesion, nuevo_token, "MAD_TESTERS")
-                        if celular_mad:
-                            eventos_mad = await asyncio.to_thread(
-                                entrar_a_nodo, conversacion_id, NODO_MAD, {"CELULAR": celular_mad})
-                            if eventos_mad is not None:   # None = el nodo no existe: sigue como texto normal
-                                await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
-                                await _procesar_eventos_bot(conversacion_id, websocket, eventos_mad)
-                                continue
-                    if _es_palabra_clave_ia(payload.get("texto")):
-                        celular_tester = await asyncio.to_thread(_celular_tester_de_sesion, nuevo_token)
-                        if celular_tester:
-                            eventos_ia = await asyncio.to_thread(
-                                entrar_a_nodo, conversacion_id, NODO_IA, {"CELULAR": celular_tester})
-                            if eventos_ia is not None:   # None = el nodo no existe: sigue como texto normal
-                                await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
-                                await _procesar_eventos_bot(conversacion_id, websocket, eventos_ia)
-                                continue
-                    en_ia = await asyncio.to_thread(conversacion_en_ia, conversacion_id)
-                elif tipo == "click_opcion" and estado == "bot":
-                    en_ia = await asyncio.to_thread(conversacion_en_ia, conversacion_id)
-                    if en_ia and payload.get("opcion_codigo") == "ia_menu":
-                        # Botón "Menú principal" del modo IA = escribir "menu"
-                        tipo = "mensaje_usuario"
-                        payload = {**payload, "texto": "menu"}
-
-                texto_comando = (payload.get("texto") or "").strip().lower()
-                if en_ia:
-                    # Dentro del modo IA el agente le sugiere "Escribe *menu*": se aceptan los
-                    # asteriscos y signos de puntuación alrededor. Fuera de IA no cambia nada.
-                    texto_comando = texto_comando.strip(" *_.,;:!¡¿?\"'")
-
-                if (tipo == "mensaje_usuario" and estado in ("cerrada", "bot")
-                        and texto_comando in ("hola", "inicio", "menu", "menú")):
-                    # Mismo mecanismo que el botón "Iniciar nueva conversación" —
-                    # esta es la palabra clave que en WhatsApp manejaba Chattigo.
-                    # Funciona en cualquier punto del bot (no solo cerrada), pero
-                    # NO interrumpe una conversación ya en cola o con un asesor real.
-                    if estado == "cerrada":
+                async with _candado_widget(("conv", conversacion_id)):
+                    if tipo == "iniciar_nueva_conversacion":
+                        # La anterior ya está cerrada (o no existía) — crea/reanuda y arranca de nuevo
+                        # sobre la MISMA conexión, sin pedir de nuevo celular/nombre si ya se conocen.
                         manager.disconnect_widget(conversacion_id)
-                        conversacion_id, estado_actual, es_nueva = _crear_o_reanudar_conversacion(nuevo_token)
+                        conversacion_id, estado_actual, es_nueva = await _crear_o_reanudar_async(nuevo_token)
+                        manager.reasignar_widget(conversacion_id, websocket)
+                        if es_nueva:
+                            await asyncio.to_thread(_registrar_origen, conversacion_id, "nueva_conversacion")
+                        await websocket.send_json({
+                            "type": "sesion_iniciada",
+                            "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
+                            "reconocido": await asyncio.to_thread(_nombre_reconocido, nuevo_token)},
+                        })
+                        await arrancar(conversacion_id, es_nueva, estado_actual)
+                        # Si dejó sin responder la encuesta de la atención que acaba de terminar, se le vuelve a ofrecer.
+                        if estado_actual == "bot":
+                            try:
+                                pendiente = await asyncio.to_thread(encuesta.pendiente_para_token, nuevo_token)
+                                if pendiente:
+                                    await websocket.send_json({"type": "encuesta_satisfaccion", "payload": pendiente})
+                            except Exception:
+                                logger.warning("No se pudo revisar la encuesta pendiente", exc_info=True)
+                        continue
+
+                    if tipo == "ping":
+                        continue  # latido del widget: mantiene viva la conexión, no hace nada más
+
+                    if tipo == "generar_traspaso":
+                        resultado = await asyncio.to_thread(_crear_traspaso, nuevo_token, payload.get("url"))
+                        if resultado.get("ok"):
+                            await websocket.send_json({"type": "traspaso_listo", "payload": resultado})
+                        else:
+                            await websocket.send_json({"type": "traspaso_error",
+                                                       "payload": {"motivo": resultado.get("motivo")}})
+                        continue
+
+                    if tipo == "cargar_historial_previo":
+                        resultado = await asyncio.to_thread(
+                            _historial_previo, nuevo_token, conversacion_id, payload.get("antes_de"))
+                        await websocket.send_json({"type": "historial_previo", "payload": resultado})
+                        continue
+
+                    if tipo == "registrar_origen":
+                        await asyncio.to_thread(
+                            _registrar_origen, conversacion_id, payload.get("origen"), payload.get("pagina"))
+                        continue
+
+                    if tipo == "responder_encuesta":
+                        # Solo el mismo visitante puede responder su encuesta (se valida con su sesion_token).
+                        r = await asyncio.to_thread(encuesta.guardar_respuesta, payload.get("encuesta_id"),
+                                                    nuevo_token, payload.get("respuestas") or {})
+                        await websocket.send_json({"type": "encuesta_resultado",
+                                                   "payload": {**r, "encuesta_id": payload.get("encuesta_id")}})
+                        continue
+
+                    if tipo == "omitir_encuesta":
+                        await asyncio.to_thread(encuesta.omitir, payload.get("encuesta_id"), nuevo_token)
+                        continue
+
+                    if tipo == "reiniciar_datos":
+                        await asyncio.to_thread(_limpiar_datos_usuario, nuevo_token)
+                        manager.disconnect_widget(conversacion_id)
+                        conversacion_id, estado_actual, es_nueva = await _crear_o_reanudar_async(nuevo_token)
                         manager.reasignar_widget(conversacion_id, websocket)
                         await websocket.send_json({
                             "type": "sesion_iniciada",
                             "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
-                        "reconocido": _nombre_reconocido(nuevo_token)},
+                            "reconocido": await asyncio.to_thread(_nombre_reconocido, nuevo_token)},
                         })
-                        await arrancar(conversacion_id, es_nueva, estado_actual)
-                    else:
-                        # Sigue en 'bot' (en cualquier punto del árbol) — reinicia
-                        # la MISMA conversación desde el principio, sin crear una
-                        # fila nueva (_crear_o_reanudar_conversacion la encontraría
-                        # como "abierta" y solo la reanudaría tal cual estaba).
-                        await arrancar(conversacion_id, True, estado)
-                    continue
+                        await arrancar(conversacion_id, es_nueva, estado_actual, forzar_pedir_datos=True)
+                        continue
 
-                if tipo == "marcar_leido":
-                    _marcar_leidos_por_usuario(conversacion_id)
-                    if asesor_id:
-                        await manager.enviar_a_asesor(asesor_id, {
-                            "type": "mensajes_leidos", "payload": {"conversacion_id": conversacion_id},
+                    estado, asesor_id = await asyncio.to_thread(_obtener_estado_conversacion, conversacion_id)
+
+                    if estado == "bot" and tipo == "reenviar_otp":
+                        resultado = await asyncio.to_thread(_reenviar_codigo_otp, conversacion_id)
+                        if resultado["ok"]:
+                            texto = "📲 Te reenviamos el código por SMS."
+                            if resultado["puede_llamar"]:
+                                texto += " Si sigue sin llegarte, puedes pedir que te llamemos para dictártelo."
+                            await websocket.send_json({
+                                "type": "mensaje_bot",
+                                "payload": {
+                                    "texto": texto,
+                                    "otp_reenvios": resultado["reenvios"],
+                                    "otp_puede_llamar": resultado["puede_llamar"],
+                                },
+                            })
+                        else:
+                            motivo = resultado.get("motivo")
+                            texto = ("⚠️ No pudimos reenviar el código en este momento. Inténtalo de nuevo en unos segundos."
+                                      if motivo == "error_envio" else
+                                      "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar.")
+                            await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+                        continue
+
+                    if estado == "bot" and tipo == "modificar_celular":
+                        # Disponible desde el primer intento de código (no hace
+                        # falta haber fallado ni haber reenviado) -- si la
+                        # persona se dio cuenta de que escribió mal su celular,
+                        # la manda de vuelta a webchat_pide_celular borrando todo
+                        # lo que ya se había guardado del intento anterior
+                        # (CELULAR, ENVIO_SMS, OTP_REENVIOS, etc.), igual que un
+                        # inicio de conversación nuevo.
+                        nodo_actual, _ = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+                        if nodo_actual == "webchat_valida_pide_codigo":
+                            eventos = await asyncio.to_thread(iniciar_conversacion, conversacion_id,
+                                                              nodo_inicial="webchat_pide_celular")
+                            await _procesar_eventos_bot(conversacion_id, websocket, eventos)
+                        else:
+                            await websocket.send_json({"type": "mensaje_bot", "payload": {
+                                "texto": "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar."}})
+                        continue
+
+                    if estado == "bot" and tipo == "iniciar_verificacion_whatsapp":
+                        nodo_actual, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+                        celular = (variables.get("CELULAR") or "").strip()
+                        if nodo_actual != "webchat_valida_pide_codigo" or not celular:
+                            await websocket.send_json({"type": "verificacion_whatsapp_error",
+                                                       "payload": {"motivo": "fuera_de_flujo"}})
+                            continue
+                        res = await asyncio.to_thread(verificacion_whatsapp.iniciar, conversacion_id, celular)
+                        if not res.get("ok"):
+                            await websocket.send_json({"type": "verificacion_whatsapp_error",
+                                                       "payload": {"motivo": res.get("motivo")}})
+                            continue
+                        texto_wa = f"VERIFICAR-{res['codigo']}"
+                        numero = await asyncio.to_thread(_numero_whatsapp_verificacion)
+                        enlace_wa = f"https://wa.me/{numero}?text={texto_wa}"
+                        qr_wa = None
+                        if payload.get("con_qr"):  # en computador la persona necesita escanearlo con su teléfono
+                            try:
+                                import segno
+                                qr_wa = segno.make(enlace_wa, error="m").svg_data_uri(
+                                    scale=6, border=2, dark="#0A2540")
+                            except Exception:
+                                logger.exception("No se pudo generar el QR de WhatsApp")
+                        await websocket.send_json({"type": "verificacion_whatsapp_lista", "payload": {
+                            "codigo": res["codigo"], "texto": texto_wa, "numero": numero,
+                            "enlace": enlace_wa, "qr": qr_wa, "expira_seg": res["expira_seg"]}})
+                        continue
+
+                    if estado == "bot" and tipo == "consultar_verificacion_whatsapp":
+                        codigo_wa = "".join(c for c in str(payload.get("codigo") or "") if c.isdigit())[:6]
+                        est = await asyncio.to_thread(verificacion_whatsapp.estado, conversacion_id, codigo_wa)
+                        if est == "verificado":
+                            await _aplicar_verificacion_whatsapp(conversacion_id, websocket, codigo_wa)
+                        elif est in ("vencido", "desconocido"):
+                            await websocket.send_json({"type": "verificacion_whatsapp_error",
+                                                       "payload": {"motivo": "vencido"}})
+                        continue
+
+                    if estado == "bot" and tipo == "solicitar_llamada_otp":
+                        resultado = await asyncio.to_thread(_solicitar_llamada_otp, conversacion_id)
+                        if resultado["ok"]:
+                            await websocket.send_json({
+                                "type": "mensaje_bot",
+                                "payload": {
+                                    "texto": "📞 Te estamos llamando para dictarte el código. "
+                                             "Contesta la llamada y escribe aquí el código que escuches.",
+                                    "otp_reenvios": resultado["reenvios"],
+                                    "otp_puede_llamar": True,
+                                },
+                            })
+                        else:
+                            texto_err = ("⚠️ Ya solicitaste varias llamadas. Usa el código del SMS o verifica con WhatsApp."
+                                         if resultado.get("motivo") == "limite_llamadas" else
+                                         "⚠️ No pudimos iniciar la llamada en este momento. Inténtalo de nuevo en unos segundos.")
+                            _, variables_otp = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+                            await websocket.send_json({"type": "mensaje_bot", "payload": {
+                                "texto": texto_err, "otp_reenvios": int(variables_otp.get("OTP_REENVIOS") or 0),
+                                "otp_puede_llamar": True}})
+                        continue
+
+                    # --- Agente de IA oculto: entrada (palabra clave + lista blanca) -----------------
+                    en_ia = False
+                    if tipo == "mensaje_usuario" and estado == "bot":
+                        if _es_palabra_clave_ia(payload.get("texto"), "MAD_PALABRA_CLAVE"):
+                            celular_mad = await asyncio.to_thread(_celular_tester_de_sesion, nuevo_token, "MAD_TESTERS")
+                            if celular_mad:
+                                eventos_mad = await asyncio.to_thread(
+                                    entrar_a_nodo, conversacion_id, NODO_MAD, {"CELULAR": celular_mad})
+                                if eventos_mad is not None:   # None = el nodo no existe: sigue como texto normal
+                                    await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                                    await _procesar_eventos_bot(conversacion_id, websocket, eventos_mad)
+                                    continue
+                        if _es_palabra_clave_ia(payload.get("texto")):
+                            celular_tester = await asyncio.to_thread(_celular_tester_de_sesion, nuevo_token)
+                            if celular_tester:
+                                eventos_ia = await asyncio.to_thread(
+                                    entrar_a_nodo, conversacion_id, NODO_IA, {"CELULAR": celular_tester})
+                                if eventos_ia is not None:   # None = el nodo no existe: sigue como texto normal
+                                    await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                                    await _procesar_eventos_bot(conversacion_id, websocket, eventos_ia)
+                                    continue
+                        en_ia = await asyncio.to_thread(conversacion_en_ia, conversacion_id)
+                    elif tipo == "click_opcion" and estado == "bot":
+                        en_ia = await asyncio.to_thread(conversacion_en_ia, conversacion_id)
+                        if en_ia and payload.get("opcion_codigo") == "ia_menu":
+                            # Botón "Menú principal" del modo IA = escribir "menu"
+                            tipo = "mensaje_usuario"
+                            payload = {**payload, "texto": "menu"}
+
+                    texto_comando = (payload.get("texto") or "").strip().lower()
+                    if en_ia:
+                        # Dentro del modo IA el agente le sugiere "Escribe *menu*": se aceptan los
+                        # asteriscos y signos de puntuación alrededor. Fuera de IA no cambia nada.
+                        texto_comando = texto_comando.strip(" *_.,;:!¡¿?\"'")
+
+                    if (tipo == "mensaje_usuario" and estado in ("cerrada", "bot")
+                            and texto_comando in ("hola", "inicio", "menu", "menú")):
+                        # Mismo mecanismo que el botón "Iniciar nueva conversación" —
+                        # esta es la palabra clave que en WhatsApp manejaba Chattigo.
+                        # Funciona en cualquier punto del bot (no solo cerrada), pero
+                        # NO interrumpe una conversación ya en cola o con un asesor real.
+                        if estado == "cerrada":
+                            manager.disconnect_widget(conversacion_id)
+                            conversacion_id, estado_actual, es_nueva = await _crear_o_reanudar_async(nuevo_token)
+                            manager.reasignar_widget(conversacion_id, websocket)
+                            await websocket.send_json({
+                                "type": "sesion_iniciada",
+                                "payload": {"sesion_token": nuevo_token, "conversacion_id": conversacion_id,
+                            "reconocido": await asyncio.to_thread(_nombre_reconocido, nuevo_token)},
+                            })
+                            await arrancar(conversacion_id, es_nueva, estado_actual)
+                        else:
+                            # Sigue en 'bot' (en cualquier punto del árbol) — reinicia
+                            # la MISMA conversación desde el principio, sin crear una
+                            # fila nueva (_crear_o_reanudar_conversacion la encontraría
+                            # como "abierta" y solo la reanudaría tal cual estaba).
+                            await arrancar(conversacion_id, True, estado)
+                        continue
+
+                    if tipo == "marcar_leido":
+                        await asyncio.to_thread(_marcar_leidos_por_usuario, conversacion_id)
+                        if asesor_id:
+                            await manager.enviar_a_asesor(asesor_id, {
+                                "type": "mensajes_leidos", "payload": {"conversacion_id": conversacion_id},
+                            })
+                        # Supervisores que están viendo la conversación: el cliente leyó (✓✓).
+                        await manager.notificar_escuchas(conversacion_id, {
+                            "type": "mensajes_leidos",
+                            "payload": {"conversacion_id": conversacion_id, "lector": "usuario"},
                         })
-                    # Supervisores que están viendo la conversación: el cliente leyó (✓✓).
-                    await manager.notificar_escuchas(conversacion_id, {
-                        "type": "mensajes_leidos",
-                        "payload": {"conversacion_id": conversacion_id, "lector": "usuario"},
-                    })
-                    continue
+                        continue
 
-                if estado == "bot":
-                    # Todavía navegando el árbol de bot_menus
-                    # Si alguien (asesor/supervisor) está "ayudando en el bot" a
-                    # esta conversación, hay que reenviarle lo que pase en este
-                    # turno (lo que escribe el cliente y lo que responde el bot).
-                    # Se marca el último mensaje ANTES de procesar para saber
-                    # cuáles son nuevos después.
-                    desde_mensaje_id = _ultimo_mensaje_id(conversacion_id) if _hay_escuchas(conversacion_id) else None
-                    ya_confirmado = False
-                    if en_ia and (tipo == "mensaje_usuario"
-                                  or (tipo == "click_opcion"
-                                      and str(payload.get("opcion_codigo") or "").startswith("ia_q:"))):
-                        # Turno con el agente de IA: tarda 5-15 s (hasta 45). Se confirma la recepción,
-                        # se muestra "escribiendo…" y la llamada corre en un hilo aparte para no
-                        # congelar el servidor (el resto de clientes y asesores siguen normales).
-                        await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
-                        await websocket.send_json({"type": "escribiendo", "payload": {}})
-                        ya_confirmado = True
-                        eventos = await asyncio.to_thread(
-                            recibir_entrada_usuario, conversacion_id, texto=payload.get("texto"),
-                            opcion_id=payload.get("opcion_codigo") if tipo == "click_opcion" else None)
+                    if estado == "bot":
+                        # Todavía navegando el árbol de bot_menus
+                        # Si alguien (asesor/supervisor) está "ayudando en el bot" a
+                        # esta conversación, hay que reenviarle lo que pase en este
+                        # turno (lo que escribe el cliente y lo que responde el bot).
+                        # Se marca el último mensaje ANTES de procesar para saber
+                        # cuáles son nuevos después.
+                        desde_mensaje_id = (await asyncio.to_thread(_ultimo_mensaje_id, conversacion_id)
+                                            if _hay_escuchas(conversacion_id) else None)
+                        ya_confirmado = False
+                        if en_ia and (tipo == "mensaje_usuario"
+                                      or (tipo == "click_opcion"
+                                          and str(payload.get("opcion_codigo") or "").startswith("ia_q:"))):
+                            # Turno con el agente de IA: tarda 5-15 s (hasta 45). Se confirma la recepción,
+                            # se muestra "escribiendo…" y la llamada corre en un hilo aparte para no
+                            # congelar el servidor (el resto de clientes y asesores siguen normales).
+                            await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                            await websocket.send_json({"type": "escribiendo", "payload": {}})
+                            ya_confirmado = True
+                            eventos = await asyncio.to_thread(
+                                recibir_entrada_usuario, conversacion_id, texto=payload.get("texto"),
+                                opcion_id=payload.get("opcion_codigo") if tipo == "click_opcion" else None)
+                        # El motor del bot consulta la base y servicios externos (SOFI, SMS, procesar receta):
+                        # siempre en un hilo aparte para no congelar al resto de clientes y asesores.
+                        elif tipo == "mensaje_usuario":
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id,
+                                                              texto=payload.get("texto"))
+                        elif tipo == "click_opcion":
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id,
+                                                              opcion_id=payload.get("opcion_codigo"))
+                        elif tipo == "ubicacion_compartida":
+                            # Solo se pasan los 3 campos esperados (lat, lng, precisión), nada más del navegador.
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id, ubicacion={
+                                "lat": payload.get("lat"), "lng": payload.get("lng"), "precision": payload.get("precision"),
+                                "origen": "mapa" if payload.get("origen") == "mapa" else None})
+                        elif tipo == "ubicacion_error":
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id,
+                                                              ubicacion_error=str(payload.get("motivo") or "")[:40])
+                        elif tipo == "archivo_subido":
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id,
+                                                              archivo_url=payload.get("url"), archivo_ruta=payload.get("ruta"))
+                        elif tipo == "formulario_completado":
+                            eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id,
+                                                              valores=payload.get("valores"))
+                        else:
+                            eventos = []
+                        celular_verificado = _celular_verificado_en(eventos)
+                        if celular_verificado is not None:
+                            union = await asyncio.to_thread(_unir_a_conversacion_abierta, conversacion_id, celular_verificado)
+                            if union:
+                                if not ya_confirmado:
+                                    await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                                await _avisar_union(websocket, union)
+                                continue
+                        if (not ya_confirmado
+                                and tipo in ("mensaje_usuario", "click_opcion", "archivo_subido", "formulario_completado",
+                                     "ubicacion_compartida", "ubicacion_error")):
+                            await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
+                        await _procesar_eventos_bot(conversacion_id, websocket, eventos)
+                        if desde_mensaje_id is not None:
+                            await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
+
                     elif tipo == "mensaje_usuario":
-                        eventos = recibir_entrada_usuario(conversacion_id, texto=payload.get("texto"))
-                    elif tipo == "click_opcion":
-                        eventos = recibir_entrada_usuario(conversacion_id, opcion_id=payload.get("opcion_codigo"))
-                    elif tipo == "ubicacion_compartida":
-                        # Solo se pasan los 3 campos esperados (lat, lng, precisión), nada más del navegador.
-                        eventos = recibir_entrada_usuario(conversacion_id, ubicacion={
-                            "lat": payload.get("lat"), "lng": payload.get("lng"), "precision": payload.get("precision"),
-                            "origen": "mapa" if payload.get("origen") == "mapa" else None})
-                    elif tipo == "ubicacion_error":
-                        eventos = recibir_entrada_usuario(
-                            conversacion_id, ubicacion_error=str(payload.get("motivo") or "")[:40])
+                        # Ya derivado (en_cola o asignada): el mensaje va directo al asesor, no al bot
+                        texto = payload.get("texto")
+                        respondido_a_id = payload.get("respondido_a_id")
+                        mensaje_id = await asyncio.to_thread(_guardar_mensaje_usuario, conversacion_id, texto, respondido_a_id)
+                        respondido_a = await asyncio.to_thread(_obtener_preview_mensaje, respondido_a_id)
+                        if asesor_id:
+                            # Si la conversación estaba pausada (bandeja "Pausados" del
+                            # asesor), el cliente acaba de escribir — se reactiva sola
+                            # y vuelve a la bandeja principal antes de entregarle el
+                            # mensaje, para que le llegue ya en su lugar normal.
+                            if await asyncio.to_thread(_limpiar_pausa, conversacion_id):
+                                await manager.enviar_a_asesor(asesor_id, {
+                                    "type": "conversacion_reactivada",
+                                    "payload": {"conversacion_id": conversacion_id},
+                                })
+                            await manager.enviar_a_asesor(asesor_id, {
+                                "type": "mensaje_usuario",
+                                "payload": {"conversacion_id": conversacion_id, "texto": texto,
+                                            "mensaje_id": mensaje_id, "respondido_a": respondido_a},
+                            })
+                        # "Recibido" real (✓✓ gris) solo cuando de verdad llegó a un asesor
+                        # conectado — si sigue en cola, se queda en un solo ✓. En los dos
+                        # casos se manda igual el mensaje_id, para que el widget pueda
+                        # después editar/eliminar/responder este mismo mensaje.
+                        await websocket.send_json({
+                            "type": "mensaje_recibido_servidor",
+                            "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id), "cid": cid_actual},
+                        })
+                        await manager.notificar_escuchas(conversacion_id, {
+                            "type": "mensaje_conversacion",
+                            "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "usuario", "texto": texto,
+                                        "mensaje_id": mensaje_id, "respondido_a": respondido_a},
+                        })
+
                     elif tipo == "archivo_subido":
-                        eventos = recibir_entrada_usuario(
-                            conversacion_id, archivo_url=payload.get("url"), archivo_ruta=payload.get("ruta"))
-                    elif tipo == "formulario_completado":
-                        eventos = recibir_entrada_usuario(conversacion_id, valores=payload.get("valores"))
-                    else:
-                        eventos = []
-                    if (not ya_confirmado
-                            and tipo in ("mensaje_usuario", "click_opcion", "archivo_subido", "formulario_completado",
-                                 "ubicacion_compartida", "ubicacion_error")):
-                        await websocket.send_json({"type": "mensaje_recibido_servidor", "payload": {"cid": cid_actual}})
-                    await _procesar_eventos_bot(conversacion_id, websocket, eventos)
-                    if desde_mensaje_id is not None:
-                        await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
-
-                elif tipo == "mensaje_usuario":
-                    # Ya derivado (en_cola o asignada): el mensaje va directo al asesor, no al bot
-                    texto = payload.get("texto")
-                    respondido_a_id = payload.get("respondido_a_id")
-                    mensaje_id = _guardar_mensaje_usuario(conversacion_id, texto, respondido_a_id)
-                    respondido_a = _obtener_preview_mensaje(respondido_a_id)
-                    if asesor_id:
-                        # Si la conversación estaba pausada (bandeja "Pausados" del
-                        # asesor), el cliente acaba de escribir — se reactiva sola
-                        # y vuelve a la bandeja principal antes de entregarle el
-                        # mensaje, para que le llegue ya en su lugar normal.
-                        if _limpiar_pausa(conversacion_id):
+                        # Igual que mensaje_usuario pero para un archivo: al asesor le llega
+                        # como link clicable (se abre en pestaña aparte), no como texto plano.
+                        # Se guarda la RUTA cruda (no la URL firmada, que expira en 1 hora y
+                        # quedaría inútil para siempre) — el asesor/supervisor piden una
+                        # firmada nueva al vuelo vía GET /archivo-receta cuando la abren.
+                        ruta = payload.get("ruta")
+                        respondido_a_id = payload.get("respondido_a_id")
+                        mensaje_id = await asyncio.to_thread(_guardar_mensaje_usuario_archivo, conversacion_id, ruta, respondido_a_id)
+                        respondido_a = await asyncio.to_thread(_obtener_preview_mensaje, respondido_a_id)
+                        if asesor_id:
+                            if await asyncio.to_thread(_limpiar_pausa, conversacion_id):
+                                await manager.enviar_a_asesor(asesor_id, {
+                                    "type": "conversacion_reactivada",
+                                    "payload": {"conversacion_id": conversacion_id},
+                                })
                             await manager.enviar_a_asesor(asesor_id, {
-                                "type": "conversacion_reactivada",
-                                "payload": {"conversacion_id": conversacion_id},
+                                "type": "archivo_usuario",
+                                "payload": {"conversacion_id": conversacion_id, "ruta": ruta,
+                                            "mensaje_id": mensaje_id, "respondido_a": respondido_a},
                             })
-                        await manager.enviar_a_asesor(asesor_id, {
-                            "type": "mensaje_usuario",
-                            "payload": {"conversacion_id": conversacion_id, "texto": texto,
+                        await websocket.send_json({
+                            "type": "mensaje_recibido_servidor",
+                            "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id), "cid": cid_actual},
+                        })
+                        await manager.notificar_escuchas(conversacion_id, {
+                            "type": "mensaje_conversacion",
+                            "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "usuario",
+                                        "texto": "📎 Archivo enviado", "ruta": ruta,
                                         "mensaje_id": mensaje_id, "respondido_a": respondido_a},
                         })
-                    # "Recibido" real (✓✓ gris) solo cuando de verdad llegó a un asesor
-                    # conectado — si sigue en cola, se queda en un solo ✓. En los dos
-                    # casos se manda igual el mensaje_id, para que el widget pueda
-                    # después editar/eliminar/responder este mismo mensaje.
-                    await websocket.send_json({
-                        "type": "mensaje_recibido_servidor",
-                        "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id), "cid": cid_actual},
-                    })
-                    await manager.notificar_escuchas(conversacion_id, {
-                        "type": "mensaje_conversacion",
-                        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "usuario", "texto": texto,
-                                    "mensaje_id": mensaje_id, "respondido_a": respondido_a},
-                    })
+                        # Si sigue en_cola (sin asesor_id todavía), el mensaje queda guardado
+                        # en el historial y el asesor lo verá al asignarse — no se pierde,
+                        # pero no hay entrega en vivo hasta que haya asignación.
 
-                elif tipo == "archivo_subido":
-                    # Igual que mensaje_usuario pero para un archivo: al asesor le llega
-                    # como link clicable (se abre en pestaña aparte), no como texto plano.
-                    # Se guarda la RUTA cruda (no la URL firmada, que expira en 1 hora y
-                    # quedaría inútil para siempre) — el asesor/supervisor piden una
-                    # firmada nueva al vuelo vía GET /archivo-receta cuando la abren.
-                    ruta = payload.get("ruta")
-                    respondido_a_id = payload.get("respondido_a_id")
-                    mensaje_id = _guardar_mensaje_usuario_archivo(conversacion_id, ruta, respondido_a_id)
-                    respondido_a = _obtener_preview_mensaje(respondido_a_id)
-                    if asesor_id:
-                        if _limpiar_pausa(conversacion_id):
-                            await manager.enviar_a_asesor(asesor_id, {
-                                "type": "conversacion_reactivada",
-                                "payload": {"conversacion_id": conversacion_id},
-                            })
-                        await manager.enviar_a_asesor(asesor_id, {
-                            "type": "archivo_usuario",
-                            "payload": {"conversacion_id": conversacion_id, "ruta": ruta,
-                                        "mensaje_id": mensaje_id, "respondido_a": respondido_a},
-                        })
-                    await websocket.send_json({
-                        "type": "mensaje_recibido_servidor",
-                        "payload": {"mensaje_id": mensaje_id, "recibido": bool(asesor_id), "cid": cid_actual},
-                    })
-                    await manager.notificar_escuchas(conversacion_id, {
-                        "type": "mensaje_conversacion",
-                        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "usuario",
-                                    "texto": "📎 Archivo enviado", "ruta": ruta,
-                                    "mensaje_id": mensaje_id, "respondido_a": respondido_a},
-                    })
-                    # Si sigue en_cola (sin asesor_id todavía), el mensaje queda guardado
-                    # en el historial y el asesor lo verá al asignarse — no se pierde,
-                    # pero no hay entrega en vivo hasta que haya asignación.
+                    elif tipo == "editar_mensaje":
+                        resultado = await asyncio.to_thread(_editar_mensaje, payload.get("mensaje_id"), conversacion_id,
+                                                            "usuario", None, payload.get("texto"))
+                        if resultado:
+                            await _difundir_mensaje_modificado("mensaje_editado", conversacion_id, resultado)
 
-                elif tipo == "editar_mensaje":
-                    resultado = _editar_mensaje(payload.get("mensaje_id"), conversacion_id,
-                                                 "usuario", None, payload.get("texto"))
-                    if resultado:
-                        await _difundir_mensaje_modificado("mensaje_editado", conversacion_id, resultado)
+                    elif tipo == "eliminar_mensaje":
+                        resultado = await asyncio.to_thread(_eliminar_mensaje, payload.get("mensaje_id"), conversacion_id,
+                                                            "usuario", None, "Paciente")
+                        if resultado:
+                            await _difundir_mensaje_modificado("mensaje_eliminado", conversacion_id, resultado)
 
-                elif tipo == "eliminar_mensaje":
-                    resultado = _eliminar_mensaje(payload.get("mensaje_id"), conversacion_id,
-                                                   "usuario", None, "Paciente")
-                    if resultado:
-                        await _difundir_mensaje_modificado("mensaje_eliminado", conversacion_id, resultado)
-
-                elif tipo == "reaccionar_mensaje":
-                    resultado = _reaccionar_mensaje(payload.get("mensaje_id"), conversacion_id,
-                                                     "usuario", payload.get("emoji"))
-                    if resultado:
-                        await _difundir_mensaje_modificado("mensaje_reaccion", conversacion_id, resultado)
+                    elif tipo == "reaccionar_mensaje":
+                        resultado = await asyncio.to_thread(_reaccionar_mensaje, payload.get("mensaje_id"), conversacion_id,
+                                                            "usuario", payload.get("emoji"))
+                        if resultado:
+                            await _difundir_mensaje_modificado("mensaje_reaccion", conversacion_id, resultado)
 
             except WebSocketDisconnect:
                 raise
@@ -2970,8 +3183,17 @@ async def _loop_inactividad():
         await asyncio.sleep(10)
 
 
+# Hilos para asyncio.to_thread (base de datos, SMS, SOFI, agente de IA). Por defecto Python usa
+# cpu_count + 4 = 5 hilos en Cloud Run (1 vCPU): unas pocas consultas al agente de IA (5-45 s cada una)
+# bastaban para que todo lo demás que corre en hilos quedara en fila. Las conexiones a la base las sigue
+# limitando el pool de db.py (un hilo que espera conexión no frena al servidor).
+_HILOS_TRABAJO = 32
+
+
 @app.on_event("startup")
 async def _iniciar_watcher_inactividad():
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=_HILOS_TRABAJO, thread_name_prefix="trabajo"))
     asyncio.create_task(_loop_inactividad())
 
 
@@ -3499,7 +3721,7 @@ async def _derivar_enlace_directo(conversacion_id: int, d: dict, es_nueva: bool,
         if asignado is not None:
             resultado = "asignado_otro" if d.get("asesor_id") else "asignado_directo"
         else:
-            texto = (supervisor.obtener_configuracion("mensaje_en_cola_guardado")
+            texto = (await asyncio.to_thread(supervisor.obtener_configuracion, "mensaje_en_cola_guardado")
                      or MENSAJES_AUTOMATICOS["mensaje_en_cola_guardado"]["default"])
             await websocket.send_json({"type": "aviso_cola", "payload": {"texto": texto}})
     await asyncio.to_thread(enlaces_directos.registrar_resultado, d["id"], resultado)
@@ -4337,6 +4559,7 @@ _MOTIVOS_CIERRE_BOT = (
     ("%no acepto%", "No aceptó la política de datos"),
     ("%completado y firmado los documentos%", "Trámite SCTR completado"),
     ("%Lamentamos no pod%", "No se pudo atender (medicamentos)"),
+    ("Continuó en su conversación anterior%", "Duplicada: continuó en su conversación anterior"),
 )
 # "Escribe "hola" para comenzar" (nodo consultas_despedida_hola) se separa en
 # _sql_motivo_cierre_bot según lo último que hizo el cliente.
@@ -4868,6 +5091,44 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
         "por_metodo_token": por_metodo_token,
         "por_pagina": por_pagina,
     }
+
+
+def _rango_dashboard(desde: str, hasta: str):
+    try:
+        d_desde = datetime.strptime(desde, "%Y-%m-%d").date()
+        d_hasta = datetime.strptime(hasta, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Fechas inválidas (usar YYYY-MM-DD)")
+    if d_hasta < d_desde:
+        raise HTTPException(status_code=400, detail="'hasta' debe ser igual o posterior a 'desde'")
+    return (d_desde, d_hasta,
+            datetime.combine(d_desde, datetime.min.time()).replace(tzinfo=LIMA_TZ),
+            datetime.combine(d_hasta, datetime.min.time()).replace(tzinfo=LIMA_TZ) + timedelta(days=1))
+
+
+@app.get("/dashboard/encuesta")
+def encuesta_dashboard(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
+    """Resultados de la encuesta de satisfacción (encuestas ENVIADAS en el período). Ver encuesta.py."""
+    alcance = supervisor.obtener_alcance(_verificar_editor(authorization))
+    campanas_filtro = supervisor.campanas_efectivas(alcance, campana_id)
+    _, _, f_desde, f_hasta = _rango_dashboard(desde, hasta)
+    return encuesta.estadisticas(f_desde, f_hasta, campanas_filtro)
+
+
+@app.get("/dashboard/encuesta.xlsx")
+def encuesta_excel(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
+    """Excel con cada respuesta (incluye comentarios). Solo supervisores, como el reporte de conversaciones."""
+    supervisor_id = _verificar_supervisor(authorization)
+    campanas_filtro = supervisor.campanas_efectivas(supervisor.obtener_alcance(supervisor_id), campana_id)
+    d1, d2, f_desde, f_hasta = _rango_dashboard(desde, hasta)
+    contenido = encuesta.exportar_xlsx(f_desde, f_hasta, campanas_filtro,
+                                       f"{d1.strftime('%d/%m/%Y')} al {d2.strftime('%d/%m/%Y')}")
+    return Response(
+        content=contenido,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="encuesta_satisfaccion_{d1.isoformat()}_a_{d2.isoformat()}.xlsx"',
+                 "Cache-Control": "no-store"},
+    )
 
 
 @app.get("/dashboard/consultas")
@@ -5967,6 +6228,18 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 await supervisor.notificar_asesores_admin_a_todos(manager)
                 await supervisor.notificar_estado_global_a_todos(manager)
 
+            elif tipo == "editar_campanas_asesor":
+                # Supervisor de campaña (o máximo): agrega/quita campañas a un asesor. No crea usuarios ni toca
+                # otros datos. Los permisos ya se revisaron arriba (supervisor.motivo_denegado).
+                resultado = await asyncio.to_thread(supervisor.editar_campanas_asesor, payload.get("asesor_id"),
+                                                    payload.get("campana_ids") or [], alcance)
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "resultado_campanas_asesor", "payload": resultado})
+                if resultado.get("ok"):
+                    logger.info("Supervisor %s cambió las campañas del asesor %s a %s", supervisor_id,
+                                payload.get("asesor_id"), payload.get("campana_ids"))
+                    await supervisor.notificar_asesores_admin_a_todos(manager)
+                    await supervisor.notificar_estado_global_a_todos(manager)
+
             elif tipo == "quitar_2fa_asesor":
                 totp.desactivar(payload.get("asesor_id"))
                 await supervisor.notificar_asesores_admin_a_todos(manager)
@@ -6022,7 +6295,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 elif tipo == "editar_campana":
                     resultado = await asyncio.to_thread(
                         supervisor.editar_campana, payload.get("id"),
-                        payload.get("nombre"), payload.get("activo"))
+                        payload.get("nombre"), payload.get("activo"), payload.get("encuesta"))
                 if not resultado.get("ok"):
                     await manager.enviar_a_supervisor(supervisor_id, {
                         "type": "error_campanas", "payload": {"motivo": resultado.get("motivo")}})

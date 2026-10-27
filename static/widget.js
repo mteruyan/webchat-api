@@ -397,6 +397,62 @@
       background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
       border-radius: 999px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; font-family: inherit;
     }
+    /* Encuesta de satisfacción (al cerrar una atención con asesor) */
+    .encuesta {
+      background: white; border: 1px solid ${TOKENS.borde}; border-radius: 14px; padding: 16px 14px 14px;
+      margin: 10px 0; box-shadow: 0 1px 4px rgba(10,30,50,.06); color: ${TOKENS.texto};
+    }
+    .encuesta .enc-antes { font-size: calc(11px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 4px; }
+    .encuesta h4 { margin: 0; font-size: calc(16px + var(--fs, 0px)); color: ${TOKENS.azul}; }
+    .encuesta .enc-sub { font-size: calc(12px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; margin: 2px 0 8px; }
+    .encuesta .enc-intro { font-size: calc(13px + var(--fs, 0px)); line-height: 1.45; margin: 0 0 6px; }
+    .encuesta .enc-preg { margin-top: 16px; }
+    .encuesta .enc-preg > p { margin: 0 0 8px; font-size: calc(13.5px + var(--fs, 0px)); font-weight: 600; line-height: 1.35; }
+    .encuesta .enc-ayuda { display: block; font-weight: 400; color: ${TOKENS.textoSuave}; font-size: calc(12px + var(--fs, 0px)); margin-top: 2px; }
+    .encuesta .enc-caras { display: flex; gap: 6px; }
+    .encuesta .enc-cara {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 6px;
+      border: 1.5px solid ${TOKENS.borde}; border-radius: 10px; background: white; cursor: pointer; font-family: inherit;
+      color: ${TOKENS.textoSuave}; font-size: calc(12px + var(--fs, 0px)); transition: transform .1s, border-color .1s;
+    }
+    .encuesta .enc-cara span { font-size: 24px; line-height: 1; filter: grayscale(.35); }
+    .encuesta .enc-cara[aria-pressed="true"] { border-color: ${TOKENS.azul}; background: #EEF5FC; color: ${TOKENS.azul}; font-weight: 700; transform: scale(1.04); }
+    .encuesta .enc-cara[aria-pressed="true"] span { filter: none; }
+    .encuesta .enc-extremos { display: flex; justify-content: space-between; font-size: calc(11px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; margin-top: 4px; }
+    .encuesta .enc-opciones { display: flex; flex-direction: column; gap: 6px; }
+    .encuesta .enc-op {
+      display: flex; align-items: center; gap: 9px; text-align: left; width: 100%; padding: 9px 11px;
+      border: 1.5px solid ${TOKENS.borde}; border-radius: 10px; background: white; cursor: pointer;
+      font-family: inherit; font-size: calc(13.5px + var(--fs, 0px)); color: ${TOKENS.texto};
+    }
+    .encuesta .enc-op::before {
+      content: ""; flex-shrink: 0; width: 16px; height: 16px; border: 1.5px solid #9AA8B6; border-radius: 50%; box-sizing: border-box;
+    }
+    .encuesta .enc-op.multi::before { border-radius: 4px; }
+    .encuesta .enc-op.sel { border-color: ${TOKENS.azul}; background: #EEF5FC; }
+    .encuesta .enc-op.sel::before { border-color: ${TOKENS.azul}; background: ${TOKENS.azul}; box-shadow: inset 0 0 0 3px white; }
+    .encuesta .enc-op.multi.sel::before { box-shadow: inset 0 0 0 2.5px white; }
+    .encuesta input.enc-otra, .encuesta textarea {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid ${TOKENS.borde}; border-radius: 8px;
+      font-size: calc(14px + var(--fs, 0px)); font-family: inherit; color: ${TOKENS.texto}; margin-top: 6px;
+    }
+    .encuesta textarea { resize: vertical; min-height: 64px; margin-top: 0; }
+    .encuesta input.enc-otra:focus, .encuesta textarea:focus { outline: none; border-color: ${TOKENS.azul}; box-shadow: 0 0 0 3px rgba(10,76,140,.15); }
+    .encuesta button:focus-visible { outline: 2px solid ${TOKENS.azul}; outline-offset: 2px; }
+    .encuesta .enc-contador { text-align: right; font-size: calc(11px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; margin-top: 2px; }
+    .encuesta .enc-error { color: #C0392B; font-size: calc(12.5px + var(--fs, 0px)); margin-top: 10px; min-height: 1em; }
+    .encuesta .enc-enviar {
+      margin-top: 10px; width: 100%; background: ${TOKENS.azul}; color: white; border: none; border-radius: 10px;
+      padding: 11px; font-size: calc(14px + var(--fs, 0px)); font-weight: 600; cursor: pointer; font-family: inherit;
+    }
+    .encuesta .enc-enviar:disabled { opacity: .5; cursor: default; }
+    .encuesta .enc-omitir {
+      display: block; margin: 8px auto 0; background: none; border: none; color: ${TOKENS.textoSuave};
+      font-size: calc(12.5px + var(--fs, 0px)); cursor: pointer; text-decoration: underline; font-family: inherit;
+    }
+    .encuesta.enc-gracias { text-align: center; padding: 18px 14px; }
+    .encuesta.enc-gracias .enc-icono { font-size: 30px; }
+    .encuesta.enc-gracias p { margin: 6px 0 0; font-size: calc(13.5px + var(--fs, 0px)); }
     .acciones-cierre { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
     .acciones-cierre button {
       background: white; color: ${TOKENS.azul}; border: 1.5px solid ${TOKENS.azul};
@@ -979,6 +1035,7 @@
   let noLeidos = 0;
   let panelAbierto = false;
   let sesionTokenActual = "";
+  let avisoUnion = "";   // texto a mostrar cuando se une a la conversación abierta (ver "cambiar_sesion")
   let conversacionIdActual = null;
   // El bot no puede procesar notas de voz (solo texto), así que el botón de
   // micrófono únicamente se habilita cuando la conversación ya está siendo
@@ -1934,6 +1991,182 @@
     barra.appendChild(btn);
   }
 
+  // ---------------------------------------------------------------------
+  // Encuesta de satisfacción: tarjeta dentro del chat con las 5 preguntas (textos desde el servidor,
+  // ver encuesta.py). Preguntas 1 a 4 obligatorias; la 5 es opcional.
+  // ---------------------------------------------------------------------
+  function mostrarEncuesta(p) {
+    const P = p.preguntas || {};
+    if (!p.encuesta_id || !P.satisfaccion) return;
+    if ($cuerpo.querySelector(`.encuesta[data-id="${p.encuesta_id}"]`)) return;
+    const resp = { satisfaccion: null, facilidad: null, dificultad: null, mejoras: [], dificultad_otra: "", mejora_otra: "", comentario: "" };
+    const card = document.createElement("div");
+    card.className = "encuesta";
+    card.dataset.id = String(p.encuesta_id);
+    card.setAttribute("role", "form");
+    card.setAttribute("aria-label", P.titulo || "Encuesta");
+
+    const el = (tag, cls, texto) => { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; };
+    if (p.anterior) card.appendChild(el("div", "enc-antes", "Sobre tu atención anterior"));
+    card.appendChild(el("h4", null, P.titulo));
+    card.appendChild(el("div", "enc-sub", P.subtitulo));
+    card.appendChild(el("p", "enc-intro", P.intro));
+    const $btnEnviar = el("button", "enc-enviar", "Enviar respuestas");
+    $btnEnviar.type = "button";
+    const $error = el("div", "enc-error");
+
+    function bloque(def) {
+      const b = el("div", "enc-preg");
+      const t = el("p", null, def.texto);
+      if (def.ayuda) t.appendChild(el("span", "enc-ayuda", def.ayuda));
+      b.appendChild(t);
+      card.appendChild(b);
+      return b;
+    }
+    function actualizar() {
+      const completa = resp.satisfaccion && resp.facilidad && resp.dificultad && resp.mejoras.length;
+      $btnEnviar.disabled = !completa;
+      if (completa) $error.textContent = "";
+    }
+
+    // 1. Caritas 1 a 5
+    const b1 = bloque(P.satisfaccion);
+    const caras = el("div", "enc-caras");
+    P.satisfaccion.opciones.forEach((o) => {
+      const btn = el("button", "enc-cara");
+      btn.type = "button";
+      btn.setAttribute("aria-pressed", "false");
+      btn.setAttribute("aria-label", `${o.valor} — ${o.texto}`);
+      btn.title = o.texto;
+      btn.appendChild(el("span", null, o.emoji));
+      btn.appendChild(document.createTextNode(String(o.valor)));
+      btn.onclick = () => {
+        resp.satisfaccion = o.valor;
+        caras.querySelectorAll(".enc-cara").forEach((x) => x.setAttribute("aria-pressed", String(x === btn)));
+        actualizar();
+      };
+      caras.appendChild(btn);
+    });
+    b1.appendChild(caras);
+    const ext = el("div", "enc-extremos");
+    ext.appendChild(el("span", null, P.satisfaccion.opciones[0].texto));
+    ext.appendChild(el("span", null, P.satisfaccion.opciones[P.satisfaccion.opciones.length - 1].texto));
+    b1.appendChild(ext);
+
+    // Opciones de una sola respuesta (2 y 3) o de varias (4)
+    function opciones(def, campo, multi, campoOtra) {
+      const b = bloque(def);
+      const lista = el("div", "enc-opciones");
+      lista.setAttribute("role", multi ? "group" : "radiogroup");
+      let inputOtra = null;
+      def.opciones.forEach((o) => {
+        const btn = el("button", "enc-op" + (multi ? " multi" : ""), o.texto);
+        btn.type = "button";
+        btn.dataset.valor = String(o.valor);
+        btn.setAttribute(multi ? "aria-pressed" : "aria-checked", "false");
+        if (!multi) btn.setAttribute("role", "radio");
+        btn.onclick = () => {
+          if (multi) {
+            const set = new Set(resp[campo]);
+            if (set.has(o.valor)) set.delete(o.valor);
+            else if (o.valor === "ninguna") { set.clear(); set.add("ninguna"); }   // "No necesito mejoras" va sola
+            else { set.delete("ninguna"); set.add(o.valor); }
+            resp[campo] = def.opciones.map((x) => x.valor).filter((v) => set.has(v));
+          } else {
+            resp[campo] = o.valor;
+          }
+          lista.querySelectorAll(".enc-op").forEach((x) => {
+            const on = multi ? resp[campo].includes(x.dataset.valor) : x.dataset.valor === String(resp[campo]);
+            x.classList.toggle("sel", on);
+            x.setAttribute(multi ? "aria-pressed" : "aria-checked", String(on));
+          });
+          if (inputOtra) {
+            const ver = multi ? resp[campo].includes("otra") : resp[campo] === "otra";
+            inputOtra.style.display = ver ? "" : "none";
+            if (ver && document.activeElement !== inputOtra) setTimeout(() => inputOtra.focus(), 0);
+          }
+          actualizar();
+        };
+        lista.appendChild(btn);
+      });
+      b.appendChild(lista);
+      if (campoOtra) {
+        inputOtra = el("input", "enc-otra");
+        inputOtra.type = "text";
+        inputOtra.maxLength = P.max_otra || 300;
+        inputOtra.placeholder = "Cuéntanos cuál (opcional)";
+        inputOtra.style.display = "none";
+        inputOtra.oninput = () => { resp[campoOtra] = inputOtra.value; };
+        b.appendChild(inputOtra);
+      }
+    }
+    opciones(P.facilidad, "facilidad", false, null);
+    opciones(P.dificultad, "dificultad", false, "dificultad_otra");
+    opciones(P.mejoras, "mejoras", true, "mejora_otra");
+
+    // 5. Comentario libre (opcional)
+    const b5 = bloque(P.comentario);
+    const ta = el("textarea");
+    const maxC = (P.comentario && P.comentario.max) || 1000;
+    ta.maxLength = maxC;
+    ta.rows = 3;
+    ta.placeholder = "Escribe aquí (opcional)";
+    const cont = el("div", "enc-contador", `0 / ${maxC}`);
+    ta.oninput = () => { resp.comentario = ta.value; cont.textContent = `${ta.value.length} / ${maxC}`; };
+    b5.appendChild(ta);
+    b5.appendChild(cont);
+
+    card.appendChild($error);
+    $btnEnviar.disabled = true;
+    $btnEnviar.onclick = () => {
+      if ($btnEnviar.disabled) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) { $error.textContent = "Sin conexión. Intenta de nuevo en un momento."; return; }
+      $btnEnviar.disabled = true;
+      $btnEnviar.textContent = "Enviando...";
+      $error.textContent = "";
+      enviar({ type: "responder_encuesta", payload: { encuesta_id: p.encuesta_id, respuestas: {
+        satisfaccion: resp.satisfaccion, facilidad: resp.facilidad, dificultad: resp.dificultad, mejoras: resp.mejoras,
+        dificultad_otra: resp.dificultad === "otra" ? resp.dificultad_otra : "",
+        mejora_otra: resp.mejoras.includes("otra") ? resp.mejora_otra : "",
+        comentario: resp.comentario,
+      } } });
+    };
+    card.appendChild($btnEnviar);
+    const omitir = el("button", "enc-omitir", "Ahora no");
+    omitir.type = "button";
+    omitir.onclick = () => {
+      enviar({ type: "omitir_encuesta", payload: { encuesta_id: p.encuesta_id } });
+      card.remove();
+    };
+    card.appendChild(omitir);
+
+    // Va antes de los botones "Iniciar nueva conversación" (si ya están), para que se vea primero.
+    const acciones = $cuerpo.querySelectorAll(".acciones-cierre");
+    const ancla = acciones.length ? acciones[acciones.length - 1] : null;
+    if (ancla) $cuerpo.insertBefore(card, ancla); else $cuerpo.appendChild(card);
+    if (estaCercaDelFinal() || ancla) card.scrollIntoView({ block: "start", behavior: "smooth" });
+    else mostrarIndicadorNuevoMensaje();
+    if (!panelAbierto) { noLeidos++; actualizarBadge(); }
+  }
+
+  function resultadoEncuesta(p) {
+    const card = $cuerpo.querySelector(`.encuesta[data-id="${p.encuesta_id}"]`);
+    if (!card) return;
+    if (p.ok || p.ya_respondida) {
+      card.className = "encuesta enc-gracias";
+      card.innerHTML = "";
+      const ic = document.createElement("div"); ic.className = "enc-icono"; ic.textContent = "💙";
+      const h = document.createElement("h4"); h.textContent = "¡Gracias por tu opinión!";
+      const t = document.createElement("p"); t.textContent = "Tus respuestas nos ayudan a mejorar nuestro canal digital.";
+      card.appendChild(ic); card.appendChild(h); card.appendChild(t);
+      return;
+    }
+    const btn = card.querySelector(".enc-enviar");
+    const err = card.querySelector(".enc-error");
+    if (err) err.textContent = p.motivo || "No pudimos guardar tus respuestas. Intenta de nuevo.";
+    if (btn) { btn.disabled = false; btn.textContent = "Enviar respuestas"; }
+  }
+
   function agregarAccionesCierre() {
     const cont = document.createElement("div");
     cont.className = "acciones-cierre";
@@ -2518,7 +2751,11 @@
   // ---------------------------------------------------------------------
   function conectar() {
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
-    const sesionToken = localStorage.getItem("sanitas_webchat_sesion") || "";
+    // Si el navegador bloquea el almacenamiento, al reconectar se usa la llave que ya teníamos en memoria
+    // (si no, cada reconexión abriría una conversación nueva).
+    let sesionToken = "";
+    try { sesionToken = localStorage.getItem("sanitas_webchat_sesion") || ""; } catch (e) { /* bloqueado */ }
+    if (!sesionToken && sesionTokenActual) sesionToken = sesionTokenActual;
     sesionTokenActual = sesionToken;
     const url = `${WS_BASE}/ws/widget${sesionToken ? "?sesion_token=" + encodeURIComponent(sesionToken) : ""}`;
     ws = new WebSocket(url);
@@ -2585,6 +2822,12 @@
         case "aviso_cola":
           agregarMensaje(p.texto, "sistema");
           break;
+        case "encuesta_satisfaccion":
+          mostrarEncuesta(p);
+          break;
+        case "encuesta_resultado":
+          resultadoEncuesta(p);
+          break;
         case "traspaso_listo":
           $qrImg.src = p.qr;
           $qrImg.style.display = "";
@@ -2599,6 +2842,16 @@
         case "traspaso_error":
           $qrEstado.textContent = "No pudimos generar el código. Inténtalo de nuevo.";
           $qrRegenerar.style.display = "";
+          break;
+        case "cambiar_sesion":
+          // Esta persona (mismo celular) ya tenía una conversación abierta desde otro navegador o enlace:
+          // se guarda esa llave y se reconecta con ella; el servidor devuelve su historial.
+          try { localStorage.setItem("sanitas_webchat_sesion", p.sesion_token); } catch (e) { /* queda en memoria */ }
+          sesionTokenActual = p.sesion_token;
+          avisoUnion = p.aviso || "";
+          $estadoTexto.textContent = "Recuperando tu conversación…";
+          intentosReconexion = 0;
+          if (ws) ws.close();
           break;
         case "sesion_en_otro_dispositivo": {
           movidoAOtroDispositivo = true;
@@ -2623,7 +2876,7 @@
         case "sesion_iniciada":
           $infoGuardada.classList.add("visible");
           if (!guardadaMostradaAlAbrir) { guardadaMostradaAlAbrir = true; mostrarGuardada(); }
-          localStorage.setItem("sanitas_webchat_sesion", p.sesion_token);
+          try { localStorage.setItem("sanitas_webchat_sesion", p.sesion_token); } catch (e) { /* bloqueado: queda en memoria */ }
           sesionTokenActual = p.sesion_token;
           conversacionIdActual = p.conversacion_id;
           resetPrevio();
@@ -2646,6 +2899,7 @@
           $cuerpo.innerHTML = "";
           resetPrevio();
           (p.mensajes || []).forEach((msg, i, arr) => agregarMensajeHistorial(msg, i === arr.length - 1));
+          if (avisoUnion) { agregarMensaje(avisoUnion, "sistema"); avisoUnion = ""; }
           scrollAlFinal();
           revisarHistorialPrevio(500);
           marcarConexionLista(true);

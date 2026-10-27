@@ -521,6 +521,9 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
                     "WHERE id = (SELECT usuario_id FROM conversaciones WHERE id = %s)",
                     (conversacion_id,),
                 )
+                # Aviso INTERNO para main.py (no llega al widget): si este celular ya tiene otra conversación
+                # abierta (abrió el chat desde otro navegador o volvió a tocar el SMS), se le une a esa.
+                eventos.append({"type": "_celular_verificado", "payload": {"celular": variables.get("CELULAR")}})
             nodo_actual = nodo["siguiente_codigo"]
 
         elif tipo == "condicion":
