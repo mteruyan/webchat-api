@@ -664,7 +664,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <span class="nombre-asesor" id="nombreAsesorTexto"></span>
     <span class="estado" id="estadoTexto"></span>
     <span class="stats-conexion" id="statsConexion" title="Tiempo de hoy"></span>
-    <button class="chico gris" id="btnBuscar" title="Buscar una conversación por celular, DNI o nombre">🔎 Buscar</button>
+    <button class="chico gris" id="btnBuscar" title="Buscar una conversación por celular, DNI, nombre o código">🔎 Buscar</button>
     <button class="chico gris" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
     <button class="chico gris" id="btnArchivoSms" title="Subir un PDF o imagen y enviarle al cliente un enlace único por SMS">📎 Enviar archivo</button>
     <button class="chico gris" id="btnAyudarBot" title="Ayudar a una persona que todavía está navegando el bot o en cola">🧭 Ayudar en el bot</button>
@@ -905,11 +905,11 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <div class="modal-buscar">
       <h3>Buscar conversación</h3>
       <div class="buscar-fila">
-        <input id="buscarInput" placeholder="Celular, DNI o nombre del cliente (mín. 3 caracteres)..." />
+        <input id="buscarInput" placeholder="Celular, DNI, nombre o código de conversación (ej. 6888)..." />
         <button id="btnEjecutarBusqueda">Buscar</button>
       </div>
       <div id="buscarResultados"></div>
-      <div class="buscar-aviso" id="buscarVacio">Escribe un celular, DNI o nombre y presiona buscar.</div>
+      <div class="buscar-aviso" id="buscarVacio">Escribe un celular, DNI, nombre o código de conversación y presiona buscar.</div>
       <div class="buscar-aviso" id="buscarSinResultados" style="display:none;">No se encontraron conversaciones.</div>
       <button class="gris btn-cerrar-modal" id="btnCerrarModalBuscar">Cerrar</button>
     </div>
@@ -3192,7 +3192,7 @@ const EMOJIS_COMUNES = ['😀','😃','😄','😁','😆','😅','😂','🤣',
   };
 })();
 
-// ---- Buscar: celular, DNI o nombre, de cualquier estado -------------------
+// ---- Buscar: celular, DNI, nombre o código de conversación, de cualquier estado -------------------
 let historialOrigenBusqueda = false;
 const ETIQUETAS_ESTADO = { bot: 'En bot', en_cola: 'En cola', asignada: 'Asignada', cerrada: 'Cerrada' };
 
@@ -3216,7 +3216,8 @@ document.getElementById('btnCerrarModalBuscar').onclick = () => {
 };
 function ejecutarBusqueda() {
   const query = document.getElementById('buscarInput').value.trim();
-  if (query.length < 3 || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const esCodigo = /^#?\s*\d{1,9}$/.test(query);   // código de conversación: vale aunque sea corto
+  if ((query.length < 3 && !esCodigo) || !ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: 'buscar_conversaciones', payload: { query } }));
 }
 document.getElementById('btnEjecutarBusqueda').onclick = ejecutarBusqueda;
@@ -3234,7 +3235,7 @@ function renderResultadosBusqueda(resultados) {
                          : r.estado === 'cerrada' && r.etiqueta ? ` · ${escapeHtml(r.etiqueta)}` : '';
     div.innerHTML = `
       <div class="nombre">${escapeHtml(r.usuario_nombre)}</div>
-      <div class="datos">${escapeHtml([r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      <div class="datos">${escapeHtml(['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
       <div class="fila-estado">
         <span class="estado-pill ${escapeHtml(r.estado)}">${escapeHtml(ETIQUETAS_ESTADO[r.estado] || r.estado)}${detalleEstado}</span>
         <span style="font-size:11.5px;color:var(--texto-suave);">${formatearFechaHoraCompleta(r.cerrado_en || r.asignado_en || r.iniciado_en)}</span>

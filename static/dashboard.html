@@ -112,6 +112,32 @@
   .enc-filtros { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   .enc-filtros button { padding: 5px 11px; font-size: 12px; background: white; color: var(--texto-suave); border: 1px solid var(--borde); }
   .enc-filtros button.activo { background: var(--azul); color: white; border-color: var(--azul); }
+  /* Seguimiento de la encuesta */
+  .seg-mejora { border: 1px solid var(--borde); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .seg-mejora .tit { font-weight: 700; font-size: 14px; }
+  .seg-mejora .meta { font-size: 12px; color: var(--texto-suave); margin: 3px 0 6px; }
+  .seg-mejora .stats { font-size: 12.5px; margin: 6px 0 8px; }
+  .seg-mejora .acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+  .seg-chip { display: inline-block; background: var(--fondo); border: 1px solid var(--borde); border-radius: 999px; padding: 2px 9px; font-size: 11.5px; margin: 2px 4px 2px 0; }
+  .seg-form { border: 1px solid #D5E4F3; background: #F7FAFD; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .seg-form label.campo { display: block; font-size: 12.5px; font-weight: 600; margin: 12px 0 4px; }
+  .seg-form label.campo small { font-weight: 400; color: var(--texto-suave); }
+  .seg-form input[type=text], .seg-form input[type=date], .seg-form textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--borde-fuerte); border-radius: 8px; font: inherit; font-size: 13px; }
+  .seg-form textarea { min-height: 70px; resize: vertical; }
+  .seg-form .opciones { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 14px; font-size: 12.5px; }
+  .seg-form .contador { font-size: 11.5px; color: var(--texto-suave); text-align: right; }
+  .seg-form .contador.alerta { color: var(--naranja); font-weight: 600; }
+  .seg-form .textos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 0 18px; }
+  .seg-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .seg-tabla th { text-align: left; font-size: 11.5px; color: var(--texto-suave); font-weight: 600; padding: 6px; border-bottom: 1px solid var(--borde); }
+  .seg-tabla td { padding: 8px 6px; border-bottom: 1px solid var(--borde); vertical-align: top; }
+  .seg-tabla tr.inactiva td { opacity: .55; }
+  .seg-tono { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
+  .seg-tono.reclamo { background: #FDECEA; color: #A8322A; }
+  .seg-tono.sugerencia { background: var(--verde-fondo); color: var(--verde-texto); }
+  .seg-coment { white-space: pre-wrap; line-height: 1.4; max-width: 380px; }
+  .seg-vista { background: #fff; border: 1px dashed var(--borde-fuerte); border-radius: 8px; padding: 8px 10px; margin-top: 6px; white-space: pre-wrap; font-size: 12.5px; }
+  .seg-barra { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
   .nota-panel { font-size: 12px; color: var(--texto-suave); margin: 10px 0 0; line-height: 1.5; }
   .chips-palabras { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chips-palabras span { background: var(--fondo); border: 1px solid var(--borde); border-radius: 999px; padding: 3px 10px; font-size: 12px; }
@@ -648,6 +674,7 @@ async function cargarEstadisticas() {
 
   renderDashboard(data, desde, hasta);
   cargarEncuesta(desde, hasta);
+  cargarSeguimiento();
   cargarAvisos(desde, hasta);
   cargarConsultas(desde, hasta);
   cargarApp();
@@ -1093,6 +1120,280 @@ async function cargarEncuesta(desde, hasta) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Seguimiento de la encuesta (solo supervisor máximo): avisar a quienes pidieron una mejora que ya salió.
+// ---------------------------------------------------------------------------
+let segCasos = null, segCasosVista = 'pendientes';
+let segDatos = null, segVista = 'lista', segMejoraEditando = null, segCandidatos = null, segSeleccion = new Set(), segVerTodos = false;
+const SEG_LINK_EJEMPLO = 'https://sanitasperu.com/?wcs=' + 'x'.repeat(36);
+async function segApi(ruta, opciones) {
+  const r = await fetch(`${urlBaseGuardada}${ruta}`, Object.assign({ headers: { 'Authorization': `Bearer ${tokenGuardado}`, 'Content-Type': 'application/json' } }, opciones || {}));
+  if (r.status === 403) { const e = new Error('sin permiso'); e.sinPermiso = true; throw e; }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function cargarSeguimiento() {
+  const el = document.getElementById('panelSeguimiento');
+  if (!el) return;
+  try {
+    segDatos = await segApi('/seguimiento/mejoras');
+  } catch (e) {
+    el.style.display = 'none';   // no es supervisor máximo (o el servidor aún no tiene esta función)
+    return;
+  }
+  segCasos = await segApi(`/seguimiento/casos?vista=${segCasosVista}`).catch(() => null);
+  el.style.display = '';
+  segVista = 'lista';
+  pintarSeguimiento();
+}
+function segCabecera(extra) {
+  return `<div class="enc-cab"><h2>Seguimiento de la encuesta <span class="sub">avisa a los clientes que lo que nos pidieron ya se atendió · solo supervisor máximo</span></h2>${extra || ''}</div>`;
+}
+function segCaracteresSms(t) {
+  const texto = (t || '').replace(/\{\{NOMBRE\}\}/g, 'Claudia').replace(/\{\{LINK\}\}/g, SEG_LINK_EJEMPLO);
+  const especial = /[^A-Za-z0-9 @£$¥\n\r_!"#%&'()*+,\-./:;<=>?¡¿ÄÖÑÜ§äöñüà]/.test(texto);
+  const max = especial ? 70 : 160;
+  const partes = texto.length <= max ? 1 : Math.ceil(texto.length / (especial ? 67 : 153));
+  return { largo: texto.length, partes, especial };
+}
+function pintarSeguimiento() {
+  const el = document.getElementById('panelSeguimiento');
+  const d = segDatos;
+  if (!d) return;
+  if (d.disponible === false) {
+    el.innerHTML = segCabecera() + '<div class="vacio-panel">Falta ejecutar <b>migracion_seguimiento_encuesta.sql</b> en la base de datos.</div>';
+    return;
+  }
+  if (segVista === 'form') return pintarFormularioSeguimiento();
+  if (segVista === 'candidatos') return pintarCandidatos();
+  const txtDif = Object.fromEntries(d.dificultades.map(x => [x.codigo, x.texto]));
+  const txtMej = Object.fromEntries(d.mejoras.map(x => [x.codigo, x.texto]));
+  const lista = d.registradas || [];
+  let html = segCabecera('<button id="segNueva" style="padding:7px 12px;font-size:12.5px">+ Registrar mejora</button>');
+  html += renderCasosSeguimiento();
+  html += '<h3 style="font-size:13px;margin:18px 0 8px">Mejoras publicadas</h3>';
+  if (!lista.length) {
+    html += '<div class="vacio-panel">Todavía no registraste mejoras. Cuando salga a producción algo que pidieron los clientes (por ejemplo, el envío de archivos de hasta 20 MB), regístralo aquí y el sistema te mostrará a quién avisarle.</div>';
+  }
+  lista.forEach(m => {
+    const temas = [...m.dificultades.map(c => 'Dificultad: ' + (txtDif[c] || c)), ...m.mejoras.map(c => 'Pidió: ' + (txtMej[c] || c)), ...m.palabras.map(p => '«' + p + '»')];
+    html += `<div class="seg-mejora">
+      <div class="tit">${escapaHtml(m.titulo)}</div>
+      <div class="meta">Salió a producción el ${escapaHtml(m.publicada_en.split('-').reverse().join('/'))}${m.ultimo_envio ? ' · último envío ' + escapaHtml(m.ultimo_envio) : ''}</div>
+      <div>${temas.map(t => `<span class="seg-chip">${escapaHtml(t)}</span>`).join('')}</div>
+      <div class="stats">${m.enviados ? `<b>${m.enviados}</b> avisados · ${m.sms_ok} por SMS${m.solo_chat ? ' · ' + m.solo_chat + ' solo por chat' : ''} · <b>${m.vistos_chat}</b> vieron el mensaje en el chat · <b>${m.volvieron}</b> volvieron a escribir${m.encuestas_despues ? ` · ${m.encuestas_despues} respondieron otra encuesta después: nota promedio <b>${fmtNum(m.satisfaccion_despues, 1)}</b>` : ''}` : 'Aún no se avisó a nadie.'}</div>
+      <div class="acciones"><button class="chico" data-ver="${m.id}">Ver a quién avisar</button><button class="chico gris" data-editar="${m.id}">Editar</button></div>
+    </div>`;
+  });
+  html += `<p class="nota-panel">Se avisa a quienes respondieron la encuesta hasta el día en que salió la mejora y coinciden con sus temas. Tú revisas la lista y apruebas el envío. Un aviso por persona por mejora, máximo uno cada 7 días por celular, de ${escapaHtml(d.horario)}. El SMS no lleva datos de salud; el detalle lo ve en el chat.</p>`;
+  el.innerHTML = html;
+  el.querySelector('#segNueva').onclick = () => { segMejoraEditando = null; segVista = 'form'; pintarSeguimiento(); };
+  conectarCasosSeguimiento(el);
+  el.querySelectorAll('[data-editar]').forEach(b => b.onclick = () => { segMejoraEditando = lista.find(x => String(x.id) === b.dataset.editar); segVista = 'form'; pintarSeguimiento(); });
+  el.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => abrirCandidatos(Number(b.dataset.ver)));
+}
+function renderCasosSeguimiento() {
+  const k = segCasos;
+  if (!k) return '';
+  if (k.disponible === false) return '<div class="vacio-panel">Para ver los casos para revisar y los agradecimientos falta ejecutar <b>migracion_seguimiento_fase2.sql</b>.</div>';
+  const pend = (k.conteo && k.conteo.pendiente) || {};
+  const nPend = (pend.reincidencia || 0) + (pend.insatisfecho || 0);
+  const caras = ['', '😞', '🙁', '😐', '🙂', '🤩'];
+  let html = `<h3 style="font-size:13px;margin:6px 0 8px">Casos para revisar <span class="sub" style="font-weight:400;color:var(--texto-suave);font-size:12px">${nPend} pendientes${pend.reincidencia ? ' · <b style="color:var(--rojo)">' + pend.reincidencia + ' de un tema ya corregido</b>' : ''}</span></h3>
+    <div class="enc-filtros"><button data-casos="pendientes" class="${segCasosVista === 'pendientes' ? 'activo' : ''}">Pendientes</button><button data-casos="atendidos" class="${segCasosVista === 'atendidos' ? 'activo' : ''}">Atendidos</button></div>`;
+  if (!k.casos.length) {
+    html += `<div class="vacio-panel">${segCasosVista === 'pendientes' ? 'No hay casos pendientes. Aquí aparecen las quejas de un tema que ya se corrigió (el arreglo no le alcanzó) y los clientes que calificaron con 1 o 2 sin una mejora que los cubra.' : 'Todavía no atendiste casos.'}</div>`;
+  } else {
+    html += '<div style="overflow-x:auto"><table class="seg-tabla"><thead><tr><th>Caso</th><th>Cliente</th><th>Nota</th><th>Lo que dijo</th><th></th></tr></thead><tbody>';
+    k.casos.forEach(c => {
+      const dijo = [c.dificultad && c.dificultad !== 'No, ninguna' ? 'Dificultad: ' + c.dificultad + (c.dificultad_otra ? ' — ' + c.dificultad_otra : '') : null,
+        c.mejora_otra && 'Mejora: ' + c.mejora_otra, c.comentario].filter(Boolean).join('\n') || '—';
+      const acciones = segCasosVista === 'pendientes'
+        ? `<button class="chico" data-caso="${c.id}" data-estado="contactado">Contactado</button> <button class="chico gris" data-caso="${c.id}" data-estado="descartado">Descartar</button>`
+        : `<div style="font-size:11.5px">${c.estado === 'contactado' ? '✅ Contactado' : 'Descartado'} · ${escapaHtml(c.atendido || '')}</div>${c.nota ? `<div class="seg-coment" style="font-size:12px;margin-top:3px">${escapaHtml(c.nota)}</div>` : ''}<button class="chico gris" data-caso="${c.id}" data-estado="pendiente" style="margin-top:4px">Reabrir</button>`;
+      html += `<tr>
+        <td>${c.tipo === 'reincidencia' ? `<span class="seg-tono reclamo">Tema ya corregido</span><div style="font-size:11.5px;margin-top:4px">${escapaHtml(c.mejora || '')}</div>` : '<span class="seg-tono" style="background:#FFF3E0;color:#8A4B06">Insatisfecho</span>'}</td>
+        <td><b>${escapaHtml(c.nombre || '(sin nombre)')}</b><div style="font-size:11.5px;color:var(--texto-suave)">${escapaHtml(c.telefono || 'sin celular')}<br>${escapaHtml(c.respondida_en)} · ${escapaHtml(c.campana)}${c.asesor ? ' · ' + escapaHtml(c.asesor) : ''}<br>conv. #${c.conversacion_id}</div></td>
+        <td style="font-size:16px">${caras[c.satisfaccion] || ''} <small style="font-size:11px">${c.satisfaccion || ''}</small></td>
+        <td><div class="seg-coment">${escapaHtml(dijo)}</div></td>
+        <td style="white-space:nowrap">${acciones}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  const a = k.agradecimientos || {};
+  html += `<div class="seg-mejora" style="margin-top:14px;background:#F7FBF8">
+    <div class="tit">💙 Agradecimiento por chat a los comentarios positivos</div>
+    <div class="meta">${k.agradecimiento_activo ? '<b style="color:var(--verde)">Activo</b>: a quien deja un comentario con nota 4 o 5, Sofi le agradece la próxima vez que abre el chat (desde 2 horas después). Sin SMS.' : '<b>Apagado</b>. Se activa en el Editor › Mensajes automáticos › <i>agradecimiento_encuesta_activo</i> = si (ahí también está el texto).'}</div>
+    <div class="stats">${a.creados || 0} agradecimientos programados · <b>${a.vistos || 0}</b> ya los vieron${a.pendientes_anteriores ? ` · ${a.pendientes_anteriores} comentarios positivos de los últimos 30 días aún sin agradecer` : ''}</div>
+    ${a.pendientes_anteriores ? '<div class="acciones"><button class="chico" id="segAgradecer">Agradecer ahora a esos ' + a.pendientes_anteriores + '</button></div>' : ''}
+  </div>`;
+  return html;
+}
+function conectarCasosSeguimiento(el) {
+  el.querySelectorAll('[data-casos]').forEach(b => b.onclick = async () => {
+    segCasosVista = b.dataset.casos;
+    segCasos = await segApi(`/seguimiento/casos?vista=${segCasosVista}`).catch(() => segCasos);
+    pintarSeguimiento();
+  });
+  el.querySelectorAll('[data-caso]').forEach(b => b.onclick = async () => {
+    const estado = b.dataset.estado;
+    let nota = null;
+    if (estado === 'contactado') {
+      nota = prompt('¿Qué se conversó o acordó con el cliente? (opcional)');
+      if (nota === null) return;
+    } else if (estado === 'descartado' && !confirm('¿Descartar este caso? No se contactará al cliente.')) return;
+    b.disabled = true;
+    try {
+      const r = await segApi(`/seguimiento/casos/${b.dataset.caso}`, { method: 'POST', body: JSON.stringify({ estado, nota }) });
+      if (!r.ok) { alert(r.motivo || 'No se pudo guardar.'); b.disabled = false; return; }
+      segCasos = await segApi(`/seguimiento/casos?vista=${segCasosVista}`);
+      pintarSeguimiento();
+    } catch (e) { alert('No se pudo guardar. Revisa tu conexión.'); b.disabled = false; }
+  });
+  const ag = el.querySelector('#segAgradecer');
+  if (ag) ag.onclick = async () => {
+    if (!confirm('Sofi les mostrará el agradecimiento la próxima vez que abran el chat (no se envía SMS). ¿Continuar?')) return;
+    ag.disabled = true;
+    try {
+      const r = await segApi('/seguimiento/agradecer-anteriores', { method: 'POST' });
+      if (!r.ok) { alert(r.motivo || 'No se pudo.'); ag.disabled = false; return; }
+      segCasos = await segApi(`/seguimiento/casos?vista=${segCasosVista}`);
+      pintarSeguimiento();
+    } catch (e) { alert('No se pudo. Revisa tu conexión.'); ag.disabled = false; }
+  };
+}
+function pintarFormularioSeguimiento() {
+  const el = document.getElementById('panelSeguimiento');
+  const d = segDatos;
+  const m = segMejoraEditando || d.ejemplo;
+  const marcado = (lista, c) => (lista || []).includes(c) ? 'checked' : '';
+  const area = (id, etiqueta, ayuda, valor, sms) => `<div><label class="campo" for="${id}">${etiqueta} <small>${ayuda}</small></label>
+      <textarea id="${id}" ${sms ? 'data-sms="1"' : ''}>${escapaHtml(valor || '')}</textarea>${sms ? `<div class="contador" id="${id}_c"></div>` : ''}</div>`;
+  el.innerHTML = segCabecera() + `<div class="seg-form">
+    <b>${segMejoraEditando ? 'Editar mejora' : 'Registrar mejora'}</b>${segMejoraEditando ? '' : ' <span style="font-size:12px;color:var(--texto-suave)">(viene llenado con el ejemplo de archivos: ajústalo a la mejora que registras)</span>'}
+    <label class="campo" for="segTitulo">Nombre <small>interno, para reconocerla</small></label><input type="text" id="segTitulo" maxlength="120" value="${escapaHtml(m.titulo || '')}" />
+    <label class="campo" for="segFecha">Salió a producción el <small>se avisa a quienes respondieron la encuesta hasta ese día</small></label><input type="date" id="segFecha" value="${escapaHtml(m.publicada_en || '')}" style="max-width:200px" />
+    <label class="campo">Pregunta 3: dificultades relacionadas <small>«Otra dificultad» solo cuenta si además su comentario tiene alguna palabra clave</small></label>
+    <div class="opciones">${d.dificultades.map(x => `<label><input type="checkbox" name="segDif" value="${escapaHtml(x.codigo)}" ${marcado(m.dificultades, x.codigo)}> ${escapaHtml(x.texto)}</label>`).join('')}</div>
+    <label class="campo">Pregunta 4: mejoras que pidieron</label>
+    <div class="opciones">${d.mejoras.map(x => `<label><input type="checkbox" name="segMej" value="${escapaHtml(x.codigo)}" ${marcado(m.mejoras, x.codigo)}> ${escapaHtml(x.texto)}</label>`).join('')}</div>
+    <label class="campo" for="segPalabras">Palabras clave en los comentarios <small>separadas por coma; sin importar tildes ni mayúsculas; «escanead» encuentra escaneada y escaneado</small></label>
+    <input type="text" id="segPalabras" value="${escapaHtml((m.palabras || []).join(', '))}" />
+    <p class="nota-panel" style="margin-top:12px">Textos: usa <b>{{NOMBRE}}</b> para el nombre de pila (si no lo tenemos, se omite) y, en el SMS, <b>{{LINK}}</b> para el enlace a su conversación. Para que el SMS salga en uno solo, escríbelo <b>sin tildes ni emojis</b> (160 caracteres con el enlace).</p>
+    <b style="font-size:13px;display:block;margin-top:10px">Quien tuvo el problema o calificó de 1 a 3 («nos contaste que…»)</b>
+    <div class="textos">${area('segSmsR', 'SMS', '', m.sms_reclamo, true)}${area('segChatR', 'Mensaje de Sofi en el chat', 'se muestra al abrir el chat', m.chat_reclamo)}</div>
+    <b style="font-size:13px;display:block;margin-top:14px">Quien estaba satisfecho y solo lo sugirió («nos sugeriste…»)</b>
+    <div class="textos">${area('segSmsS', 'SMS', '', m.sms_sugerencia, true)}${area('segChatS', 'Mensaje de Sofi en el chat', '', m.chat_sugerencia)}</div>
+    <div class="enc-error" id="segError" style="color:var(--rojo);font-size:12.5px;margin-top:10px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px"><button id="segGuardar">Guardar</button><button class="gris" id="segCancelar">Cancelar</button></div>
+  </div>`;
+  el.querySelectorAll('textarea[data-sms]').forEach(ta => {
+    const c = el.querySelector('#' + ta.id + '_c');
+    const act = () => { const r = segCaracteresSms(ta.value); c.textContent = `≈ ${r.largo} caracteres con nombre y enlace · ${r.partes === 1 ? '1 SMS' : r.partes + ' SMS (se cobra cada uno)'}${r.especial ? ' · tiene tildes o emojis: máximo 70 por SMS' : ''}`; c.classList.toggle('alerta', r.partes > 1); };
+    ta.oninput = act; act();
+  });
+  el.querySelector('#segCancelar').onclick = () => { segVista = 'lista'; pintarSeguimiento(); };
+  el.querySelector('#segGuardar').onclick = async () => {
+    const btn = el.querySelector('#segGuardar');
+    const cuerpo = {
+      titulo: el.querySelector('#segTitulo').value, publicada_en: el.querySelector('#segFecha').value,
+      dificultades: [...el.querySelectorAll('input[name=segDif]:checked')].map(x => x.value),
+      mejoras: [...el.querySelectorAll('input[name=segMej]:checked')].map(x => x.value),
+      palabras: el.querySelector('#segPalabras').value.split(',').map(x => x.trim()).filter(Boolean),
+      sms_reclamo: el.querySelector('#segSmsR').value, chat_reclamo: el.querySelector('#segChatR').value,
+      sms_sugerencia: el.querySelector('#segSmsS').value, chat_sugerencia: el.querySelector('#segChatS').value,
+    };
+    btn.disabled = true;
+    try {
+      const r = await segApi(segMejoraEditando ? `/seguimiento/mejoras/${segMejoraEditando.id}` : '/seguimiento/mejoras',
+        { method: segMejoraEditando ? 'PUT' : 'POST', body: JSON.stringify(cuerpo) });
+      if (!r.ok) { el.querySelector('#segError').textContent = r.motivo || 'No se pudo guardar.'; btn.disabled = false; return; }
+      segDatos = await segApi('/seguimiento/mejoras');
+      segVista = 'lista';
+      pintarSeguimiento();
+    } catch (e) { el.querySelector('#segError').textContent = 'No se pudo guardar. Revisa tu conexión.'; btn.disabled = false; }
+  };
+}
+async function abrirCandidatos(mejoraId) {
+  const el = document.getElementById('panelSeguimiento');
+  el.innerHTML = segCabecera() + '<div class="vacio-panel">Buscando a quién avisar…</div>';
+  try {
+    segCandidatos = await segApi(`/seguimiento/mejoras/${mejoraId}/candidatos`);
+  } catch (e) {
+    el.innerHTML = segCabecera() + '<div class="vacio-panel">No se pudo cargar la lista.</div>';
+    return;
+  }
+  segSeleccion = new Set((segCandidatos.personas || []).filter(p => p.estado === 'pendiente').map(p => p.clave));
+  segVerTodos = false;
+  segVista = 'candidatos';
+  pintarSeguimiento();
+}
+function pintarCandidatos() {
+  const el = document.getElementById('panelSeguimiento');
+  const c = segCandidatos;
+  if (!c || !c.ok) { el.innerHTML = segCabecera() + `<div class="vacio-panel">${escapaHtml((c && c.motivo) || 'No se pudo cargar.')}</div>`; return; }
+  const todas = c.personas || [];
+  const pend = todas.filter(p => p.estado === 'pendiente');
+  const lista = segVerTodos ? todas : pend;
+  const caras = ['', '😞', '🙁', '😐', '🙂', '🤩'];
+  const n = (t) => todas.filter(p => p.estado === t).length;
+  let html = segCabecera('<button class="gris" id="segVolver" style="padding:7px 12px;font-size:12.5px">← Volver</button>');
+  html += `<div style="font-size:13px"><b>${escapaHtml(c.mejora.titulo)}</b> · salió el ${escapaHtml(c.mejora.publicada_en.split('-').reverse().join('/'))}</div>
+    <div class="seg-barra"><div style="font-size:12.5px"><b>${pend.length}</b> por avisar (${pend.filter(p => p.tipo === 'reclamo').length} reclamos, ${pend.filter(p => p.tipo === 'sugerencia').length} sugerencias) · ${n('enviado')} ya avisados · ${n('bloqueado')} esperan los 7 días</div>
+    <label style="font-size:12.5px"><input type="checkbox" id="segTodos" ${segVerTodos ? 'checked' : ''}> Ver también avisados y bloqueados</label></div>`;
+  if (!lista.length) {
+    html += `<div class="vacio-panel">${todas.length ? 'No queda nadie por avisar en esta mejora.' : 'Nadie coincide con estos temas en las encuestas respondidas hasta esa fecha. Revisa los temas o las palabras clave (Editar).'}</div>`;
+  } else {
+    html += `<div style="overflow-x:auto"><table class="seg-tabla"><thead><tr>
+      <th><input type="checkbox" id="segMarcarTodos" title="Marcar o desmarcar todos" ${pend.length && pend.every(p => segSeleccion.has(p.clave)) ? 'checked' : ''}></th>
+      <th>Cliente</th><th>Tono</th><th>Nota</th><th>Por qué coincide</th><th>Lo que dijo</th><th>Estado</th></tr></thead><tbody>`;
+    lista.forEach((p, i) => {
+      const e = p.encuestas[0];
+      // Lo que escribió en TODAS sus encuestas que coinciden (la más reciente primero).
+      const dijo = [...new Set(p.encuestas.flatMap(x => [x.dificultad_otra && 'Dificultad: ' + x.dificultad_otra,
+        x.mejora_otra && 'Mejora: ' + x.mejora_otra, x.comentario]).filter(Boolean))].join('\n') || '—';
+      const motivos = [...new Set(p.encuestas.flatMap(x => x.motivos))];
+      html += `<tr class="${p.estado !== 'pendiente' ? 'inactiva' : ''}">
+        <td>${p.estado === 'pendiente' ? `<input type="checkbox" data-clave="${escapaHtml(p.clave)}" ${segSeleccion.has(p.clave) ? 'checked' : ''}>` : ''}</td>
+        <td><b>${escapaHtml(p.nombre || '(sin nombre)')}</b><div style="font-size:11.5px;color:var(--texto-suave)">${escapaHtml(p.telefono || 'sin celular')}<br>${escapaHtml(e.respondida_en)} · ${escapaHtml(e.campana)}${p.encuestas.length > 1 ? ' · ' + p.encuestas.length + ' encuestas' : ''}<br>conv. #${e.conversacion_id}</div></td>
+        <td><span class="seg-tono ${p.tipo}">${p.tipo === 'reclamo' ? 'Reclamo' : 'Sugerencia'}</span></td>
+        <td style="font-size:16px" title="Satisfacción ${e.satisfaccion} de 5">${caras[e.satisfaccion] || ''} <small style="font-size:11px">${e.satisfaccion || ''}</small></td>
+        <td>${motivos.map(x => `<span class="seg-chip">${escapaHtml(x)}</span>`).join('')}</td>
+        <td><div class="seg-coment">${escapaHtml(dijo)}</div><a href="#" data-vista="${i}" style="font-size:12px">Ver mensaje que recibirá</a><div class="seg-vista-cont" id="segVista${i}" style="display:none">
+          ${p.vista_sms ? `<div class="seg-vista"><b>SMS:</b> ${escapaHtml(p.vista_sms)}</div>` : ''}<div class="seg-vista"><b>En el chat:</b> ${escapaHtml(p.vista_chat)}</div></div></td>
+        <td style="font-size:11.5px">${p.estado === 'pendiente' ? (p.telefono ? 'Por avisar' : '') : ''}${p.estado_detalle ? escapaHtml(p.estado_detalle) : ''}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  const fueraHorario = !c.en_horario;
+  html += `<div class="seg-barra"><div class="nota-panel" style="margin:0">${fueraHorario ? '⏰ Ahora no se pueden enviar avisos: el horario es de ' + escapaHtml(segDatos.horario) + '. Puedes revisar la lista y enviarla mañana.' : 'Revisa la lista y desmarca a quien no corresponda (por ejemplo, si su comentario era de otro tema).'}</div>
+    <button id="segEnviar" ${fueraHorario || !segSeleccion.size ? 'disabled' : ''}>Enviar aviso a ${segSeleccion.size} ${segSeleccion.size === 1 ? 'persona' : 'personas'}</button></div>
+    <div id="segResultado" style="font-size:13px"></div>`;
+  el.innerHTML = html;
+  el.querySelector('#segVolver').onclick = async () => { segDatos = await segApi('/seguimiento/mejoras').catch(() => segDatos); segVista = 'lista'; pintarSeguimiento(); };
+  el.querySelector('#segTodos').onchange = (ev) => { segVerTodos = ev.target.checked; pintarCandidatos(); };
+  const mt = el.querySelector('#segMarcarTodos');
+  if (mt) mt.onchange = () => { pend.forEach(p => mt.checked ? segSeleccion.add(p.clave) : segSeleccion.delete(p.clave)); pintarCandidatos(); };
+  el.querySelectorAll('[data-clave]').forEach(cb => cb.onchange = () => { cb.checked ? segSeleccion.add(cb.dataset.clave) : segSeleccion.delete(cb.dataset.clave); pintarCandidatos(); });
+  el.querySelectorAll('[data-vista]').forEach(a => a.onclick = (ev) => { ev.preventDefault(); const v = el.querySelector('#segVista' + a.dataset.vista); v.style.display = v.style.display === 'none' ? '' : 'none'; });
+  const btn = el.querySelector('#segEnviar');
+  btn.onclick = async () => {
+    const elegidas = pend.filter(p => segSeleccion.has(p.clave));
+    const conSms = elegidas.filter(p => p.telefono).length;
+    if (!confirm(`Se avisará a ${elegidas.length} ${elegidas.length === 1 ? 'persona' : 'personas'} (${conSms} por SMS${elegidas.length - conSms ? ', ' + (elegidas.length - conSms) + ' solo en el chat' : ''}). ¿Enviar ahora?`)) return;
+    btn.disabled = true; btn.textContent = 'Enviando…';
+    try {
+      const r = await segApi(`/seguimiento/mejoras/${c.mejora.id}/enviar`, { method: 'POST', body: JSON.stringify({ claves: elegidas.map(p => p.clave) }) });
+      if (!r.ok) { el.querySelector('#segResultado').innerHTML = `<span style="color:var(--rojo)">${escapaHtml(r.motivo || 'No se pudo enviar.')}</span>`; btn.disabled = false; btn.textContent = 'Reintentar'; return; }
+      await abrirCandidatos(c.mejora.id);
+      document.getElementById('segResultado').innerHTML = `✅ Listo: ${r.enviados} avisos · ${r.sms_ok} SMS enviados${r.sms_fallidos ? ` · <span style="color:var(--rojo)">${r.sms_fallidos} SMS fallaron</span> (igual verán el mensaje al volver al chat)` : ''}${r.solo_chat ? ' · ' + r.solo_chat + ' solo en el chat' : ''}.`;
+    } catch (e) {
+      el.querySelector('#segResultado').innerHTML = '<span style="color:var(--rojo)">No se pudo enviar. Revisa tu conexión: los que alcanzaron a salir aparecerán como avisados.</span>';
+      btn.disabled = false; btn.textContent = 'Reintentar';
+    }
+  };
+}
+
 function renderApp(d) {
   if (!d || d.disponible === false) return '<div class="vacio-panel">Aún no hay datos: falta ejecutar <b>migracion_push_avisos.sql</b> en la base de datos.</div>';
   if (!d.dispositivos) return '<div class="vacio-panel">Todavía nadie abrió el app. Los datos aparecen desde que se publica esta versión.</div>';
@@ -1162,6 +1463,8 @@ function renderDashboard(data, desde, hasta) {
       <h2>Encuesta de satisfacción</h2>
       <div class="vacio-panel">Cargando…</div>
     </div>
+
+    <div class="panel" id="panelSeguimiento" style="display:none"></div>
 
     <div class="panel">
       <h2>Celulares únicos por día <span class="sub">personas distintas (por celular) que escribieron cada día · únicos en todo el período: <b>${data.celulares_unicos_total ?? 0}</b></span></h2>

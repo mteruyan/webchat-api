@@ -890,7 +890,9 @@
       return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
     };
     async function registro() {
-      return (await navigator.serviceWorker.getRegistration(PUSH_SW)) || (await navigator.serviceWorker.register(PUSH_SW));
+      // El service worker del sitio recibe la dirección de la API (?api=) para mostrar el logo de Sanitas en el aviso.
+      const swUrl = PUSH_SW + (PUSH_SW.includes("?") ? "&" : "?") + "api=" + encodeURIComponent(API_BASE);
+      return (await navigator.serviceWorker.getRegistration(PUSH_SW)) || (await navigator.serviceWorker.register(swUrl));
     }
     async function suscribir() {
       const reg = await registro();
@@ -4156,6 +4158,25 @@
   // Extensiones de foto que se previsualizan como en WhatsApp (HEIC/AVIF/TIFF el servidor los pasa a JPG).
   const EXT_FOTO_LOCAL = /\.(jpe?g|jpe|jfif|png|gif|webp|bmp|heic|heif|avif|tiff?)$/i;
 
+  // Mismo límite que el servidor (_MAX_SUBIDA_BYTES en main.py): se avisa ANTES de gastar datos subiéndolo.
+  const MAX_SUBIDA_BYTES = 20 * 1024 * 1024;
+  function mbTexto(bytes) { return (bytes / (1024 * 1024)).toFixed(1).replace(".", ","); }
+  // Por qué no se pudo enviar un archivo: se le explica al cliente y queda en la conversación (el servidor lo guarda
+  // y se lo muestra al asesor). Sin conexión, el mismo texto solo aquí.
+  function avisarArchivoRechazado(motivo, nombre, tamano) {
+    if (ws && ws.readyState === WebSocket.OPEN && conexionLista) {
+      enviar({ type: "archivo_rechazado", payload: { motivo, nombre: String(nombre || "").slice(0, 120), tamano: tamano || 0 } });
+      return;
+    }
+    const n = nombre ? `«${nombre}»` : "tu archivo";
+    const textos = {
+      grande: `⚠️ No pudimos recibir ${n} porque pesa ${mbTexto(tamano || 0)} MB y el máximo es 20 MB. Puedes enviarnos una foto de tu receta 📷 o un PDF más liviano.`,
+      tipo: `⚠️ No pudimos recibir ${n}: ese tipo de archivo no se puede enviar. Envíanos una foto (JPG o PNG) o un PDF.`,
+      invalido: `⚠️ No pudimos abrir ${n}: parece dañado o no es el formato que indica. Intenta enviarnos una foto de tu receta 📷 o guardar el PDF de nuevo.`,
+    };
+    agregarMensaje(textos[motivo] || "⚠️ No se pudo subir el archivo. Intenta de nuevo.", "sistema");
+  }
+
   async function subirArchivo(file, nombreForzado) {
     const nombre = nombreForzado || file.name || "archivo";
     const respondidoAId = respondiendoAId;
@@ -4195,8 +4216,17 @@
       formData.append("file", file, nombre);
       formData.append("conversacion_id", conversacionIdActual);
       formData.append("sesion_token", sesionTokenActual);
+      if (file.size > MAX_SUBIDA_BYTES) throw { motivo: "grande" };
       const resp = await fetch(`${API_BASE}/upload`, { method: "POST", body: formData });
-      if (!resp.ok) throw new Error("upload falló");
+      if (!resp.ok) {
+        let detalle = "";
+        try { detalle = String((await resp.json()).detail || ""); } catch (_) { /* sin cuerpo */ }
+        let motivo = null;
+        if (resp.status === 413 || /grande/i.test(detalle)) motivo = "grande";
+        else if (/solo se permiten/i.test(detalle)) motivo = "tipo";
+        else if (/no es (una imagen|un PDF|un documento)/i.test(detalle)) motivo = "invalido";
+        throw { motivo };
+      }
       const data = await resp.json();
       enviar({ type: "archivo_subido", payload: { url: data.url, ruta: data.ruta, respondido_a_id: respondidoAId } });
       div.classList.remove("subiendo");
@@ -4223,7 +4253,11 @@
       // No llegó al servidor: la burbuja queda marcada y se saca de la cola de ✓ para que el
       // siguiente mensaje no reciba el id de esta.
       div.classList.remove("subiendo");
-      estadoSubida.textContent = "⚠️ No se envió";
+      const motivo = e && e.motivo;
+      estadoSubida.textContent = motivo === "grande" ? `⚠️ No se envió: pesa ${mbTexto(file.size)} MB (máx. 20 MB)`
+        : motivo === "tipo" ? "⚠️ No se envió: tipo de archivo no permitido"
+        : motivo === "invalido" ? "⚠️ No se envió: el archivo parece dañado"
+        : "⚠️ No se envió";
       const check = div.querySelector(".check");
       if (check) {
         const i = checksPendientesRecibido.indexOf(check);
@@ -4232,7 +4266,8 @@
       }
       const j = divsPendientesId.indexOf(div);
       if (j >= 0) divsPendientesId.splice(j, 1);
-      agregarMensaje("⚠️ No se pudo subir el archivo. Intenta de nuevo.", "sistema");
+      if (motivo) avisarArchivoRechazado(motivo, nombre, file.size);
+      else agregarMensaje("⚠️ No se pudo subir el archivo. Revisa tu conexión e intenta de nuevo.", "sistema");
     } finally {
       $textoInput.disabled = false;
       $enviarBtn.disabled = false;

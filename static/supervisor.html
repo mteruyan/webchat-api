@@ -995,11 +995,11 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <div id="modalBuscar">
       <h3>Buscar conversación</h3>
       <div id="buscarFila">
-        <input id="buscarInput" placeholder="Celular, DNI o nombre del cliente..." />
+        <input id="buscarInput" placeholder="Celular, DNI, nombre o código de conversación (ej. 6888)..." />
         <button id="btnEjecutarBusqueda">Buscar</button>
       </div>
       <div id="buscarResultados"></div>
-      <div id="buscarVacio">Escribe un celular, DNI o nombre y presiona buscar.</div>
+      <div id="buscarVacio">Escribe un celular, DNI, nombre o código de conversación y presiona buscar.</div>
       <div id="buscarSinResultados" style="display:none;">No se encontraron conversaciones.</div>
       <button id="btnCerrarModalBuscar">Cerrar</button>
     </div>
@@ -1616,6 +1616,29 @@ function mostrarAvisoOtraPestana() {
   btn.focus();
 }
 
+// Encuesta recién respondida que conviene revisar (solo le llega al supervisor máximo): una queja de un tema
+// que ya se había corregido, o un cliente insatisfecho. Queda en pantalla hasta cerrarla.
+function mostrarAlertaEncuesta(p) {
+  let cont = document.getElementById('alertasEncuesta');
+  if (!cont) {
+    cont = document.createElement('div');
+    cont.id = 'alertasEncuesta';
+    cont.setAttribute('aria-live', 'polite');
+    cont.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 32px));';
+    document.body.appendChild(cont);
+  }
+  const caja = document.createElement('div');
+  const reinc = p.tipo === 'reincidencia';
+  caja.style.cssText = `background:#fff;border:1px solid #E1E8F0;border-left:5px solid ${reinc ? '#D0392F' : '#B8650A'};border-radius:10px;padding:12px 34px 12px 14px;box-shadow:0 10px 30px rgba(16,35,58,.18);font-size:13px;line-height:1.45;position:relative;`;
+  caja.innerHTML = `<div style="font-weight:700;margin-bottom:4px">${reinc ? 'Queja de un tema ya corregido' : 'Cliente insatisfecho en la encuesta'}</div>
+    <div>${escapeHtml(p.texto || '')}</div>
+    <div style="margin-top:6px;font-size:12px;color:#4A5B70">Revísalo en Dashboard › Seguimiento de la encuesta, o busca la conversación #${Number(p.conversacion_id)}.</div>
+    <button type="button" aria-label="Cerrar" style="position:absolute;top:6px;right:8px;border:0;background:none;font-size:18px;cursor:pointer;color:#4A5B70">×</button>`;
+  caja.querySelector('button').onclick = () => caja.remove();
+  cont.appendChild(caja);
+  while (cont.children.length > 4) cont.firstChild.remove();
+}
+
 function conectarWs() {
   const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
   ws = new WebSocket(`${urlWs}/ws/supervisor?token=${tokenGuardado}`);
@@ -1754,6 +1777,8 @@ function conectarWs() {
       document.getElementById('inactividadMinutosInput').value = p.inactividad_minutos || '5';
     } else if (data.type === 'permisos_supervisor') {
       aplicarPermisosSupervisor(p);
+    } else if (data.type === 'alerta_encuesta') {
+      mostrarAlertaEncuesta(p);
     } else if (data.type === 'error_permiso') {
       alert(p.motivo || 'No tienes permiso para esa acción.');
     } else if (data.type === 'campanas_admin') {
@@ -3268,7 +3293,7 @@ function renderResultadosBusqueda(resultados) {
                          : r.estado === 'cerrada' && r.etiqueta ? ` · ${escapeHtml(r.etiqueta)}` : '';
     div.innerHTML = `
       <div class="nombre">${escapeHtml(r.usuario_nombre)}</div>
-      <div class="datos">${escapeHtml([r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      <div class="datos">${escapeHtml(['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
       <div class="fila-estado">
         <span class="estado-pill ${r.estado}">${ETIQUETAS_ESTADO[r.estado] || r.estado}${detalleEstado}</span>
         <span style="font-size:11.5px;color:var(--texto-suave);">${formatearFechaHoraCompleta(r.cerrado_en || r.asignado_en || r.iniciado_en)}</span>

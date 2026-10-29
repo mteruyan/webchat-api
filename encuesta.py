@@ -445,7 +445,7 @@ def responder_por_sms(codigo: str, datos: dict) -> dict:
                  valores["dificultad_otra"], valores["mejoras"], valores["mejora_otra"], valores["comentario"], eid),
             )
         conn.commit()
-        return {"ok": True}
+        return {"ok": True, "encuesta_id": eid}
     except Exception:  # noqa: BLE001
         conn.rollback()
         logger.exception("No se pudo guardar la encuesta por SMS")

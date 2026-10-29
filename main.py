@@ -54,6 +54,7 @@ import push
 import temas_consulta
 import verificacion_whatsapp
 import encuesta
+import seguimiento
 import avisos_cliente
 
 LIMA_TZ = timezone(timedelta(hours=-5))
@@ -495,6 +496,12 @@ def _firma_documento_valida(extension: str, contenido: bytes) -> bool:
 
 _EXT_IMAGEN_POR_TIPO = {"image/jpeg": "jpg", "image/jpg": "jpg", "image/pjpeg": "jpg", "image/png": "png",
                         "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp"}
+# Tamaño máximo de lo que sube el cliente. 20 MB: un PDF escaneado de varias páginas pasa fácil los 10 MB
+# (se rechazaban recetas de ~12 MB). Las fotos se reducen en el servidor (_normalizar_imagen). El widget usa el mismo
+# límite para avisar ANTES de subir (MAX_SUBIDA_BYTES en widget.js).
+_MAX_SUBIDA_BYTES = 20 * 1024 * 1024
+_MAX_SUBIDA_AUDIO_BYTES = 5 * 1024 * 1024
+
 _EXT_IMAGEN_NOMBRE = {"jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "heic", "heif", "heics", "avif", "tif", "tiff"}
 
 
@@ -628,7 +635,6 @@ async def upload(
             release_connection(conn)
 
     content_type = file.content_type or ""
-    es_pdf = content_type == "application/pdf"
     es_audio = content_type.startswith("audio/")
 
     # Excel/Word/CSV: se valida por EXTENSIÓN del nombre (no por content-type)
@@ -641,16 +647,24 @@ async def upload(
     es_documento = tipo_documento is not None
 
     nombre_original = file.filename or ""
+    contenido = await file.read()
+    # PDF: muchos celulares (sobre todo al elegirlo desde WhatsApp, Drive o el gestor de archivos) lo mandan como
+    # application/octet-stream o sin tipo. Se reconoce por el tipo, por la extensión o por su contenido (%PDF-),
+    # y SIEMPRE se verifica que el contenido sea realmente un PDF.
+    firma_pdf = b"%PDF-" in contenido[:1024]
+    es_pdf = (content_type == "application/pdf" or extension_original == "pdf"
+              or (firma_pdf and content_type in ("", "application/octet-stream", "binary/octet-stream")))
     # Algunos celulares/navegadores mandan la foto como application/octet-stream o con otro tipo: se deja pasar
     # si el NOMBRE parece de imagen y luego se verifica la firma real del archivo.
-    parece_imagen = content_type.startswith("image/") or extension_original in _EXT_IMAGEN_NOMBRE
+    parece_imagen = not es_pdf and (content_type.startswith("image/") or extension_original in _EXT_IMAGEN_NOMBRE)
     if not parece_imagen and not es_pdf and not es_audio and not es_documento:
         raise HTTPException(status_code=400, detail="Solo se permiten imágenes, PDF, audios, Excel, CSV o Word")
 
-    contenido = await file.read()
-    limite = 5 * 1024 * 1024 if es_audio else 10 * 1024 * 1024
+    limite = _MAX_SUBIDA_AUDIO_BYTES if es_audio else _MAX_SUBIDA_BYTES
     if len(contenido) > limite:
         raise HTTPException(status_code=400, detail="Archivo muy grande")
+    if es_pdf and not firma_pdf:
+        raise HTTPException(status_code=400, detail="El archivo no es un PDF válido")
     if es_documento and not _firma_documento_valida(extension_original, contenido):
         raise HTTPException(status_code=400, detail="El archivo no es un documento válido")
 
@@ -666,8 +680,8 @@ async def upload(
     elif es_documento:
         extension = extension_original
     else:
-        extension = (file.filename or "").split(".")[-1] if "." in (file.filename or "") else ("pdf" if es_pdf else "jpg")
-    tipo_subida = tipo_documento if es_documento else file.content_type
+        extension = "pdf" if es_pdf else ((file.filename or "").split(".")[-1] if "." in (file.filename or "") else "jpg")
+    tipo_subida = tipo_documento if es_documento else ("application/pdf" if es_pdf else file.content_type)
     if parece_imagen and not es_pdf and not es_audio and not es_documento:
         norm = await asyncio.to_thread(_normalizar_imagen, contenido, content_type, nombre_original)
         if norm is None:
@@ -1347,6 +1361,20 @@ def _obtener_info_conversacion(conversacion_id: int) -> dict | None:
         release_connection(conn)
 
 
+def _en_lima(valor, formato: str) -> str:
+    """Fecha/hora en hora de Lima, como se ve en las consolas. La base devuelve las horas en UTC (con zona), y
+    strftime directo las mostraba 5 horas adelantadas en el PDF."""
+    if not valor:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(valor) if isinstance(valor, str) else valor
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(LIMA_TZ)
+        return dt.strftime(formato)
+    except Exception:
+        return "—"
+
+
 def _generar_pdf_conversacion(conversacion_id: int, info: dict, historial: list) -> bytes:
     """Arma un PDF legible de la conversación completa — cabecera con datos
     del paciente y burbujas de texto (cliente a la izquierda, bot/asesor a
@@ -1378,8 +1406,8 @@ def _generar_pdf_conversacion(conversacion_id: int, info: dict, historial: list)
         ("Teléfono", info.get("telefono") or "—"),
         ("DNI", info.get("dni") or "—"),
         ("Campaña", info.get("campana") or "—"),
-        ("Iniciado", info["iniciado_en"].strftime("%d/%m/%Y %H:%M") if info.get("iniciado_en") else "—"),
-        ("Cerrado", info["cerrado_en"].strftime("%d/%m/%Y %H:%M") if info.get("cerrado_en") else "—"),
+        ("Iniciado", _en_lima(info.get("iniciado_en"), "%d/%m/%Y %H:%M")),
+        ("Cerrado", _en_lima(info.get("cerrado_en"), "%d/%m/%Y %H:%M")),
         ("Asesor", info.get("asesor_nombre") or "—"),
         ("Etiqueta de cierre", info.get("etiqueta") or "—"),
     ]
@@ -1394,11 +1422,9 @@ def _generar_pdf_conversacion(conversacion_id: int, info: dict, historial: list)
     elementos.append(Spacer(1, 14))
 
     for m in historial:
-        hora = ""
-        try:
-            hora = datetime.fromisoformat(m["enviado_en"]).strftime("%d/%m %H:%M")
-        except Exception:
-            pass
+        hora = _en_lima(m.get("enviado_en"), "%d/%m %H:%M")
+        if hora == "—":
+            hora = ""
         emisor = m["emisor_tipo"]
         tipo_contenido = m.get("tipo_contenido")
         contenido = m.get("contenido") or ""
@@ -2532,6 +2558,12 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
         # Encuesta de una atención anterior que quedó sin responder (cerró el chat antes, o recargó la página).
         # Solo si ahora está con el bot: no se interrumpe una conversación en cola o con un asesor.
         if estado_actual == "bot":
+            # Primero el aviso de seguimiento ("ya corregimos lo que nos contaste", ver seguimiento.py).
+            try:
+                for texto in await asyncio.to_thread(seguimiento.entregar_pendientes, conversacion_id, None, nuevo_token):
+                    await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+            except Exception:
+                logger.warning("No se pudo entregar el aviso de seguimiento", exc_info=True)
             try:
                 pendiente = await asyncio.to_thread(encuesta.pendiente_para_token, nuevo_token)
                 if pendiente:
@@ -2619,12 +2651,21 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                             await websocket.send_json({"type": "intencion_ignorada", "payload": {"intent": intencion}})
                         continue
 
+                    if tipo == "archivo_rechazado":
+                        # El widget no pudo enviar un archivo (muy pesado, tipo no permitido o dañado). Se le explica al
+                        # cliente y queda en la conversación, para que el asesor sepa qué pasó y no le pida "adjúntalo".
+                        if conversacion_id:
+                            await _avisar_archivo_rechazado(conversacion_id, payload)
+                        continue
+
                     if tipo == "responder_encuesta":
                         # Solo el mismo visitante puede responder su encuesta (se valida con su sesion_token).
                         r = await asyncio.to_thread(encuesta.guardar_respuesta, payload.get("encuesta_id"),
                                                     nuevo_token, payload.get("respuestas") or {})
                         await websocket.send_json({"type": "encuesta_resultado",
                                                    "payload": {**r, "encuesta_id": payload.get("encuesta_id")}})
+                        if r.get("ok"):
+                            _tarea_de_fondo(_despues_de_encuesta(int(payload.get("encuesta_id"))))
                         continue
 
                     if tipo == "omitir_encuesta":
@@ -3250,6 +3291,68 @@ def _revisar_espera_asesor_sync():
         raise
     finally:
         release_connection(conn)
+
+
+_ultimo_aviso_rechazo: dict = {}   # conversacion_id -> time.time() del último aviso (freno contra repeticiones)
+
+
+def _texto_archivo_rechazado(payload: dict) -> str | None:
+    motivo = payload.get("motivo")
+    nombre = re.sub(r"[\x00-\x1f\x7f<>]", "", str(payload.get("nombre") or "")).strip()[:60] or "tu archivo"
+    try:
+        mb = max(0.0, float(payload.get("tamano") or 0)) / (1024 * 1024)
+    except (TypeError, ValueError):
+        mb = 0.0
+    maximo = _MAX_SUBIDA_BYTES // (1024 * 1024)
+    if motivo == "grande":
+        peso = f" porque pesa {mb:.1f} MB".replace(".", ",") if mb else " porque pesa demasiado"
+        return (f"⚠️ No pudimos recibir «{nombre}»{peso} y el máximo es {maximo} MB. "
+                f"Puedes enviarnos una foto de tu receta 📷 o un PDF más liviano.")
+    if motivo == "tipo":
+        return f"⚠️ No pudimos recibir «{nombre}»: ese tipo de archivo no se puede enviar. Envíanos una foto (JPG o PNG) o un PDF."
+    if motivo == "invalido":
+        return (f"⚠️ No pudimos abrir «{nombre}»: parece dañado o no es el formato que indica. "
+                f"Intenta enviarnos una foto de tu receta 📷 o guardar el PDF de nuevo.")
+    return None
+
+
+async def _avisar_archivo_rechazado(conversacion_id: int, payload: dict):
+    texto = _texto_archivo_rechazado(payload or {})
+    if not texto:
+        return
+    ahora = time.time()
+    if ahora - _ultimo_aviso_rechazo.get(conversacion_id, 0) < 5:
+        return
+    _ultimo_aviso_rechazo[conversacion_id] = ahora
+    if len(_ultimo_aviso_rechazo) > 5000:
+        _ultimo_aviso_rechazo.clear()
+
+    def guardar():
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                               VALUES (%s, 'bot', 'texto', %s, %s)""", (conversacion_id, texto, datetime.now(LIMA_TZ)))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.warning("No se pudo guardar el aviso de archivo rechazado (conversación %s)", conversacion_id, exc_info=True)
+        finally:
+            release_connection(conn)
+
+    await asyncio.to_thread(guardar)
+    logger.info("Archivo rechazado en la conversación %s: %s (%s bytes)", conversacion_id,
+                (payload or {}).get("motivo"), (payload or {}).get("tamano"))
+    await manager.enviar_a_widget(conversacion_id, {"type": "mensaje_bot", "payload": {"texto": texto}})
+    asesor_id = await asyncio.to_thread(_obtener_asesor_actual, conversacion_id)
+    if asesor_id:
+        await manager.enviar_a_asesor(asesor_id, {
+            "type": "aviso_automatico_cliente", "payload": {"conversacion_id": conversacion_id, "texto": texto},
+        })
+    await manager.notificar_escuchas(conversacion_id, {
+        "type": "mensaje_conversacion",
+        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "bot", "texto": texto},
+    })
 
 
 async def _revisar_espera_asesor():
@@ -4224,6 +4327,14 @@ def _verificar_editor(authorization: str | None) -> int:
     return asesor_id
 
 
+def _verificar_supervisor_maximo(authorization: str | None) -> int:
+    """Solo el supervisor máximo (sin "Ver como"): seguimiento de la encuesta, que manda SMS a clientes."""
+    asesor_id = _verificar_supervisor(authorization)
+    if supervisor.obtener_alcance(asesor_id, True) is not None:
+        raise HTTPException(status_code=403, detail="Solo el supervisor máximo puede usar el seguimiento de la encuesta")
+    return asesor_id
+
+
 def _verificar_supervisor(authorization: str | None) -> int:
     """Como _verificar_editor, pero SOLO rol 'supervisor' (el reporte incluye datos de clientes)."""
     if not authorization or not authorization.startswith("Bearer "):
@@ -4701,6 +4812,14 @@ MENSAJES_AUTOMATICOS = {
     "encuesta_sms_tope_diario": {
         "etiqueta": "Encuesta por SMS: máximo de SMS de encuesta por día (control de costo)",
         "default": "100",
+    },
+    "agradecimiento_encuesta_activo": {
+        "etiqueta": "Agradecimiento por chat a quien deja un comentario positivo en la encuesta (nota 4 o 5): Sofi se lo muestra la próxima vez que abra el chat, desde 2 horas después de responder. Sin SMS. Escribe si para activarlo o no para apagarlo. Requiere migracion_seguimiento_fase2.sql",
+        "default": "no",
+    },
+    "mensaje_agradecimiento_encuesta": {
+        "etiqueta": "Texto del agradecimiento por chat a los comentarios positivos de la encuesta. Usa {{NOMBRE}} para el nombre de pila (si no lo tenemos, se omite)",
+        "default": seguimiento.AGRADECIMIENTO_DEFAULT,
     },
     "mensaje_sms_encuesta": {
         "etiqueta": "Texto del SMS de la encuesta. Usa {{LINK}} para el enlace (obligatorio). Sin tildes ni emojis el SMS admite 160 caracteres; con tildes, solo 70",
@@ -5453,7 +5572,11 @@ async def encuesta_sms_responder(codigo: str, request: Request):
     except Exception:
         cuerpo = {}
     respuestas = cuerpo.get("respuestas") if isinstance(cuerpo, dict) else None
-    return await asyncio.to_thread(encuesta.responder_por_sms, codigo, respuestas if isinstance(respuestas, dict) else {})
+    r = await asyncio.to_thread(encuesta.responder_por_sms, codigo, respuestas if isinstance(respuestas, dict) else {})
+    eid = r.pop("encuesta_id", None)
+    if r.get("ok") and eid:
+        _tarea_de_fondo(_despues_de_encuesta(eid))
+    return r
 
 
 @app.post("/widget/encuesta-sms/{codigo}/omitir")
@@ -5469,6 +5592,115 @@ def encuesta_dashboard(desde: str, hasta: str, campana_id: int | None = None, au
     campanas_filtro = supervisor.campanas_efectivas(alcance, campana_id)
     _, _, f_desde, f_hasta = _rango_dashboard(desde, hasta)
     return encuesta.estadisticas(f_desde, f_hasta, campanas_filtro)
+
+
+# ---- Seguimiento de la encuesta: avisar a los clientes que su pedido ya se atendió (ver seguimiento.py) ----
+_tareas_fondo: set = set()
+
+
+def _tarea_de_fondo(coro):
+    t = asyncio.create_task(coro)
+    _tareas_fondo.add(t)
+    t.add_done_callback(_tareas_fondo.discard)
+
+
+def _plantilla_agradecimiento() -> str | None:
+    """Texto del agradecimiento si está activo en el Editor; None si está apagado."""
+    if (supervisor.obtener_configuracion("agradecimiento_encuesta_activo") or "no").strip().lower() not in ("si", "sí"):
+        return None
+    return ((supervisor.obtener_configuracion("mensaje_agradecimiento_encuesta") or "").strip()
+            or seguimiento.AGRADECIMIENTO_DEFAULT)
+
+
+async def _despues_de_encuesta(encuesta_id: int):
+    """Encuesta recién respondida: agradecimiento (si corresponde) y, si es un caso para revisar, alerta en la
+    consola del supervisor máximo."""
+    try:
+        caso = await asyncio.to_thread(seguimiento.al_responder, encuesta_id, await asyncio.to_thread(_plantilla_agradecimiento))
+        if not caso:
+            return
+        texto = seguimiento.texto_alerta(caso)
+        for sid in list(manager.supervisor_connections.keys()):
+            if await asyncio.to_thread(supervisor.obtener_alcance, sid, True) is None:
+                await manager.enviar_a_supervisor(sid, {"type": "alerta_encuesta", "payload": {
+                    "texto": texto, "tipo": caso["tipo"], "caso_id": caso["id"], "conversacion_id": caso["conversacion_id"]}})
+    except Exception:
+        logger.warning("No se pudo revisar la encuesta %s después de responderla", encuesta_id, exc_info=True)
+
+
+@app.get("/seguimiento/casos")
+def seguimiento_casos(vista: str = "pendientes", authorization: str | None = Header(None)):
+    _verificar_supervisor_maximo(authorization)
+    r = seguimiento.listar_casos(vista != "atendidos")
+    r["agradecimiento_activo"] = _plantilla_agradecimiento() is not None
+    return r
+
+
+@app.post("/seguimiento/casos/{caso_id}")
+async def seguimiento_atender_caso(caso_id: int, request: Request, authorization: str | None = Header(None)):
+    asesor_id = _verificar_supervisor_maximo(authorization)
+    cuerpo = await request.json()
+    cuerpo = cuerpo if isinstance(cuerpo, dict) else {}
+    return await asyncio.to_thread(seguimiento.atender_caso, caso_id, str(cuerpo.get("estado") or ""),
+                                   cuerpo.get("nota"), asesor_id)
+
+
+@app.post("/seguimiento/agradecer-anteriores")
+def seguimiento_agradecer_anteriores(authorization: str | None = Header(None)):
+    _verificar_supervisor_maximo(authorization)
+    plantilla = ((supervisor.obtener_configuracion("mensaje_agradecimiento_encuesta") or "").strip()
+                 or seguimiento.AGRADECIMIENTO_DEFAULT)
+    return seguimiento.agradecer_anteriores(plantilla)
+
+@app.get("/seguimiento/mejoras")
+def seguimiento_mejoras(authorization: str | None = Header(None)):
+    _verificar_supervisor_maximo(authorization)
+    try:
+        mejoras = seguimiento.listar_mejoras()
+    except seguimiento.FaltaMigracion:
+        return {"disponible": False, **seguimiento.opciones_formulario()}
+    return {"disponible": True, "registradas": mejoras, **seguimiento.opciones_formulario()}
+
+
+@app.post("/seguimiento/mejoras")
+async def seguimiento_crear_mejora(request: Request, authorization: str | None = Header(None)):
+    asesor_id = _verificar_supervisor_maximo(authorization)
+    datos = await request.json()
+    return await asyncio.to_thread(seguimiento.guardar_mejora, datos if isinstance(datos, dict) else {}, asesor_id)
+
+
+@app.put("/seguimiento/mejoras/{mejora_id}")
+async def seguimiento_editar_mejora(mejora_id: int, request: Request, authorization: str | None = Header(None)):
+    asesor_id = _verificar_supervisor_maximo(authorization)
+    datos = await request.json()
+    return await asyncio.to_thread(seguimiento.guardar_mejora, datos if isinstance(datos, dict) else {}, asesor_id, mejora_id)
+
+
+@app.get("/seguimiento/mejoras/{mejora_id}/candidatos")
+def seguimiento_candidatos(mejora_id: int, authorization: str | None = Header(None)):
+    _verificar_supervisor_maximo(authorization)
+    return seguimiento.candidatos(mejora_id)
+
+
+@app.post("/seguimiento/mejoras/{mejora_id}/enviar")
+async def seguimiento_enviar(mejora_id: int, request: Request, authorization: str | None = Header(None)):
+    asesor_id = _verificar_supervisor_maximo(authorization)
+    cuerpo = await request.json()
+    claves = cuerpo.get("claves") if isinstance(cuerpo, dict) else None
+    widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip() or "https://sanitasperu.com/"
+    r = await asyncio.to_thread(seguimiento.enviar, mejora_id, claves if isinstance(claves, list) else [],
+                                asesor_id, widget_url, enviar_sms_danaconnect)
+    # Quien está ahora mismo en el chat con el bot lo ve al instante.
+    if r.get("ok") and r.get("usuarios"):
+        try:
+            for conv_id, usuario_id in await asyncio.to_thread(
+                    seguimiento.conversaciones_con_bot, r["usuarios"], list(manager.widget_connections.keys())):
+                for texto in await asyncio.to_thread(seguimiento.entregar_pendientes, conv_id, usuario_id):
+                    await manager.enviar_a_widget(conv_id, {"type": "mensaje_bot", "payload": {"texto": texto}})
+        except Exception:
+            logger.warning("No se pudo entregar al instante el aviso de seguimiento", exc_info=True)
+    r.pop("usuarios", None)
+    return r
 
 
 @app.get("/dashboard/avisos")
@@ -5957,11 +6189,12 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 })
 
             elif tipo == "buscar_conversaciones":
-                # Mismo buscador que tiene el supervisor (celular, DNI o nombre,
-                # de cualquier estado). Se exige un mínimo de 3 caracteres para
-                # no devolver medio historial con una sola letra.
+                # Mismo buscador que tiene el supervisor (celular, DNI, nombre o código
+                # de conversación, de cualquier estado). Se exige un mínimo de 3 caracteres
+                # para no devolver medio historial con una sola letra (salvo un código: "#12").
                 consulta = (payload.get("query") or "").strip()
-                resultados = _buscar_conversaciones(consulta) if len(consulta) >= 3 else []
+                es_codigo = re.fullmatch(r"#?\s*\d{1,9}", consulta) is not None
+                resultados = _buscar_conversaciones(consulta) if (len(consulta) >= 3 or es_codigo) else []
                 await manager.enviar_a_asesor(asesor_id, {
                     "type": "resultados_busqueda",
                     "payload": {"query": consulta, "resultados": resultados},
@@ -6180,11 +6413,16 @@ def _registrar_escucha_db(conversacion_id: int, supervisor_id: int, tipo: str):
 def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
     """Busca conversaciones (de cualquier estado: bot, en_cola, asignada o
     cerrada) por celular, DNI o nombre del cliente — usa ILIKE (contiene, sin
-    importar mayúsculas) para no obligar a escribir el dato exacto completo."""
+    importar mayúsculas) para no obligar a escribir el dato exacto completo.
+    También por CÓDIGO de conversación: "6888" o "#6888" (ese resultado sale primero)."""
+    query = (query or "").strip()
+    m_id = re.fullmatch(r"#?\s*(\d{1,9})", query)
+    conv_id_buscado = int(m_id.group(1)) if m_id else None
+    solo_codigo = query.startswith("#") or (conv_id_buscado is not None and len(query) < 3)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            comodin = f"%{query}%"
+            comodin = f"%{query}%" if not solo_codigo else None
             cur.execute(
                 """
                 SELECT c.id, u.nombre, u.telefono, u.dni, c.estado, cam.nombre,
@@ -6195,12 +6433,12 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
                 LEFT JOIN campanas cam ON cam.id = c.campana_id
                 LEFT JOIN asesores a ON a.id = c.asesor_id
                 LEFT JOIN etiquetas_cierre et ON et.id = c.etiqueta_cierre_id
-                WHERE (u.nombre ILIKE %s OR u.telefono ILIKE %s OR u.dni ILIKE %s)
+                WHERE (u.nombre ILIKE %s OR u.telefono ILIKE %s OR u.dni ILIKE %s OR c.id = %s)
                   AND (%s::int[] IS NULL OR c.campana_id = ANY(%s::int[]))
-                ORDER BY c.iniciado_en DESC
+                ORDER BY (c.id = %s) DESC, c.iniciado_en DESC
                 LIMIT 50
                 """,
-                (comodin, comodin, comodin, campana_ids, campana_ids),
+                (comodin, comodin, comodin, conv_id_buscado, campana_ids, campana_ids, conv_id_buscado),
             )
             resultado = []
             for (conv_id, nombre, telefono, dni, estado, campana, iniciado_en, cerrado_en,
