@@ -1173,7 +1173,7 @@ def _crear_o_reanudar_conversacion(sesion_token: str):
 
 
 _ORIGENES_VALIDOS = {"burbuja", "invitacion_sms", "enlace_sms", "enlace_directo", "nueva_conversacion", "traspaso_qr",
-                     "teaser", "menu_portal", "enlace_intencion"}
+                     "teaser", "menu_portal", "enlace_intencion", "boton_whatsapp"}
 
 
 def _registrar_origen(conversacion_id: int, origen, pagina=None):
@@ -5274,6 +5274,10 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "Teaser de Sofi: elementos del portal que NUNCA debe tapar (por ejemplo el botón principal del banner), como selectores CSS separados por coma (ej. .banner .btn-principal, #cotizar). Mientras los taparía, el teaser espera y aparece cuando la persona hace scroll",
         "default": "",
     },
+    "whatsapp_a_webchat": {
+        "etiqueta": "Botones de WhatsApp del sitio que abren el webchat en vez de WhatsApp: uno por línea con el formato «número | intención» (número con 51; basta el inicio, ej. 5197544847). Intenciones válidas: entrega_medicamentos, compra_sctr, consultas_generales, contratar_eps. Déjalo vacío para que todos vuelvan a ir a WhatsApp (aplica al instante, sin desplegar)",
+        "default": "5197544847 | contratar_eps",
+    },
     "teaser_en_celular": {
         "etiqueta": "Teaser de Sofi: escribe si para mostrarlo también en celulares o no para mostrarlo solo en computadoras",
         "default": "si",
@@ -5295,6 +5299,23 @@ def _opciones_menu_inicial() -> set | None:
         return None
     finally:
         release_connection(conn)
+
+
+def _config_whatsapp_a_webchat() -> list:
+    """[{"prefijo": "5197544847", "intencion": "contratar_eps"}, ...] para el widget. Líneas inválidas se ignoran."""
+    clave = "whatsapp_a_webchat"
+    valor = supervisor.obtener_configuracion(clave)
+    if valor is None:
+        valor = MENSAJES_AUTOMATICOS[clave]["default"]
+    reglas = []
+    for linea in str(valor).splitlines():
+        if "|" not in linea:
+            continue
+        numero, intencion = (x.strip() for x in linea.split("|", 1))
+        digitos = "".join(ch for ch in numero if ch.isdigit())
+        if len(digitos) >= 9 and intencion in INTENCIONES:
+            reglas.append({"prefijo": digitos, "intencion": intencion})
+    return reglas[:10]
 
 
 def _config_teaser() -> dict:
@@ -5486,6 +5507,7 @@ _ETIQUETAS_ORIGEN = {
     "teaser": "Mensaje de Sofi sobre la burbuja (teaser)",
     "menu_portal": "Enlace del portal (menú u otro botón)",
     "enlace_intencion": "Enlace con opción preseleccionada (?intent=)",
+    "boton_whatsapp": "Botón de WhatsApp del sitio redirigido al webchat",
     "traspaso_qr": "Pasó la conversación al celular (QR)",
     "otro": "Otro",
 }
@@ -6233,6 +6255,7 @@ def textos_publicos_widget():
         "titulo_widget": supervisor.obtener_configuracion("titulo_widget")
         or MENSAJES_AUTOMATICOS["titulo_widget"]["default"],
         "teaser": _config_teaser(),
+        "whatsapp_a_webchat": _config_whatsapp_a_webchat(),
     }
 
 

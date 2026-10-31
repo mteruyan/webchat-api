@@ -30,14 +30,24 @@
   .tarjeta-chat span { font-size:13px; color:var(--suave); }
   .tarjeta-chat .flecha { margin-left:auto; color:var(--azul); font-size:22px; }
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--suave); margin:26px 4px 10px; }
-  .rejilla { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .mosaico { background:#fff; border:1px dashed var(--borde); border-radius:14px; padding:14px; opacity:.75; }
-  .mosaico .ico { font-size:22px; }
-  .mosaico b { display:block; font-size:14px; margin-top:6px; }
-  .mosaico small { color:var(--suave); font-size:11.5px; }
-  .etiqueta { display:inline-block; background:#EEF3F8; color:var(--azul); font-size:10.5px; font-weight:700; border-radius:999px; padding:2px 8px; margin-top:6px; }
+  .accesos { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .acceso { position:relative; text-align:left; background:#fff; border:1px solid var(--borde); border-radius:16px; padding:14px; cursor:pointer; font:inherit; color:inherit; box-shadow:0 2px 8px rgba(10,76,140,.06); display:flex; flex-direction:column; gap:4px; min-height:118px; }
+  .acceso:active { background:#F1F6FB; }
+  .acceso:focus-visible { outline:2px solid var(--azul); outline-offset:2px; }
+  .acceso .ico { width:40px; height:40px; border-radius:12px; display:grid; place-items:center; font-size:21px; margin-bottom:6px; }
+  .acceso b { font-size:14.5px; line-height:1.25; padding-right:14px; }
+  .acceso small { color:var(--suave); font-size:12px; line-height:1.3; }
+  .acceso::after { content:"›"; position:absolute; top:12px; right:14px; color:var(--azul); font-size:20px; }
+  .c1 { background:#E7F6F0; } .c2 { background:#FFF3E0; } .c3 { background:#E9F1FB; } .c4 { background:#F1ECFB; }
+  .pie { text-align:center; color:var(--suave); font-size:11.5px; margin:22px 0 6px; }
   .instalar { margin-top:22px; width:100%; border:1px solid var(--borde); background:#fff; color:var(--azul); font:inherit; font-weight:600; border-radius:12px; padding:12px; display:none; cursor:pointer; }
   .ayuda-ios { display:none; margin-top:18px; font-size:12.5px; color:var(--suave); background:#fff; border-radius:12px; padding:12px; border:1px solid var(--borde); }
+  .caja-instalar { display:none; background:#fff; border:2px solid var(--verde); border-radius:16px; padding:16px; margin-bottom:14px; box-shadow:0 6px 22px rgba(10,76,140,.12); }
+  .caja-instalar b.tit { display:block; font-size:16px; color:var(--azul); margin-bottom:6px; }
+  .caja-instalar p { margin:6px 0 0; font-size:13.5px; line-height:1.45; }
+  .caja-instalar ol { margin:6px 0 0; padding-left:20px; font-size:13.5px; line-height:1.5; }
+  .caja-instalar .instalar { margin-top:12px; background:var(--azul); color:#fff; border-color:var(--azul); }
+  .caja-instalar .nota { font-size:12px; color:var(--suave); }
   .sin-red { display:none; background:#FFF4E5; color:#8a5a00; border-radius:12px; padding:10px 12px; font-size:13px; margin-bottom:12px; }
   .avisos { margin-top:14px; background:#fff; border:1px solid var(--borde); border-radius:14px; padding:14px; display:none; }
   .avisos .fila { display:flex; align-items:center; gap:12px; }
@@ -59,6 +69,21 @@
   </div>
 </header>
 <main>
+  <div class="caja-instalar" id="cajaInstalar">
+    <b class="tit">📲 Agrega a Sofi a tu pantalla de inicio</b>
+    <div id="instalarAndroid">
+      <p>Así nos escribes con un toque, como cualquier app.</p>
+      <p class="nota" id="instalarManual">Si no aparece el botón: toca <b>⋮</b> (arriba a la derecha) y elige <b>Instalar app</b> o <b>Agregar a pantalla principal</b>.</p>
+    </div>
+    <div id="instalarIos" style="display:none">
+      <ol>
+        <li>Toca <b>Compartir</b> (□↑), abajo en Safari.</li>
+        <li>Elige <b>Agregar a inicio</b> y luego <b>Agregar</b>.</li>
+      </ol>
+      <p class="nota">Aparecerá el ícono de Sofi junto a tus otras apps.</p>
+    </div>
+    <p class="nota" id="instalarYa" style="display:none">✅ Sofi ya está en tu pantalla de inicio. Búscala como <b>Sofi</b>.</p>
+  </div>
   <div class="sin-red" id="sinRed">Sin conexión. Reconéctate a internet para chatear con Sofi.</div>
   <button class="tarjeta-chat" id="btnChat">
     <div class="ico">💬</div>
@@ -66,19 +91,23 @@
     <div class="flecha">›</div>
   </button>
 
-  <div class="avisos" id="avisos">
+  <h2>¿En qué te ayudo?</h2>
+  <!-- data-sofi-intent: abre el chat directo en esa opción del menú (las mismas intenciones del teaser).
+       Si se agrega o quita una opción del menú del bot, actualizar estos botones. -->
+  <div class="accesos">
+    <button class="acceso" data-sofi-abrir data-sofi-intent="entrega_medicamentos"><div class="ico c1">💊</div><b>Entrega de medicamentos</b><small>Envía tu receta y coordina la entrega</small></button>
+    <button class="acceso" data-sofi-abrir data-sofi-intent="compra_sctr"><div class="ico c2">👷</div><b>Compra de SCTR</b><small>Seguro para los trabajadores de tu empresa</small></button>
+    <button class="acceso" data-sofi-abrir data-sofi-intent="consultas_generales"><div class="ico c3">💬</div><b>Consultas generales</b><small>Afiliación, coberturas y más</small></button>
+    <button class="acceso" data-sofi-abrir data-sofi-intent="contratar_eps"><div class="ico c4">🛡️</div><b>Contratar una EPS</b><small>Para tu empresa o tu familia</small></button>
+  </div>
+
+  <div class="avisos" id="avisos" style="margin-top:18px">
     <div class="fila"><div class="ico">🔔</div><div><b id="avisosTitulo">Avisos de Sofi</b><small id="avisosTexto"></small></div></div>
     <div class="acciones" id="avisosAcciones"></div>
     <div class="msg" id="avisosMsg"></div>
   </div>
 
-  <h2>Próximamente en el app</h2>
-  <div class="rejilla">
-    <div class="mosaico"><div class="ico">🛡️</div><b>Mis seguros</b><small>Pólizas y coberturas</small><br><span class="etiqueta">Maqueta</span></div>
-    <div class="mosaico"><div class="ico">📋</div><b>Mis solicitudes</b><small>Estado de tus trámites</small><br><span class="etiqueta">Maqueta</span></div>
-    <div class="mosaico"><div class="ico">💊</div><b>Mis entregas</b><small>Recetas y recordatorios</small><br><span class="etiqueta">Maqueta</span></div>
-    <div class="mosaico"><div class="ico">🏥</div><b>Red de clínicas</b><small>Dónde atenderte</small><br><span class="etiqueta">Maqueta</span></div>
-  </div>
+  <p class="pie">Sanitas Perú · Atención por chat con Sofi y nuestros asesores</p>
 
   <button class="instalar" id="btnInstalar">📲 Instalar app en este dispositivo</button>
   <div class="ayuda-ios" id="ayudaIos">En iPhone: toca <b>Compartir</b> (□↑) y luego <b>Añadir a pantalla de inicio</b>.</div>
@@ -120,6 +149,29 @@
   const esIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const instalada = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
   if (esIos && !instalada) document.getElementById("ayudaIos").style.display = "block";
+
+  // Llegó desde la tarjeta "Para volver a escribirnos" del chat (?instalar=1): la instalación va arriba, a la vista.
+  (function () {
+    const params = new URLSearchParams(location.search);
+    if (params.get("instalar") !== "1") return;
+    params.delete("instalar");
+    const resto = params.toString();
+    history.replaceState({}, "", location.pathname + (resto ? "?" + resto : "") + location.hash);
+    if (instalada) return;
+    const caja = document.getElementById("cajaInstalar");
+    caja.style.display = "block";
+    if (esIos) {
+      document.getElementById("instalarAndroid").style.display = "none";
+      document.getElementById("instalarIos").style.display = "block";
+      document.getElementById("ayudaIos").style.display = "none";
+    } else {
+      caja.appendChild(btnInstalar);   // el botón aparece solo cuando el navegador permite instalar
+    }
+    window.addEventListener("appinstalled", () => {
+      document.getElementById("instalarAndroid").style.display = "none";
+      document.getElementById("instalarYa").style.display = "block";
+    });
+  })();
 
   // Sin conexión
   const sinRed = document.getElementById("sinRed");

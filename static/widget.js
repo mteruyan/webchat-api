@@ -547,6 +547,25 @@
       display: inline-block; margin-top: 14px; background: ${TOKENS.azul}; color: white; border: none; border-radius: 10px;
       padding: 10px 16px; font-size: calc(13.5px + var(--fs, 0px)); font-family: inherit; cursor: pointer;
     }
+    /* "Para volver a escribirnos": se muestra una vez, al terminar la conversación */
+    .volver {
+      background: #F2F7FD; border: 1px solid #CFE0F3; border-radius: 14px; padding: 14px; margin: 10px 0;
+      color: ${TOKENS.texto}; font-size: calc(13.5px + var(--fs, 0px)); line-height: 1.45;
+    }
+    .volver h4 { margin: 0 0 6px; font-size: calc(15px + var(--fs, 0px)); color: ${TOKENS.azul}; }
+    .volver p { margin: 0 0 8px; }
+    .volver ol { margin: 0 0 8px; padding-left: 20px; }
+    .volver ol li { margin: 3px 0; }
+    .volver .vo-instalar {
+      display: block; width: 100%; margin: 4px 0 10px; background: ${TOKENS.azul}; color: white; border: none; border-radius: 10px;
+      padding: 11px; font-size: calc(14px + var(--fs, 0px)); font-weight: 600; cursor: pointer; font-family: inherit;
+    }
+    .volver .vo-burbuja { font-size: calc(12.5px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; margin: 0; }
+    .volver .vo-cerrar {
+      display: block; margin: 8px auto 0; background: none; border: none; color: ${TOKENS.textoSuave};
+      font-size: calc(12.5px + var(--fs, 0px)); cursor: pointer; text-decoration: underline; font-family: inherit;
+    }
+    .volver button:focus-visible { outline: 2px solid ${TOKENS.azul}; outline-offset: 2px; }
     /* Encuesta abierta desde el SMS: solo la encuesta, sin caja de texto hasta que elija escribirnos */
     .panel.modo-encuesta .pie, .panel.modo-encuesta .pie-extra { display: none; }
     /* Imágenes pegadas (Ctrl+V): vista previa antes de enviarlas */
@@ -1231,6 +1250,7 @@
       if (!data) { console.warn("[webchat] /widget/textos no respondió OK"); return; }
       if (data.mensaje_subiendo_archivo) textoEsperaSubida = data.mensaje_subiendo_archivo;
       if (data.teaser) setTimeout(() => iniciarTeaser(data.teaser), 0);
+      if (Array.isArray(data.whatsapp_a_webchat)) desviosWhatsapp = data.whatsapp_a_webchat;
       if (data.titulo_widget) {
         const $titulo = root.querySelector(".titulo");
         if ($titulo) $titulo.textContent = data.titulo_widget;
@@ -1489,6 +1509,36 @@
     abrirConFuente("menu", "menu_portal", INTENCIONES[intencion] ? intencion : null);
   }, true);
   if (window.location.hash === "#chat-sofi") setTimeout(() => abrirConFuente("menu", "menu_portal", null), 300);
+
+  // Botones de WhatsApp del sitio (p. ej. "Cotiza EPS") que deben abrir el webchat en vez de WhatsApp. La lista
+  // ("número | intención") se edita en el Editor > Mensajes automáticos > whatsapp_a_webchat y llega con
+  // /widget/textos; vacía, todos los botones siguen yendo a WhatsApp. El botón del portal no se toca.
+  let desviosWhatsapp = [];
+  function numeroDeEnlaceWhatsapp(href) {
+    let u;
+    try { u = new URL(href, window.location.href); } catch (e) { return null; }
+    const host = u.hostname.replace(/^www\./, "");
+    let numero = null;
+    if (u.protocol === "whatsapp:" || host === "api.whatsapp.com" || host === "web.whatsapp.com") {
+      numero = u.searchParams.get("phone");
+    } else if (host === "wa.me") {
+      numero = u.pathname.split("/")[1] || null;
+    }
+    return numero ? numero.replace(/\D/g, "") : null;
+  }
+  document.addEventListener("click", (e) => {
+    if (!desviosWhatsapp.length || e.defaultPrevented) return;
+    const a = e.target && e.target.closest && e.target.closest("a[href]");
+    if (!a || (a.getRootNode && a.getRootNode() !== document)) return;
+    const numero = numeroDeEnlaceWhatsapp(a.getAttribute("href"));
+    if (!numero) return;
+    const regla = desviosWhatsapp.find((r) => r && r.prefijo && numero.startsWith(String(r.prefijo)));
+    if (!regla) return;
+    e.preventDefault();
+    e.stopPropagation();
+    medir("sofi_whatsapp_redirigido", { intent: regla.intencion || null });
+    abrirConFuente("whatsapp", "boton_whatsapp", INTENCIONES[regla.intencion] ? regla.intencion : null);
+  }, true);
   $cerrar.addEventListener("click", cerrarPanel);
 
   // -----------------------------------------------------------------------
@@ -2634,12 +2684,13 @@
       }
       enviar({ type: "omitir_encuesta", payload: { encuesta_id: p.encuesta_id } });
       card.remove();
+      mostrarVolver();
     };
     card.appendChild(omitir);
 
     // Va antes de los botones "Iniciar nueva conversación" (si ya están), para que se vea primero.
-    const acciones = $cuerpo.querySelectorAll(".acciones-cierre");
-    const ancla = acciones.length ? acciones[acciones.length - 1] : null;
+    const acciones = $cuerpo.querySelectorAll(".volver, .acciones-cierre");
+    const ancla = acciones.length ? acciones[0] : null;
     if (ancla) $cuerpo.insertBefore(card, ancla); else $cuerpo.appendChild(card);
     if (estaCercaDelFinal() || ancla || p.codigo_sms) card.scrollIntoView({ block: "start", behavior: p.codigo_sms ? "auto" : "smooth" });
     else mostrarIndicadorNuevoMensaje(true);
@@ -2657,12 +2708,88 @@
       const t = document.createElement("p"); t.textContent = "Tus respuestas nos ayudan a mejorar nuestro canal digital.";
       card.appendChild(ic); card.appendChild(h); card.appendChild(t);
       agregarBotonChatEncuesta(card);
+      mostrarVolver();
       return;
     }
     const btn = card.querySelector(".enc-enviar");
     const err = card.querySelector(".enc-error");
     if (err) err.textContent = p.motivo || "No pudimos guardar tus respuestas. Intenta de nuevo.";
     if (btn) { btn.disabled = false; btn.textContent = "Enviar respuestas"; }
+  }
+
+  // ---------------------------------------------------------------------
+  // "Para volver a escribirnos": la encuesta mostró que muchos llegan por el SMS de una asesora y después no
+  // saben cómo volver por su cuenta. Al terminar la conversación (después de la encuesta, si hay) se les
+  // enseña una sola vez por navegador: en el celular, a agregar a Sofi a la pantalla de inicio (la app /app;
+  // el navegador solo deja instalarla desde su propio dominio, por eso se abre en otra pestaña) y, a todos,
+  // que en sanitasperu.com está la burbuja. En la computadora solo se muestra a quien llegó por un enlace.
+  // ---------------------------------------------------------------------
+  const CLAVE_VOLVER = "sofi_volver_mostrada";
+  const ORIGENES_POR_ENLACE = { invitacion_sms: 1, enlace_sms: 1, enlace_directo: 1, enlace_intencion: 1, traspaso_qr: 1 };
+  function enLaAppSofi() {
+    try {
+      if ((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone) return true;
+    } catch (e) { /* nada */ }
+    return /^\/app(\/|$)/.test(window.location.pathname);
+  }
+  function esIphone() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+  function mostrarVolver() {
+    if (modoEncuestaSms && !host.classList.contains("movil")) return;
+    if ($cuerpo.querySelector(".volver") || enLaAppSofi()) return;
+    const esMovil = host.classList.contains("movil");
+    if (!esMovil && !ORIGENES_POR_ENLACE[origenApertura]) return;
+    try {
+      if (localStorage.getItem(CLAVE_VOLVER)) return;
+      localStorage.setItem(CLAVE_VOLVER, String(Date.now()));
+    } catch (e) { return; }   // sin almacenamiento no se puede asegurar que salga una sola vez
+
+    const el = (tag, cls, texto) => { const e = document.createElement(tag); if (cls) e.className = cls; if (texto != null) e.textContent = texto; return e; };
+    const card = el("div", "volver");
+    card.setAttribute("role", "note");
+    card.appendChild(el("h4", null, "📌 Para volver a escribirnos"));
+    const urlApp = `${API_BASE || window.location.origin}/app?instalar=1`;
+    let tipo = "computadora";
+    if (esMovil) {
+      tipo = esIphone() ? "iphone" : "android";
+      card.appendChild(el("p", null, "Ten a Sofi a un toque en tu celular, como una app:"));
+      if (tipo === "iphone") {
+        const ol = el("ol");
+        ol.appendChild(el("li", null, "Toca el botón de abajo."));
+        const li = el("li");
+        li.append("En la página que se abre, toca ", Object.assign(document.createElement("b"), { textContent: "Compartir (□↑)" }),
+                  " y luego ", Object.assign(document.createElement("b"), { textContent: "Agregar a inicio" }), ".");
+        ol.appendChild(li);
+        card.appendChild(ol);
+      }
+      const btn = el("button", "vo-instalar", tipo === "iphone" ? "📲 Abrir Sofi para agregarla" : "📲 Agregar Sofi a mi pantalla de inicio");
+      btn.type = "button";
+      btn.onclick = () => {
+        medir("sofi_volver_instalar_click", { dispositivo: tipo });
+        window.open(urlApp, "_blank", "noopener");
+      };
+      card.appendChild(btn);
+    } else {
+      const p = el("p");
+      p.append("Guarda ", Object.assign(document.createElement("b"), { textContent: "sanitasperu.com" }),
+               " en tus favoritos (Ctrl + D) para encontrarnos rápido.");
+      card.appendChild(p);
+    }
+    const linea = el("p", "vo-burbuja");
+    linea.append(esMovil ? "O entra a " : "Cuando quieras, entra a ", Object.assign(document.createElement("b"), { textContent: "sanitasperu.com" }),
+                 " y toca la burbuja de Sofi 💬 (abajo a la derecha).");
+    card.appendChild(linea);
+    const cerrar = el("button", "vo-cerrar", "Entendido");
+    cerrar.type = "button";
+    cerrar.onclick = () => { medir("sofi_volver_cerrada", { dispositivo: tipo }); card.remove(); };
+    card.appendChild(cerrar);
+
+    const acciones = $cuerpo.querySelectorAll(".acciones-cierre");
+    const ancla = acciones.length ? acciones[acciones.length - 1] : null;
+    if (ancla) $cuerpo.insertBefore(card, ancla); else $cuerpo.appendChild(card);
+    if (estaCercaDelFinal() || ancla) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    medir("sofi_volver_mostrada", { dispositivo: tipo, origen: origenApertura });
   }
 
   // "Puedes salir": que la persona sepa que no tiene que quedarse mirando la pantalla (igual que en WhatsApp).
@@ -3718,6 +3845,8 @@
           $infoGuardada.classList.remove("visible");
           agregarMensaje("— Conversación finalizada —", "sistema");
           agregarAccionesCierre();
+          // Si llega la encuesta, la tarjeta sale después de responderla u omitirla.
+          setTimeout(() => { if (!$cuerpo.querySelector(".encuesta:not(.enc-gracias)")) mostrarVolver(); }, 2500);
           atendidoPorAsesor = false;
           esperandoAsesor = false;
           actualizarIconoEnviar();
