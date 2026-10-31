@@ -716,7 +716,9 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <button class="chico gris" id="btnAvisoInactividad" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
         <button class="chico gris" id="btnTransferir" title="Transferir esta conversación a otro asesor">🔀 Transf.</button>
         <button class="chico gris" id="btnRecordatorio" title="Programar recordatorios por SMS para las próximas entregas de una receta extendida">💊 Recordat.</button>
-        <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones de este usuario">🕘 Histor.</button></div>
+        <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones de este usuario">🕘 Histor.</button>
+        <button class="chico gris" id="btnArchivosEmpresa" title="Archivos de la empresa (por RUC): lo que envió el cliente y los que guardaste para su próxima renovación">📁 Archivos</button>
+        <button class="chico gris" id="btnGuiaArchivos" title="Enviarle al cliente la guía con las formas de adjuntar su archivo (desde el celular, la computadora o WhatsApp)">📎 Guía</button></div>
       </div>
       <div id="notaClienteBanner">
         <span class="nota-cliente-icono">📝</span>
@@ -2685,6 +2687,81 @@ async function subirImagenAsesor(archivo) {
     $btnAdjuntar.disabled = false;
   }
 }
+
+// ---- 📁 Archivos de la empresa (por RUC) y 📎 Guía para adjuntar ----
+// Lo que el cliente envió en SCTR queda guardado por RUC; aquí se ve y se puede guardar un archivo adicional
+// (p. ej. la planilla corregida) para que en la próxima renovación Sofi se lo ofrezca al cliente.
+function abrirArchivosEmpresa(ruc) {
+  if (!activaId) return;
+  const id = activaId;
+  let ov = document.getElementById('modalArchivosEmpresa');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'modalArchivosEmpresa';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(10,20,30,.4);z-index:1003;display:flex;align-items:center;justify-content:center;padding:16px;';
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = '<div style="background:#fff;border-radius:14px;padding:18px 20px;width:min(560px,100%);max-height:85vh;overflow:auto;font-size:13.5px"><b>Cargando…</b></div>';
+  const q = ruc ? `&ruc=${encodeURIComponent(ruc)}` : '';
+  fetch(`${urlBaseGuardada}/asesor/archivos-cliente?conversacion_id=${encodeURIComponent(id)}${q}`, { headers: { Authorization: `Bearer ${tokenGuardado}` } })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(d => pintarArchivosEmpresa(ov, id, d))
+    .catch(() => { ov.querySelector('div').innerHTML = 'No se pudieron cargar los archivos. <button class="chico gris" onclick="this.closest(\'#modalArchivosEmpresa\').remove()">Cerrar</button>'; });
+}
+function pintarArchivosEmpresa(ov, id, d) {
+  const caja = ov.querySelector('div');
+  if (d.disponible === false) {
+    caja.innerHTML = 'Falta ejecutar <b>migracion_sctr_mejoras.sql</b> en la base de datos. <button class="chico gris" id="aeCerrar">Cerrar</button>';
+    caja.querySelector('#aeCerrar').onclick = () => ov.remove();
+    return;
+  }
+  const filas = (d.archivos || []).map(a => `<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #E1E8F0">
+      <div style="flex:1;min-width:0"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📎 ${escapeHtml(a.nombre)}</div>
+      <div style="font-size:12px;color:#4A5B70">${escapeHtml(a.fecha)} · ${a.origen === 'asesor' ? 'guardado por ' + escapeHtml(a.subido_por || 'un asesor') : 'enviado por el cliente (' + escapeHtml(a.celular || '') + ')'}</div></div>
+      <a class="chico gris" target="_blank" rel="noopener" href="${escapeHtml(urlArchivo(a.ruta))}">Abrir</a></div>`).join('');
+  caja.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px">
+      <b style="font-size:15px">📁 Archivos de la empresa</b><button class="chico gris" id="aeCerrar">Cerrar</button></div>
+    <div style="font-size:12.5px;color:#4A5B70;margin-bottom:10px">Se guardan 13 meses. En su próxima solicitud de SCTR, Sofi le ofrece al cliente los archivos de su última solicitud (y el que guardes aquí) para enviárselos al asesor con un toque.</div>
+    <label style="font-size:12.5px;font-weight:600">RUC</label>
+    <div style="display:flex;gap:6px;margin:4px 0 10px"><input id="aeRuc" maxlength="11" inputmode="numeric" value="${escapeHtml(d.ruc || '')}" placeholder="RUC de 11 dígitos" style="flex:1;padding:7px 9px;border:1px solid #C9D4E1;border-radius:8px">
+      <button class="chico gris" id="aeBuscar">Buscar</button></div>
+    ${d.razon_social ? `<div style="font-size:12.5px;margin:-4px 0 8px">${escapeHtml(d.razon_social)}</div>` : ''}
+    ${d.ruc ? (filas || '<div style="color:#4A5B70;padding:8px 0">Todavía no hay archivos guardados de esta empresa.</div>') : '<div style="color:#4A5B70;padding:8px 0">Esta conversación no tiene RUC: escríbelo para ver o guardar archivos.</div>'}
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="chico" id="aeSubir" ${d.ruc ? '' : 'disabled'}>⬆ Guardar un archivo para esta empresa</button>
+      <span style="font-size:12px;color:#4A5B70">Excel, CSV o PDF · hasta 20 MB</span>
+      <input type="file" id="aeArchivo" accept=".xlsx,.xls,.csv,.pdf" style="display:none"></div>
+    <div id="aeEstado" style="font-size:12.5px;margin-top:8px"></div>`;
+  caja.querySelector('#aeCerrar').onclick = () => ov.remove();
+  caja.querySelector('#aeBuscar').onclick = () => abrirArchivosEmpresa(caja.querySelector('#aeRuc').value.trim());
+  const inp = caja.querySelector('#aeArchivo');
+  caja.querySelector('#aeSubir').onclick = () => inp.click();
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const estado = caja.querySelector('#aeEstado');
+    estado.textContent = 'Subiendo…';
+    try {
+      const fd = new FormData();
+      fd.append('file', f, f.name);
+      const r = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${tokenGuardado}` } });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'No se pudo subir el archivo');
+      const up = await r.json();
+      const g = await fetch(`${urlBaseGuardada}/asesor/archivos-cliente`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenGuardado}` },
+        body: JSON.stringify({ conversacion_id: Number(id), ruc: d.ruc, ruta: up.ruta, nombre: f.name }) });
+      const res = await g.json();
+      if (!res.ok) throw new Error(res.motivo || 'No se pudo guardar');
+      abrirArchivosEmpresa(d.ruc);
+    } catch (e) { estado.textContent = '⚠️ ' + e.message; }
+  };
+}
+document.getElementById('btnArchivosEmpresa').onclick = () => abrirArchivosEmpresa();
+document.getElementById('btnGuiaArchivos').onclick = () => {
+  if (!activaId || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'enviar_ayuda_archivos', payload: { conversacion_id: Number(activaId) } }));
+};
 
 // ---- Botón de adjuntar (clic para elegir archivo) ----
 document.getElementById('btnAdjuntar').onclick = () => {

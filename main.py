@@ -39,7 +39,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
 
-from db import get_connection, release_connection
+from db import get_connection, release_connection, estado_pools as db_estado_pools
 from bot_engine import iniciar_conversacion, recibir_entrada_usuario, conversacion_en_ia, entrar_a_nodo
 from api_handlers import enviar_sms_danaconnect, enviar_llamada_otp, _generar_codigo_otp, validar_horario_consultas
 import asignacion
@@ -54,6 +54,7 @@ import push
 import temas_consulta
 import verificacion_whatsapp
 import encuesta
+import archivos_cliente
 import seguimiento
 import avisos_cliente
 
@@ -419,7 +420,7 @@ async def subir_imagen_editor(file: UploadFile = File(...), authorization: str |
     El mismo campo "imagen_url" del nodo se usa para ambos casos — el widget
     ya sabe mostrar un <img> si es imagen, o un botón de descarga si es PDF.
     """
-    _verificar_editor(authorization)
+    await asyncio.to_thread(_verificar_editor, authorization)
 
     content_type = file.content_type or ""
     es_pdf = content_type == "application/pdf"
@@ -433,13 +434,36 @@ async def subir_imagen_editor(file: UploadFile = File(...), authorization: str |
     extension = (file.filename or "").split(".")[-1] if "." in (file.filename or "") else ("pdf" if es_pdf else "jpg")
     nombre_archivo = f"bot-content/{uuid.uuid4()}.{extension}"
 
-    client = storage.Client()
     bucket_nombre = os.environ.get("GCS_CONTENIDO_BUCKET", "sanitas-webchat-contenido")
-    bucket = client.bucket(bucket_nombre)
-    blob = bucket.blob(nombre_archivo)
-    blob.upload_from_string(contenido, content_type=file.content_type)
+    await asyncio.to_thread(_subir_a_bucket, bucket_nombre, nombre_archivo, contenido, file.content_type)
 
     return {"url": f"https://storage.googleapis.com/{bucket_nombre}/{nombre_archivo}"}
+
+
+# Cliente de Storage y credenciales compartidos. Antes, CADA imagen que se abría creaba un cliente nuevo y
+# refrescaba el token (2 llamadas de red extra) además de la firma con la API de IAM, y todo eso dentro del
+# hilo principal: una consola cargando una conversación con varias fotos congelaba el servidor completo.
+_gcs_lock = threading.Lock()
+_gcs_cliente_firmas = None
+_gcs_credenciales = None
+# URLs firmadas recientes: (ruta, minutos, descargar_como) -> (url, vence_monotonic). Una URL firmada por
+# 15 min se reutiliza mientras le queden al menos 5 min (abrir la misma foto otra vez no vuelve a firmar).
+_firmas_cache: dict = {}
+_FIRMA_MARGEN_SEG = 300
+_FIRMAS_CACHE_MAX = 5000
+
+
+def _gcs_bucket_y_credenciales():
+    global _gcs_cliente_firmas, _gcs_credenciales
+    with _gcs_lock:
+        if _gcs_cliente_firmas is None:
+            _gcs_cliente_firmas = storage.Client()
+        if _gcs_credenciales is None:
+            _gcs_credenciales, _ = google.auth.default()
+        # Solo se refresca cuando el token venció o está por vencer (dura ~1 hora).
+        if not _gcs_credenciales.valid or not getattr(_gcs_credenciales, "token", None):
+            _gcs_credenciales.refresh(google.auth.transport.requests.Request())
+        return _gcs_cliente_firmas.bucket(os.environ["GCS_BUCKET"]), _gcs_credenciales
 
 
 def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como: str | None = None) -> str:
@@ -447,17 +471,22 @@ def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como:
     recetas. Se llama al vuelo cada vez que alguien necesita VER el archivo —
     nunca se persiste una URL firmada en la base de datos, porque expira
     (acá está el bug que reportó Miguel: una firmada guardada permanentemente
-    se vuelve inaccesible en cuanto pasa su expiración)."""
-    client = storage.Client()
-    bucket = client.bucket(os.environ["GCS_BUCKET"])
+    se vuelve inaccesible en cuanto pasa su expiración).
+    Hace llamadas de red (API de IAM): NO llamarla directo desde una función async; usar asyncio.to_thread
+    o un endpoint def."""
+    clave = (nombre_archivo, minutos, descargar_como)
+    ahora = time.monotonic()
+    guardada = _firmas_cache.get(clave)
+    if guardada and guardada[1] - ahora > _FIRMA_MARGEN_SEG:
+        return guardada[0]
+
+    bucket, credentials = _gcs_bucket_y_credenciales()
     blob = bucket.blob(nombre_archivo)
 
     # Cloud Run no tiene una llave privada local para firmar — hay que pasarle
     # explícitamente el email + access_token para que use la IAM Credentials API
     # (requiere el rol roles/iam.serviceAccountTokenCreator sobre sí mismo).
-    credentials, _ = google.auth.default()
-    credentials.refresh(google.auth.transport.requests.Request())
-    return blob.generate_signed_url(
+    url = blob.generate_signed_url(
         version="v4",
         expiration=timedelta(minutes=minutos),
         method="GET",
@@ -468,6 +497,23 @@ def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como:
         # pulsa "Descargar" en el visor de imágenes.
         **({"response_disposition": f'attachment; filename="{descargar_como}"'} if descargar_como else {}),
     )
+    if len(_firmas_cache) >= _FIRMAS_CACHE_MAX:
+        for k in [k for k, v in list(_firmas_cache.items()) if v[1] - ahora <= _FIRMA_MARGEN_SEG]:
+            _firmas_cache.pop(k, None)
+        if len(_firmas_cache) >= _FIRMAS_CACHE_MAX:
+            _firmas_cache.clear()
+    _firmas_cache[clave] = (url, ahora + minutos * 60)
+    return url
+
+
+def _subir_a_bucket(bucket_nombre: str, nombre_archivo: str, contenido: bytes, content_type: str | None):
+    """Sube un objeto a Cloud Storage (llamada de red: usar con asyncio.to_thread)."""
+    with _gcs_lock:
+        global _gcs_cliente_firmas
+        if _gcs_cliente_firmas is None:
+            _gcs_cliente_firmas = storage.Client()
+        cliente = _gcs_cliente_firmas
+    cliente.bucket(bucket_nombre).blob(nombre_archivo).upload_from_string(contenido, content_type=content_type)
 
 
 # Documentos de oficina permitidos en /upload: extensión -> content-type
@@ -578,6 +624,29 @@ def _normalizar_imagen(contenido: bytes, content_type: str, nombre: str) -> tupl
         return contenido, real if real != "heic" else (ext_nombre or "heic"), content_type or "application/octet-stream"
 
 
+def _autorizar_subida(authorization: str | None, conversacion_id: int | None, sesion_token: str | None):
+    """Staff con JWT, o el widget dueño de la conversación. Lanza HTTPException si no corresponde."""
+    if authorization and authorization.startswith("Bearer "):
+        staff_id = auth.decodificar_token(authorization[len("Bearer "):])
+        if staff_id is not None and _obtener_rol(staff_id) is not None:
+            return
+    if not conversacion_id or not sesion_token:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT 1 FROM conversaciones c
+                   JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.id = %s AND u.sesion_token = %s""",
+                (conversacion_id, sesion_token),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=403, detail="No autorizado")
+    finally:
+        release_connection(conn)
+
+
 @app.post("/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -611,28 +680,9 @@ async def upload(
       o supervisor necesite VER el archivo más tarde, se pide una firmada
       NUEVA a /archivo-receta (autenticado) con esta ruta.
     """
-    autorizado = False
-    if authorization and authorization.startswith("Bearer "):
-        staff_id = auth.decodificar_token(authorization[len("Bearer "):])
-        if staff_id is not None and _obtener_rol(staff_id) is not None:
-            autorizado = True
-
-    if not autorizado:
-        if not conversacion_id or not sesion_token:
-            raise HTTPException(status_code=401, detail="No autorizado")
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT 1 FROM conversaciones c
-                       JOIN usuarios_webchat u ON u.id = c.usuario_id
-                       WHERE c.id = %s AND u.sesion_token = %s""",
-                    (conversacion_id, sesion_token),
-                )
-                if cur.fetchone() is None:
-                    raise HTTPException(status_code=403, detail="No autorizado")
-        finally:
-            release_connection(conn)
+    # Validación de permisos y subida a Storage en un hilo de trabajo: son llamadas a la base y a la red, y
+    # un archivo de 20 MB tarda segundos en subir; en el hilo principal eso congelaba a todos los usuarios.
+    await asyncio.to_thread(_autorizar_subida, authorization, conversacion_id, sesion_token)
 
     content_type = file.content_type or ""
     es_audio = content_type.startswith("audio/")
@@ -689,12 +739,9 @@ async def upload(
         contenido, extension, tipo_subida = norm
     nombre_archivo = f"webchat/{uuid.uuid4()}.{extension}"
 
-    client = storage.Client()
-    bucket = client.bucket(os.environ["GCS_BUCKET"])
-    blob = bucket.blob(nombre_archivo)
-    blob.upload_from_string(contenido, content_type=tipo_subida)
+    await asyncio.to_thread(_subir_a_bucket, os.environ["GCS_BUCKET"], nombre_archivo, contenido, tipo_subida)
 
-    url = _generar_url_firmada(nombre_archivo, minutos=60)
+    url = await asyncio.to_thread(_generar_url_firmada, nombre_archivo, 60)
     return {"url": url, "ruta": nombre_archivo}
 
 
@@ -717,7 +764,7 @@ def _verificar_staff_por_query(token: str | None) -> int:
 
 
 @app.get("/archivo-receta")
-async def ver_archivo_receta(ruta: str, token: str | None = None, descargar: bool = False):
+def ver_archivo_receta(ruta: str, token: str | None = None, descargar: bool = False):
     """
     Genera una URL firmada NUEVA (corta duración) para que un asesor o
     supervisor autenticado pueda ver un archivo que el paciente subió
@@ -747,7 +794,7 @@ async def ver_archivo_receta(ruta: str, token: str | None = None, descargar: boo
 
 
 @app.get("/receta-correo")
-async def ver_receta_correo(ruta: str):
+def ver_receta_correo(ruta: str):
     """
     Variante de /archivo-receta SIN login de staff — es el link que se manda
     por correo a las asesoras cuando llega una receta nueva (ver
@@ -811,7 +858,7 @@ async def redirigir_descarga(u: str):
 
 
 @app.get("/widget/archivo")
-async def ver_archivo_widget(conversacion_id: int, ruta: str, sesion_token: str):
+def ver_archivo_widget(conversacion_id: int, ruta: str, sesion_token: str):
     """
     Igual que /archivo-receta pero para el WIDGET (sin login de staff) — la
     persona nunca se autentica, así que en su lugar se valida que el
@@ -843,8 +890,40 @@ async def ver_archivo_widget(conversacion_id: int, ruta: str, sesion_token: str)
     return RedirectResponse(url)
 
 
+def _staff_bearer(authorization: str | None) -> int:
+    """Asesor, supervisor o editor con sesión vigente (Authorization: Bearer <jwt>)."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Falta el token")
+    staff_id = auth.decodificar_token(authorization[len("Bearer "):])
+    if staff_id is None or _obtener_rol(staff_id) is None:
+        raise HTTPException(status_code=401, detail="Sesión no válida")
+    return staff_id
+
+
+@app.get("/asesor/archivos-cliente")
+def archivos_de_la_empresa(conversacion_id: int, ruc: str | None = None, authorization: str | None = Header(None)):
+    """📁 Archivos de la empresa (por RUC) para la consola: los que envió el cliente y los que guardó el asesor."""
+    _staff_bearer(authorization)
+    return archivos_cliente.para_asesor(conversacion_id, ruc)
+
+
+class ArchivoEmpresa(BaseModel):
+    conversacion_id: int
+    ruc: str
+    ruta: str
+    nombre: str | None = None
+
+
+@app.post("/asesor/archivos-cliente")
+def guardar_archivo_empresa(datos: ArchivoEmpresa, authorization: str | None = Header(None)):
+    """El asesor guarda un archivo (Excel, CSV o PDF, ya subido con /upload) en el perfil de la empresa."""
+    staff_id = _staff_bearer(authorization)
+    return archivos_cliente.registrar_desde_asesor(datos.conversacion_id, datos.ruc, datos.ruta[:300],
+                                                   datos.nombre, staff_id)
+
+
 @app.get("/conversacion-pdf")
-async def descargar_conversacion_pdf(conversacion_id: int, token: str | None = None):
+def descargar_conversacion_pdf(conversacion_id: int, token: str | None = None):
     """
     Genera y devuelve un PDF con el historial completo de una conversación
     (cabecera con datos del paciente + burbujas de mensajes), para que un
@@ -2129,9 +2208,11 @@ async def _difundir_mensaje_modificado(evento_type: str, conversacion_id: int, p
 # QR después de usado o vencido, no sirve.
 # ---------------------------------------------------------------------------
 TRASPASO_VIGENCIA_SEG = 300
+TRASPASO_PC_VIGENCIA_SEG = 1800
 
 
-def _crear_traspaso(sesion_token: str, url_cliente) -> dict:
+def _crear_traspaso(sesion_token: str, url_cliente, vigencia_seg: int = None) -> dict:
+    vigencia_seg = vigencia_seg or TRASPASO_VIGENCIA_SEG
     widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
     if not widget_url and isinstance(url_cliente, str) and url_cliente.startswith(("https://", "http://")):
         widget_url = url_cliente.strip()[:500]
@@ -2156,7 +2237,7 @@ def _crear_traspaso(sesion_token: str, url_cliente) -> dict:
             cur.execute(
                 "INSERT INTO traspasos_sesion (codigo, usuario_id, creado_en, expira_en) VALUES (%s, %s, %s, %s)",
                 (codigo, fila[0], datetime.now(LIMA_TZ),
-                 datetime.now(LIMA_TZ) + timedelta(seconds=TRASPASO_VIGENCIA_SEG)),
+                 datetime.now(LIMA_TZ) + timedelta(seconds=vigencia_seg)),
             )
         conn.commit()
     except Exception:
@@ -2170,7 +2251,7 @@ def _crear_traspaso(sesion_token: str, url_cliente) -> dict:
     enlace = f"{widget_url}{separador}wct={codigo}"
     qr = segno.make(enlace, error="m")
     return {"ok": True, "qr": qr.svg_data_uri(scale=6, border=2, dark="#0A2540"),
-            "expira_seg": TRASPASO_VIGENCIA_SEG}
+            "expira_seg": vigencia_seg, "enlace": enlace}
 
 
 # --- Verificación inversa por WhatsApp (respaldo del SMS) -------------------
@@ -2451,6 +2532,99 @@ async def _avisar_union(websocket: WebSocket, union: dict):
         "sesion_token": union["sesion_token"], "aviso": TEXTO_UNION_CLIENTE}})
 
 
+# ---- Validar el celular sin código (lo aprueba un supervisor) ----------------------------------------
+# Para clientes a los que no les llega el SMS ni pueden usar WhatsApp y llaman al call center: el supervisor
+# abre la conversación ("Ayudar en el bot" / escuchar), confirma por teléfono que la persona es la titular de
+# ese celular y aprueba. El bot avanza exactamente como si hubiera escrito el código (mismo camino que la
+# validación por WhatsApp) y queda registrado quién lo aprobó.
+_NODO_PIDE_CODIGO = "webchat_valida_pide_codigo"
+
+
+def _validacion_pendiente(conversacion_id) -> dict | None:
+    """{"celular": "..."} si la conversación está esperando el código SMS; si no, None."""
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT estado, nodo_actual, variables_sesion FROM conversaciones WHERE id = %s",
+                            (int(conversacion_id),))
+                fila = cur.fetchone()
+            conn.rollback()
+        finally:
+            release_connection(conn)
+    except Exception:
+        return None
+    if not fila or fila[0] != "bot" or fila[1] != _NODO_PIDE_CODIGO:
+        return None
+    return {"celular": str((fila[2] or {}).get("CELULAR") or "")}
+
+
+async def _validar_celular_manual(conversacion_id, supervisor_id: int) -> dict:
+    try:
+        conversacion_id = int(conversacion_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "motivo": "Conversación no válida."}
+    pendiente = await asyncio.to_thread(_validacion_pendiente, conversacion_id)
+    if not pendiente:
+        return {"ok": False, "motivo": "Esta conversación ya no está esperando el código de validación."}
+    ws_cliente = manager.widget_connections.get(conversacion_id)
+    if ws_cliente is None:
+        return {"ok": False, "motivo": "El cliente no tiene el chat abierto en este momento. Pídele que lo abra "
+                                       "(sin cerrar la página) y vuelve a intentarlo."}
+    nodo_actual, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+    if nodo_actual != _NODO_PIDE_CODIGO:
+        return {"ok": False, "motivo": "Esta conversación ya no está esperando el código de validación."}
+    codigo = _generar_codigo_otp()
+    variables["ENVIO_SMS"] = {"status": 200, "response": {"enviado": True, "codigo": codigo}}
+    variables["OTP_METODO"] = "supervisor"
+    variables["OTP_VALIDADO_POR"] = supervisor_id
+    await asyncio.to_thread(_guardar_variables_sesion, conversacion_id, variables)
+    desde_mensaje_id = await asyncio.to_thread(_ultimo_mensaje_id, conversacion_id)
+    eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id, texto=codigo)
+    if _celular_verificado_en(eventos) is None:
+        return {"ok": False, "motivo": "No se pudo validar. Revisa la conversación e inténtalo de nuevo."}
+    nombre = _nombre_display(supervisor_id) or "un supervisor"
+    texto = "✅ Validamos tu celular con ayuda de nuestro equipo. ¡Gracias por tu paciencia! Continuemos."
+
+    def _registrar():
+        # El "código" que el bot guardó como mensaje del cliente se reemplaza por el aviso (el cliente nunca lo
+        # escribió) y queda constancia de quién aprobó la validación.
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE mensajes SET emisor_tipo = 'bot', contenido = %s, metadata = %s
+                       WHERE id = (SELECT MIN(id) FROM mensajes WHERE conversacion_id = %s AND id > %s
+                                     AND emisor_tipo = 'usuario' AND contenido = %s)""",
+                    (texto, json.dumps({"validacion_manual": True, "validado_por": supervisor_id,
+                                        "validado_por_nombre": nombre}),
+                     conversacion_id, desde_mensaje_id, codigo))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.warning("No se pudo registrar la validación manual de la conversación %s", conversacion_id,
+                           exc_info=True)
+        finally:
+            release_connection(conn)
+
+    await asyncio.to_thread(_registrar)
+    logger.info("Celular %s validado manualmente por el supervisor %s (conversación %s)",
+                pendiente["celular"], supervisor_id, conversacion_id)
+    try:
+        await ws_cliente.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+        await ws_cliente.send_json({"type": "verificacion_whatsapp_completada", "payload": {}})
+        union = await asyncio.to_thread(_unir_a_conversacion_abierta, conversacion_id, _celular_verificado_en(eventos))
+        if union:
+            await _avisar_union(ws_cliente, union)
+        else:
+            await _procesar_eventos_bot(conversacion_id, ws_cliente, eventos)
+    except Exception:
+        logger.warning("La validación manual se guardó, pero no se pudo avisar al widget (conversación %s)",
+                       conversacion_id, exc_info=True)
+    await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
+    return {"ok": True, "celular": pendiente["celular"]}
+
+
 def _celular_verificado_en(eventos) -> str | None:
     for e in eventos or []:
         if e.get("type") == "_celular_verificado":
@@ -2620,8 +2794,14 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         continue  # latido del widget: mantiene viva la conexión, no hace nada más
 
                     if tipo == "generar_traspaso":
-                        resultado = await asyncio.to_thread(_crear_traspaso, nuevo_token, payload.get("url"))
+                        # para="pc": enlace para seguir en la computadora (p. ej. enviárselo por WhatsApp Web y subir
+                        # desde ahí el Excel). Dura 30 minutos en vez de 5, porque se abre en otro equipo.
+                        para_pc = payload.get("para") == "pc"
+                        resultado = await asyncio.to_thread(_crear_traspaso, nuevo_token, payload.get("url"),
+                                                            TRASPASO_PC_VIGENCIA_SEG if para_pc else None)
                         if resultado.get("ok"):
+                            if para_pc:
+                                resultado = {**resultado, "para": "pc"}
                             await websocket.send_json({"type": "traspaso_listo", "payload": resultado})
                         else:
                             await websocket.send_json({"type": "traspaso_error",
@@ -2649,6 +2829,13 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                             await _procesar_eventos_bot(conversacion_id, websocket, eventos)
                         else:
                             await websocket.send_json({"type": "intencion_ignorada", "payload": {"intent": intencion}})
+                        continue
+
+                    if tipo == "generar_plantilla_sctr":
+                        # Botón "📥 Generar mi plantilla Excel" de la guía para adjuntar (SCTR): el mismo Excel del flujo
+                        # (generar_excel_sctr), aunque la conversación ya esté esperando al asesor.
+                        if conversacion_id:
+                            await _enviar_plantilla_sctr(conversacion_id, websocket)
                         continue
 
                     if tipo == "archivo_rechazado":
@@ -2965,6 +3152,9 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         ruta = payload.get("ruta")
                         respondido_a_id = payload.get("respondido_a_id")
                         mensaje_id = await asyncio.to_thread(_guardar_mensaje_usuario_archivo, conversacion_id, ruta, respondido_a_id)
+                        # SCTR: queda como archivo de la empresa (RUC + celular validado) para la próxima renovación.
+                        await asyncio.to_thread(archivos_cliente.registrar_desde_cliente, conversacion_id, ruta,
+                                                payload.get("nombre"))
                         respondido_a = await asyncio.to_thread(_obtener_preview_mensaje, respondido_a_id)
                         if asesor_id:
                             if await asyncio.to_thread(_limpiar_pausa, conversacion_id):
@@ -3293,6 +3483,92 @@ def _revisar_espera_asesor_sync():
         release_connection(conn)
 
 
+TEXTO_GUIA_ARCHIVOS = "📎 Te dejamos una guía para enviarnos tu archivo 👇"
+_RE_PIDE_ARCHIVO = re.compile(r"\b(archivo|excel|planilla|adjunt|documento|pdf)")
+CAMPANAS_GUIA_AUTOMATICA = ("venta_sctr",)
+
+
+def _sin_tildes_min(t: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn").lower()
+
+
+async def _enviar_guia_archivos(conversacion_id: int, asesor_id: int | None):
+    _, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+    cr = variables.get("CONSULTA_RUC") if isinstance(variables.get("CONSULTA_RUC"), dict) else {}
+    await asyncio.to_thread(_guardar_mensaje_bot_texto, conversacion_id, TEXTO_GUIA_ARCHIVOS)
+    await manager.enviar_a_widget(conversacion_id, {"type": "mensaje_bot", "payload": {
+        "texto": TEXTO_GUIA_ARCHIVOS, "widget": "ayuda_archivos",
+        "plantilla": bool((cr.get("response") or {}).get("codigo"))}})
+    if asesor_id:
+        await manager.enviar_a_asesor(asesor_id, {"type": "aviso_automatico_cliente",
+                                                  "payload": {"conversacion_id": conversacion_id, "texto": TEXTO_GUIA_ARCHIVOS}})
+    await manager.notificar_escuchas(conversacion_id, {
+        "type": "mensaje_conversacion",
+        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "bot", "texto": TEXTO_GUIA_ARCHIVOS}})
+
+
+def _guia_ya_enviada_o_no_aplica(conversacion_id: int) -> bool:
+    """True si no corresponde la guía automática: no es SCTR, ya se mostró, o el cliente ya envió archivos."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT cam.codigo,
+                                  EXISTS (SELECT 1 FROM mensajes m WHERE m.conversacion_id = c.id
+                                          AND ((m.emisor_tipo = 'bot' AND m.contenido = %s)
+                                               OR (m.emisor_tipo = 'usuario' AND m.tipo_contenido = 'archivo')))
+                           FROM conversaciones c LEFT JOIN campanas cam ON cam.id = c.campana_id WHERE c.id = %s""",
+                        (TEXTO_GUIA_ARCHIVOS, conversacion_id))
+            fila = cur.fetchone()
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    return not fila or fila[0] not in CAMPANAS_GUIA_AUTOMATICA or bool(fila[1])
+
+
+async def _guia_automatica_si_corresponde(conversacion_id, asesor_id: int):
+    try:
+        conversacion_id = int(conversacion_id)
+        if await asyncio.to_thread(_guia_ya_enviada_o_no_aplica, conversacion_id):
+            return
+        await asyncio.sleep(1.5)   # que se lea primero el mensaje del asesor
+        await _enviar_guia_archivos(conversacion_id, asesor_id)
+    except Exception:
+        logger.warning("No se pudo mostrar la guía automática (conversación %s)", conversacion_id, exc_info=True)
+
+
+_ultima_plantilla: dict = {}
+
+
+async def _enviar_plantilla_sctr(conversacion_id: int, websocket: WebSocket):
+    ahora = time.time()
+    if ahora - _ultima_plantilla.get(conversacion_id, 0) < 20:
+        return
+    _ultima_plantilla[conversacion_id] = ahora
+    _, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+    cr = variables.get("CONSULTA_RUC") if isinstance(variables.get("CONSULTA_RUC"), dict) else {}
+    codigo = (cr.get("response") or {}).get("codigo")
+    url = None
+    if codigo:
+        from api_handlers import generar_excel_sctr
+        try:
+            r = await asyncio.to_thread(generar_excel_sctr, {"codigo": codigo}, variables)
+            url = ((r or {}).get("response") or {}).get("url_excel")
+        except Exception:
+            logger.warning("No se pudo generar la plantilla SCTR (conversación %s)", conversacion_id, exc_info=True)
+    texto = (f"📥 Aquí tienes tu plantilla Excel de SCTR. Descárgala, complétala y envíanosla con 📎:\n{url}" if url else
+             "⚠️ No pudimos generar tu plantilla en este momento. Tu asesor te la puede enviar.")
+    await asyncio.to_thread(_guardar_mensaje_bot_texto, conversacion_id, texto)
+    await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+    await manager.notificar_escuchas(conversacion_id, {
+        "type": "mensaje_conversacion",
+        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "bot", "texto": texto}})
+    asesor_id = await asyncio.to_thread(_obtener_asesor_actual, conversacion_id)
+    if asesor_id:
+        await manager.enviar_a_asesor(asesor_id, {"type": "aviso_automatico_cliente",
+                                                  "payload": {"conversacion_id": conversacion_id, "texto": texto}})
+
+
 _ultimo_aviso_rechazo: dict = {}   # conversacion_id -> time.time() del último aviso (freno contra repeticiones)
 
 
@@ -3491,6 +3767,139 @@ async def _iniciar_watcher_inactividad():
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=_HILOS_TRABAJO, thread_name_prefix="trabajo"))
     asyncio.create_task(_loop_inactividad())
+    _iniciar_vigia()
+
+
+# ---------------------------------------------------------------------------
+# Vigía del servidor. El 30/10 (16:04 a 16:30) el servicio quedó congelado: 0 respuestas exitosas, CPU en 0 %
+# y Cloud Run respondiendo "Rate exceeded." hasta que un deploy reinició la instancia. Este vigía:
+#   1) deja en el log cada vez que el hilo principal (WebSockets y peticiones async) se demora más de
+#      _VIGIA_AVISO_SEG, con el punto exacto del código donde estaba detenido (para encontrar al culpable);
+#   2) avisa si los hilos de trabajo (base de datos, SMS, archivos estáticos) dejan de responder;
+#   3) si el bloqueo dura más de _VIGIA_REINICIO_SEG (hilo principal) o _VIGIA_HILOS_REINICIO_SEG (hilos),
+#      termina el proceso para que Cloud Run levante una instancia nueva en segundos (los widgets y las
+#      consolas se reconectan solos), en vez de quedar colgado hasta que alguien lo note;
+#   4) cada 5 minutos deja un resumen (demora máxima, conexiones de BD y WebSockets abiertos).
+# Corre en un hilo propio (no en el event loop), así que funciona aunque el loop esté bloqueado.
+# Busca en Cloud Logging: "Vigía".
+# ---------------------------------------------------------------------------
+_VIGIA_AVISO_SEG = 1.0
+_VIGIA_REINICIO_SEG = 60.0          # mayor que statement_timeout (30 s): solo salta con un cuelgue real
+_VIGIA_HILOS_AVISO_SEG = 10.0
+_VIGIA_HILOS_REINICIO_SEG = 120.0
+_VIGIA_RESUMEN_SEG = 300.0
+_latido = {"loop": time.monotonic(), "hilos_pedido": None, "hilo_principal": None}
+
+
+async def _latir_loop():
+    while True:
+        _latido["loop"] = time.monotonic()
+        await asyncio.sleep(0.25)
+
+
+def _nada():
+    return None
+
+
+async def _latir_hilos():
+    """Comprueba que haya hilos libres: el de asyncio.to_thread (BD, SMS) y el de los endpoints def y los
+    archivos estáticos (anyio)."""
+    import anyio.to_thread
+    while True:
+        _latido["hilos_pedido"] = time.monotonic()
+        try:
+            await asyncio.to_thread(_nada)
+            await anyio.to_thread.run_sync(_nada)
+        except Exception:  # noqa: BLE001
+            logger.exception("Vigía: no se pudo comprobar los hilos de trabajo")
+        _latido["hilos_pedido"] = None
+        await asyncio.sleep(5)
+
+
+def _pila_del_hilo(ident, lineas: int = 14) -> str:
+    import sys
+    import traceback
+    marco = sys._current_frames().get(ident) if ident else None
+    if marco is None:
+        return "(sin pila)"
+    return "".join(traceback.format_stack(marco)[-lineas:])
+
+
+def _resumen_conexiones() -> str:
+    try:
+        return (f"BD {db_estado_pools()}; WS widget {len(manager.widget_connections)}, "
+                f"asesores {len(manager.asesor_connections)}, supervisores {len(manager.supervisor_connections)}")
+    except Exception:  # noqa: BLE001
+        return "(sin datos)"
+
+
+def _hilos_ocupados() -> str:
+    nombres: dict = {}
+    for h in threading.enumerate():
+        base = h.name.rsplit("_", 1)[0]
+        nombres[base] = nombres.get(base, 0) + 1
+    return ", ".join(f"{k} {v}" for k, v in sorted(nombres.items()))
+
+
+def _vigia():
+    episodio_inicio = None
+    episodio_hilos = None
+    max_loop = 0.0
+    episodios = 0
+    ultimo_resumen = time.monotonic()
+    while True:
+        time.sleep(0.25)
+        ahora = time.monotonic()
+        atraso = ahora - _latido["loop"]
+
+        # 1) Hilo principal
+        if atraso > _VIGIA_AVISO_SEG and episodio_inicio is None:
+            episodio_inicio = _latido["loop"]
+            episodios += 1
+            logger.warning("Vigía: hilo principal bloqueado hace %.1f s. %s\nDetenido en:\n%s",
+                           atraso, _resumen_conexiones(), _pila_del_hilo(_latido["hilo_principal"]))
+        elif episodio_inicio is not None and atraso < _VIGIA_AVISO_SEG:
+            duracion = _latido["loop"] - episodio_inicio
+            max_loop = max(max_loop, duracion)
+            logger.warning("Vigía: hilo principal liberado tras %.1f s", duracion)
+            episodio_inicio = None
+        if episodio_inicio is not None:
+            max_loop = max(max_loop, atraso)
+
+        # 2) Hilos de trabajo (solo si el loop está vivo: si no, el pedido no avanza por culpa del loop)
+        pedido = _latido["hilos_pedido"]
+        atraso_hilos = (ahora - pedido) if (pedido and episodio_inicio is None) else 0.0
+        if atraso_hilos > _VIGIA_HILOS_AVISO_SEG and episodio_hilos is None:
+            episodio_hilos = pedido
+            logger.warning("Vigía: no hay hilos de trabajo libres hace %.0f s. %s. Hilos: %s",
+                           atraso_hilos, _resumen_conexiones(), _hilos_ocupados())
+        elif episodio_hilos is not None and not atraso_hilos:
+            logger.warning("Vigía: hilos de trabajo disponibles otra vez")
+            episodio_hilos = None
+
+        # 3) Cuelgue largo: reiniciar
+        if atraso > _VIGIA_REINICIO_SEG or atraso_hilos > _VIGIA_HILOS_REINICIO_SEG:
+            logger.critical("Vigía: servidor colgado (hilo principal %.0f s, hilos de trabajo %.0f s). "
+                            "Se termina el proceso para que Cloud Run lo reinicie. %s\nHilo principal en:\n%s",
+                            atraso, atraso_hilos, _resumen_conexiones(), _pila_del_hilo(_latido["hilo_principal"]))
+            for h in logging.getLogger().handlers:
+                with contextlib.suppress(Exception):
+                    h.flush()
+            os._exit(1)
+
+        # 4) Resumen periódico
+        if ahora - ultimo_resumen >= _VIGIA_RESUMEN_SEG:
+            logger.info("Vigía resumen 5 min: bloqueos del hilo principal %d (máx %.1f s). %s",
+                        episodios, max_loop, _resumen_conexiones())
+            ultimo_resumen, max_loop, episodios = ahora, 0.0, 0
+
+
+def _iniciar_vigia():
+    _latido["hilo_principal"] = threading.get_ident()
+    _latido["loop"] = time.monotonic()
+    asyncio.create_task(_latir_loop())
+    asyncio.create_task(_latir_hilos())
+    threading.Thread(target=_vigia, name="vigia", daemon=True).start()
 
 
 def _cerrar_conversacion(conversacion_id: int, etiqueta_cierre_id, cerrado_por: str = "asesor"):
@@ -5331,7 +5740,8 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
                 cur.execute(
                     """SELECT h.hito, COUNT(*) FROM conversacion_hitos h
                        JOIN conversaciones c ON c.id = h.conversacion_id
-                       WHERE h.hito IN ('metodo_sms', 'metodo_sms_reenviado', 'metodo_llamada', 'metodo_whatsapp')
+                       WHERE h.hito IN ('metodo_sms', 'metodo_sms_reenviado', 'metodo_llamada', 'metodo_whatsapp',
+                                        'metodo_supervisor')
                          AND c.iniciado_en >= %s AND c.iniciado_en < %s
                        GROUP BY h.hito""",
                     (fecha_desde, fecha_hasta),
@@ -5341,7 +5751,8 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
                 por_metodo_token = [
                     {"metodo": etiqueta, "cantidad": cuentas.get(clave, 0)}
                     for clave, etiqueta in (("sms", "SMS (primer envío)"), ("sms_reenviado", "SMS reenviado"),
-                                            ("llamada", "Llamada"), ("whatsapp", "WhatsApp"))
+                                            ("llamada", "Llamada"), ("whatsapp", "WhatsApp"),
+                                            ("supervisor", "Validado por supervisor"))
                 ]
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_metodo")
@@ -6026,6 +6437,10 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                     "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "asesor", "texto": texto,
                                 "mensaje_id": mensaje_id, "respondido_a": respondido_a},
                 })
+                # SCTR: la primera vez que el asesor le pide el archivo ("envíame tu planilla en Excel"), Sofi le
+                # muestra al cliente, justo debajo, la guía con las formas de enviarlo.
+                if _RE_PIDE_ARCHIVO.search(_sin_tildes_min(texto or "")):
+                    _tarea_de_fondo(_guia_automatica_si_corresponde(conversacion_id, asesor_id))
 
             elif tipo == "mensaje_asesor_archivo":
                 # Imagen pegada (Ctrl+V) o adjuntada por el asesor — ya subida
@@ -6080,7 +6495,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
 
             elif tipo == "enviar_sms_saliente":
                 conversacion_id = payload.get("conversacion_id")
-                resultado = _enviar_sms_saliente(conversacion_id, asesor_id)
+                resultado = await asyncio.to_thread(_enviar_sms_saliente, conversacion_id, asesor_id)
                 await manager.enviar_a_asesor(asesor_id, {
                     "type": "resultado_sms_saliente",
                     "payload": {"conversacion_id": conversacion_id, **resultado},
@@ -6257,6 +6672,12 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                             "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "asesor",
                                         "texto": texto, "mensaje_id": mensaje_id, "respondido_a": None},
                         })
+
+            elif tipo == "enviar_ayuda_archivos":
+                # Botón "📎 Guía" del asesor: le manda al cliente la tarjeta con las formas de adjuntar su archivo.
+                conv_guia = payload.get("conversacion_id")
+                if conv_guia and await asyncio.to_thread(_obtener_asesor_actual, conv_guia) == asesor_id:
+                    await _enviar_guia_archivos(int(conv_guia), asesor_id)
 
             elif tipo == "listar_asesores":
                 # Para el selector de "Transferir a..." — otros asesores conectados,
@@ -6478,7 +6899,10 @@ def _buscar_conversaciones_bot(telefono: str, campana_ids: list | None = None) -
                 FROM conversaciones c
                 JOIN usuarios_webchat u ON u.id = c.usuario_id
                 WHERE c.estado IN ('bot', 'en_cola') AND u.telefono ILIKE %s
-                  AND (%s::int[] IS NULL OR c.campana_id = ANY(%s::int[]))
+                  -- Supervisor de campaña: las de sus campañas y, además, las que siguen en el bot SIN campaña
+                  -- (todavía no eligieron o no llegan a una), para poder ayudarlas (p. ej. validar el celular).
+                  AND (%s::int[] IS NULL OR c.campana_id = ANY(%s::int[])
+                       OR (c.campana_id IS NULL AND c.estado = 'bot'))
                 ORDER BY c.iniciado_en DESC
                 LIMIT 50
                 """,
@@ -6598,6 +7022,19 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 await supervisor.enviar_respuestas_rapidas(supervisor_id, manager, a_asesor=False)
                 continue
 
+            if tipo == "consultar_validacion_pendiente":
+                await websocket.send_json({"type": "validacion_pendiente", "payload": {
+                    "conversacion_id": conversacion_id,
+                    "validacion_pendiente": await asyncio.to_thread(_validacion_pendiente, conversacion_id)}})
+                continue
+
+            # Validar el celular sin código: cualquier supervisor (la conversación aún está en el bot, sin campaña).
+            if tipo == "validar_celular_manual":
+                r = await _validar_celular_manual(conversacion_id, supervisor_id)
+                await websocket.send_json({"type": "validacion_manual_resultado",
+                                           "payload": {**r, "conversacion_id": conversacion_id}})
+                continue
+
             if alcance is not None:
                 motivo = await asyncio.to_thread(supervisor.motivo_denegado, tipo, payload, alcance)
                 if motivo:
@@ -6621,7 +7058,8 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                     "payload": {"conversacion_id": conversacion_id, "historial": _obtener_historial(conversacion_id),
                                 "campana_id": _campana_de_conversacion(conversacion_id),
                                 "bandera": _obtener_bandera(conversacion_id),
-                                "aviso_inactividad_activo": _obtener_aviso_inactividad_activo(conversacion_id)},
+                                "aviso_inactividad_activo": _obtener_aviso_inactividad_activo(conversacion_id),
+                                "validacion_pendiente": await asyncio.to_thread(_validacion_pendiente, conversacion_id)},
                 })
 
             elif tipo == "dejar_de_escuchar":
@@ -7021,7 +7459,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 await manager.enviar_a_supervisor(supervisor_id, {"type": "texto_sms_invitacion", "payload": {"texto": texto, "max": SMS_INVITACION_MAX_CARACTERES}})
 
             elif tipo == "enviar_sms_saliente":
-                resultado = _enviar_sms_saliente(conversacion_id, supervisor_id)
+                resultado = await asyncio.to_thread(_enviar_sms_saliente, conversacion_id, supervisor_id)
                 await manager.enviar_a_supervisor(supervisor_id, {
                     "type": "resultado_sms_saliente",
                     "payload": {"conversacion_id": conversacion_id, **resultado},

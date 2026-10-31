@@ -28,6 +28,7 @@ from datetime import datetime, timezone, timedelta
 
 from db import get_connection, release_connection
 import supervisor
+import archivos_cliente
 from api_handlers import (
     validar_horario_consultas, consulta_doi, listar_distritos, update_doi_distrito,
     seleccionar_direccion, registrar_direccion, crear_doi_nuevo, procesar_receta, trae_escoge,
@@ -406,7 +407,16 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
 
         if tipo == "mensaje":
             texto = sustituir_variables(nodo["texto"], variables)
-            eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
+            payload_msg = {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}
+            # accion_config.widget: tarjeta especial del widget debajo del texto (p. ej. "ayuda_archivos", la guía
+            # para adjuntar archivos). En SCTR, si hay código de planilla, la tarjeta ofrece generar el Excel.
+            widget = (nodo["accion_config"] or {}).get("widget")
+            if widget:
+                payload_msg["widget"] = widget
+                cr = variables.get("CONSULTA_RUC")
+                if isinstance(cr, dict) and (cr.get("response") or {}).get("codigo"):
+                    payload_msg["plantilla"] = True
+            eventos.append({"type": "mensaje_bot", "payload": payload_msg})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
             nodo_actual = nodo["siguiente_codigo"]
 
@@ -500,14 +510,22 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
                 variables["DIRECCION_NRO_NUEVA"] = _calcular_siguiente_direccion_nro(variables)
             handler = API_HANDLERS.get(accion_config.get("api"))
             parametros = resolver_parametros(accion_config, variables)
-            resultado = handler(parametros, variables) if handler else {"status": 500, "response": {}}
+            if accion_config.get("api") == "sctr_archivo_previo":
+                # Archivos de la última solicitud de esta empresa (ver archivos_cliente.py): necesita la base.
+                resultado = archivos_cliente.accion_archivo_previo(cur, conversacion_id, variables)
+            elif accion_config.get("api") == "sctr_reusar_archivo":
+                resultado, eventos_archivo = archivos_cliente.accion_reusar(
+                    cur, conversacion_id, variables, datetime.now(LIMA_TZ))
+                eventos.extend(eventos_archivo)
+            else:
+                resultado = handler(parametros, variables) if handler else {"status": 500, "response": {}}
             variables[accion_config["variable_respuesta"]] = resultado
             if accion_config.get("api") == "validar_sms_otp" and resultado.get("status") == 200:
                 # Código SMS correcto: este celular queda verificado para este navegador.
                 _hito(cur, conversacion_id, "verificado", nodo["codigo"])
                 # Cómo obtuvo el código: whatsapp > llamada > sms reenviado > sms directo.
-                if variables.get("OTP_METODO") == "whatsapp":
-                    _metodo = "whatsapp"
+                if variables.get("OTP_METODO") in ("whatsapp", "supervisor"):
+                    _metodo = variables["OTP_METODO"]   # "supervisor": lo aprobó un supervisor sin código
                 elif int(variables.get("OTP_LLAMADAS") or 0) > 0:
                     _metodo = "llamada"
                 elif int(variables.get("OTP_REENVIOS") or 0) > 0:

@@ -196,6 +196,9 @@ async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict |
     """Se llama justo después de que el bot deriva una conversación (evento 'en_cola').
     Si hay asesor disponible, la asigna de inmediato y notifica por WS a ambos lados.
     Devuelve {"asesor_id":..., "nombre_display":...} si asignó, o None si quedó en cola."""
+    # La conexión se devuelve ANTES de cualquier await: retenerla mientras se notifica a los supervisores
+    # (que a su vez piden conexiones) podía agotar el pool y frenar todo el servidor.
+    sin_asesor = False
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -204,31 +207,34 @@ async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict |
 
             asesor = _buscar_mejor_asesor(cur, campana_id)
             if asesor is None:
-                await supervisor.notificar_estado_global_a_todos(manager)  # entró a la cola, sin nadie disponible
-                return None
+                sin_asesor = True
+            else:
+                asesor_id, nombre_display = asesor
+                _asignar(cur, conversacion_id, asesor_id)
 
-            asesor_id, nombre_display = asesor
-            _asignar(cur, conversacion_id, asesor_id)
+                texto_bienvenida = supervisor.obtener_configuracion("mensaje_bienvenida_asesor")
+                if texto_bienvenida:
+                    texto_bienvenida = texto_bienvenida.replace("{{ASESOR_NOMBRE}}", nombre_display)
+                    cur.execute(
+                        """INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                           VALUES (%s, 'bot', 'texto', %s, %s)""",
+                        (conversacion_id, texto_bienvenida, datetime.now(LIMA_TZ)),
+                    )
 
-            texto_bienvenida = supervisor.obtener_configuracion("mensaje_bienvenida_asesor")
-            if texto_bienvenida:
-                texto_bienvenida = texto_bienvenida.replace("{{ASESOR_NOMBRE}}", nombre_display)
                 cur.execute(
-                    """INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
-                       VALUES (%s, 'bot', 'texto', %s, %s)""",
-                    (conversacion_id, texto_bienvenida, datetime.now(LIMA_TZ)),
+                    """SELECT COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
+                       JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
+                    (conversacion_id,),
                 )
-
-            cur.execute(
-                """SELECT COALESCE(NULLIF(u.nombre,''), c.variables_sesion->>'NOMBRE_USUARIO') AS nombre, COALESCE(NULLIF(u.telefono,''), c.variables_sesion->>'CELULAR') AS telefono, COALESCE(NULLIF(u.dni,''), c.variables_sesion->>'DNI') AS dni, c.entrada_cola, c.asignado_en, c.bandera, c.aviso_inactividad_activo FROM conversaciones c
-                   JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
-                (conversacion_id,),
-            )
-            usuario_nombre, usuario_telefono, usuario_dni, entrada_cola, asignado_en, bandera, aviso_inactividad_activo = cur.fetchone()
-            historial = _historial(cur, conversacion_id)
+                usuario_nombre, usuario_telefono, usuario_dni, entrada_cola, asignado_en, bandera, aviso_inactividad_activo = cur.fetchone()
+                historial = _historial(cur, conversacion_id)
         conn.commit()
     finally:
         release_connection(conn)
+
+    if sin_asesor:
+        await supervisor.notificar_estado_global_a_todos(manager)  # entró a la cola, sin nadie disponible
+        return None
 
     await manager.enviar_a_widget(conversacion_id, {
         "type": "asignado", "payload": {"asesor_nombre": nombre_display},

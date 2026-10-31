@@ -1100,12 +1100,18 @@ def conversacion_en_alcance(conversacion_id, alcance) -> bool:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT campana_id FROM conversaciones WHERE id = %s", (conv,))
+            cur.execute("SELECT campana_id, estado FROM conversaciones WHERE id = %s", (conv,))
             fila = cur.fetchone()
         conn.rollback()
     finally:
         release_connection(conn)
-    return bool(fila and fila[0] is not None and fila[0] in alcance["ids"])
+    if not fila:
+        return False
+    # Una conversación que sigue en el bot y aún no tiene campaña no es de nadie: cualquier supervisor puede
+    # ayudarla ("Ayudar en el bot", validar el celular sin código).
+    if fila[0] is None and fila[1] == "bot":
+        return True
+    return fila[0] is not None and fila[0] in alcance["ids"]
 
 
 def asesor_en_alcance(asesor_id, alcance) -> bool:

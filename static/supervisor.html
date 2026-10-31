@@ -217,6 +217,9 @@
 
   /* ---- Nota interna del cliente (vinculada a su DNI/RUC) — solo la ve el
      staff, nunca el paciente; sirve de orientación si vuelve a escribir. ---- */
+  #validacionBanner { display: none; align-items: center; gap: 10px; padding: 10px 16px; background: #EAF3FF; border-bottom: 1px solid #C9DDF5; font-size: 13px; flex-wrap: wrap; }
+  #validacionBanner.activa { display: flex; }
+  #validacionBanner .txt { flex: 1; min-width: 200px; }
   #notaClienteBanner { display: none; align-items: flex-start; gap: 10px; padding: 10px 16px; background: #FFF8E1; border-bottom: 1px solid #F0DFA0; font-size: 13px; }
   #notaClienteBanner.activa { display: flex; }
   #notaClienteBanner.sin-nota .nota-cliente-texto { color: var(--texto-suave); font-style: italic; }
@@ -848,6 +851,11 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <span class="nota-cliente-icono">📝</span>
         <span class="nota-cliente-texto" id="notaClienteTexto"></span>
         <button class="chico gris" id="btnEditarNotaCliente" type="button">✏️ Nota</button>
+      </div>
+      <div id="validacionBanner" role="status">
+        <span>🔐</span>
+        <span class="txt" id="validacionTexto"></span>
+        <button class="chico" id="btnValidarManual" type="button">✅ Validar sin código</button>
       </div>
       <div id="chatEscucha"></div>
       <div id="respondiendoBanner">
@@ -1639,6 +1647,39 @@ function mostrarAlertaEncuesta(p) {
   while (cont.children.length > 4) cont.firstChild.remove();
 }
 
+// ---- Validar el celular sin código ----
+// Para el cliente al que no le llega el SMS ni puede usar WhatsApp y llama al call center: si la conversación
+// está esperando el código, el supervisor confirma por teléfono que es el titular del celular y la aprueba.
+let validacionPendienteActual = null, timerValidacion = null;
+function pintarValidacionPendiente(v) {
+  validacionPendienteActual = v || null;
+  const b = document.getElementById('validacionBanner');
+  if (!v) { b.classList.remove('activa'); return; }
+  document.getElementById('validacionTexto').innerHTML =
+    `El cliente está esperando el <b>código SMS</b> para validar el celular <b>${escapeHtml(v.celular || '(sin número)')}</b>. Si no le llega, puedes validarlo tú.`;
+  b.classList.add('activa');
+}
+function revisarValidacionPendiente() {
+  clearTimeout(timerValidacion);
+  timerValidacion = setTimeout(() => {
+    if (conversacionEscuchada && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'consultar_validacion_pendiente', payload: { conversacion_id: Number(conversacionEscuchada) } }));
+    }
+  }, 600);
+}
+document.getElementById('btnValidarManual').onclick = () => {
+  const v = validacionPendienteActual;
+  if (!v || !conversacionEscuchada || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const ok = confirm(`¿Validar el celular ${v.celular || ''} sin código?\n\n` +
+    'Hazlo solo si hablaste con el cliente y confirmaste que es el titular de ese celular ' +
+    '(por ejemplo, te llama desde ese número y confirmó sus datos). Al validarlo, podrá ver sus conversaciones ' +
+    'anteriores y continuar con su trámite. Quedará registrado que lo aprobaste tú.');
+  if (!ok) return;
+  const btn = document.getElementById('btnValidarManual');
+  btn.disabled = true; btn.textContent = 'Validando…';
+  ws.send(JSON.stringify({ type: 'validar_celular_manual', payload: { conversacion_id: Number(conversacionEscuchada) } }));
+};
+
 function conectarWs() {
   const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
   ws = new WebSocket(`${urlWs}/ws/supervisor?token=${tokenGuardado}`);
@@ -1694,6 +1735,7 @@ function conectarWs() {
       pintarTablero();
     } else if (data.type === 'mensaje_conversacion') {
       if (String(p.conversacion_id) === String(conversacionEscuchada)) {
+        revisarValidacionPendiente();
         const opcionesVivo = p.tipo_contenido === 'opciones' ? parsearOpcionesBot(p.contenido) : null;
         if (opcionesVivo) {
           const chatVivo = document.getElementById('chatEscucha');
@@ -1726,8 +1768,16 @@ function conectarWs() {
       if (String(p.conversacion_id) === String(conversacionEscuchada)) {
         aplicarMensajeEliminadoEscucha(p);
       }
+    } else if (data.type === 'validacion_pendiente') {
+      if (String(p.conversacion_id) === String(conversacionEscuchada)) pintarValidacionPendiente(p.validacion_pendiente);
+    } else if (data.type === 'validacion_manual_resultado') {
+      const btnV = document.getElementById('btnValidarManual');
+      btnV.disabled = false; btnV.textContent = '✅ Validar sin código';
+      if (p.ok) { pintarValidacionPendiente(null); alert(`Listo: el celular ${p.celular || ''} quedó validado y el cliente ya puede continuar en el chat.`); }
+      else alert(p.motivo || 'No se pudo validar.');
     } else if (data.type === 'historial_conversacion') {
       if (String(p.conversacion_id) === String(conversacionEscuchada)) {
+        pintarValidacionPendiente(p.validacion_pendiente);
         const chat = document.getElementById('chatEscucha');
         chat.innerHTML = '';
         (p.historial || []).forEach(m => {
@@ -2085,6 +2135,7 @@ function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni
   document.getElementById('btnDescargarPdf').href =
     `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(conversacionId)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
   document.getElementById('chatEscucha').innerHTML = '';
+  pintarValidacionPendiente(null);
 
   entradaColaActual = entradaCola || null;
   asignadoEnActual = asignadoEn || null;
@@ -2119,6 +2170,7 @@ function cerrarPanel() {
     ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
   }
   conversacionEscuchada = null;
+  pintarValidacionPendiente(null);
   if (intervaloTiempos) { clearInterval(intervaloTiempos); intervaloTiempos = null; }
   document.getElementById('panelVacio').style.display = 'flex';
   document.getElementById('panelHeader').classList.remove('activa');

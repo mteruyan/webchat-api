@@ -26,11 +26,15 @@
 #
 # ALLOWED_ORIGINS: solo los dominios de Sanitas (marketeru.pe, que se usó para pruebas, ya se retiró).
 
-# UNA SOLA INSTANCIA (--max-instances=1, --concurrency=400): el estado de los WebSockets (quién esta conectado,
+# UNA SOLA INSTANCIA (--max-instances=1, --concurrency=1000: el máximo de Cloud Run). OJO: el 30/10 el "Rate exceeded."
+# NO fue por falta de cupo (el pico real de la semana fue ~85 conexiones): el servidor se congeló, las peticiones se
+# acumularon sin terminar y llenaron los 400. Ver el vigía en main.py ("Vigía" en Cloud Logging).
+# --memory=1Gi: con el valor por defecto (512Mi) la memoria llegó al 88 % la semana del 23/10.
+# El estado de los WebSockets (quién esta conectado,
 # quién escucha cada conversación) vive en la memoria del proceso. Con 2+ instancias, el cliente puede quedar en
 # una y el asesor en otra y los mensajes no se entregan. No subir max-instances hasta migrar ese estado a Redis.
 # --no-cpu-throttling: la CPU queda siempre asignada (el aviso de inactividad corre en segundo plano).
-# El límite de conexiones de Cloud SQL (db-f1-micro = 25) es compartido con sofi-apis y otros: ver los pools en db.py.
+# Las conexiones de Cloud SQL (db-g1-small) se comparten con sofi-apis y otros: ver los pools en db.py (webchat 20 + sofi 3).
 
 # Nota sobre --set-env-vars: usamos el delimitador alterno "^;^" (en vez del
 # "," por defecto) precisamente para que ALLOWED_ORIGINS pueda llevar varias
@@ -43,4 +47,4 @@ gcloud run deploy webchat-api --source . \
   --add-cloudsql-instances=sanitas-recetas-prod:us-central1:sanitas-recetas-db \
   --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483" \
   --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest,VAPID_PRIVATE_KEY=webchat-vapid-private:latest \
-  --min-instances=1 --max-instances=1 --concurrency=400 --no-cpu-throttling --timeout=3600 --allow-unauthenticated
+  --min-instances=1 --max-instances=1 --concurrency=1000 --memory=1Gi --cpu=1 --no-cpu-throttling --timeout=3600 --allow-unauthenticated

@@ -59,8 +59,10 @@
     if (movil && sw > 0 && w > sw * 1.2) k = Math.min(w / sw, 3.5);
     host.style.setProperty("--k", String(k));
   };
-  // Tamaño del texto (solo celular): 3 niveles -- normal, +1 pt y +1.5 pt (máximo).
-  const FS_NIVELES_PX = [0, 1.33, 2];
+  // Tamaño del texto (solo celular): 3 niveles. El normal ya es más grande que en la computadora (mensajes de 16 px
+  // en vez de 14: se leían muy chicos en el celular) y los otros dos suben desde ahí. Con 16 px en la caja de texto,
+  // además, el iPhone no hace zoom al tocarla.
+  const FS_NIVELES_PX = [2, 3.5, 5];
   const CLAVE_FUENTE = "sanitas_webchat_fuente";
   let fsNivel = 0;
   try { const g = parseInt(localStorage.getItem(CLAVE_FUENTE), 10); if (g >= 0 && g < FS_NIVELES_PX.length) fsNivel = g; } catch (e) { /* sin almacenamiento */ }
@@ -189,15 +191,23 @@
        viejos más arriba (no pegada al final) — así se entera sin que la
        bajemos de un jalón y le hagamos perder el lugar en el que estaba
        leyendo. */
+    /* Botón "ir al final" como en WhatsApp: aparece siempre que no se está viendo lo último, con la cantidad de
+       mensajes nuevos que llegaron mientras tanto. */
     .nuevo-mensaje {
-      display: none; position: absolute; left: 50%; bottom: 78px;
-      transform: translateX(-50%) translateY(6px);
-      background: ${TOKENS.azul}; color: white; border: none; border-radius: 999px;
-      padding: 8px 16px; font-size: 13px; font-family: inherit; cursor: pointer;
-      align-items: center; gap: 6px; box-shadow: 0 4px 14px rgba(10,30,50,.28);
-      opacity: 0; transition: opacity .15s ease, transform .15s ease; z-index: 5;
+      display: none; position: absolute; right: 14px; bottom: 78px; width: 42px; height: 42px; padding: 0;
+      background: white; color: ${TOKENS.azul}; border: 1px solid ${TOKENS.borde}; border-radius: 50%;
+      font-family: inherit; cursor: pointer; align-items: center; justify-content: center;
+      box-shadow: 0 3px 12px rgba(10,30,50,.22); opacity: 0; transform: translateY(6px);
+      transition: opacity .15s ease, transform .15s ease; z-index: 5;
     }
-    .nuevo-mensaje.visible { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
+    .nuevo-mensaje svg { width: 22px; height: 22px; }
+    .nuevo-mensaje.visible { display: flex; opacity: 1; transform: translateY(0); }
+    .nuevo-mensaje .nm-cuenta {
+      position: absolute; top: -6px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box;
+      background: ${TOKENS.azul}; color: white; border-radius: 999px; font-size: 11px; font-weight: 700;
+      display: none; align-items: center; justify-content: center;
+    }
+    .nuevo-mensaje .nm-cuenta.con { display: flex; }
     .cabecera {
       background: linear-gradient(135deg, ${TOKENS.azul}, ${TOKENS.azulOscuro});
       color: white; padding: 16px; display: flex; align-items: center; gap: 10px;
@@ -272,6 +282,40 @@
     .sep-actual { color: ${TOKENS.azul}; font-weight: 600; }
     .sep-actual::before, .sep-actual::after { background: ${TOKENS.azul}; opacity: .35; }
     .sep-fin { justify-content: center; font-style: italic; opacity: .85; margin-top: 4px; }
+    /* Guía para adjuntar archivos (SCTR y botón "📎 Guía" del asesor) */
+    .ayuda-arch { background: white; border: 1px solid ${TOKENS.borde}; border-radius: 14px; padding: 12px; margin: 6px 0 10px;
+      box-shadow: 0 1px 3px rgba(10,30,50,.06); max-width: 340px; }
+    .ayuda-arch .aa-tit { font-weight: 700; color: ${TOKENS.azul}; font-size: calc(14px + var(--fs, 0px)); margin: 2px 2px 10px; }
+    .ayuda-arch .aa-op { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; background: ${TOKENS.fondo};
+      border: 1px solid ${TOKENS.borde}; border-radius: 10px; padding: 9px 10px; margin-bottom: 7px; cursor: pointer;
+      font-family: inherit; color: ${TOKENS.texto}; }
+    .ayuda-arch .aa-op:hover { border-color: ${TOKENS.azul}; }
+    .ayuda-arch .aa-op:disabled { opacity: .6; cursor: default; }
+    .ayuda-arch .aa-ic { font-size: 20px; line-height: 1.1; flex-shrink: 0; }
+    .ayuda-arch .aa-op b { display: block; font-size: calc(13.5px + var(--fs, 0px)); }
+    .ayuda-arch .aa-op small { display: block; font-size: calc(12px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; margin-top: 1px; line-height: 1.35; }
+    .ayuda-arch .aa-det { background: #F3F7FB; border-radius: 10px; padding: 9px 11px; margin: -3px 0 8px; font-size: calc(12.5px + var(--fs, 0px)); line-height: 1.45; }
+    .ayuda-arch .aa-det ol { margin: 0; padding-left: 18px; }
+    .ayuda-arch .aa-enlace { width: 100%; box-sizing: border-box; font-size: 12px; padding: 7px 8px; border: 1px solid ${TOKENS.borde};
+      border-radius: 8px; background: white; color: ${TOKENS.texto}; margin: 6px 0; font-family: inherit; }
+    .ayuda-arch .aa-bts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ayuda-arch .aa-bts button, .ayuda-arch .aa-bts a { flex: 1; min-width: 120px; text-align: center; border-radius: 8px; padding: 8px;
+      font-size: calc(12.5px + var(--fs, 0px)); font-weight: 600; cursor: pointer; font-family: inherit; text-decoration: none; border: 0; }
+    .ayuda-arch .aa-copiar { background: white; color: ${TOKENS.azul}; border: 1px solid ${TOKENS.azul} !important; }
+    .ayuda-arch .aa-wa { background: #25D366; color: white; }
+    .ayuda-arch .aa-nota { font-size: calc(11.5px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; margin: 4px 2px 0; }
+    /* Fechas como en WhatsApp: separador por día ("Hoy", "Ayer", "Lunes", "12 de octubre") y la fecha
+       flotante arriba mientras se hace scroll */
+    .sep-dia { display: flex; justify-content: center; margin: 12px 0 8px; pointer-events: none; }
+    .sep-dia span, .fecha-flotante {
+      background: #E8EEF5; color: #3E5065; font-size: calc(11.5px + var(--fs, 0px)); font-weight: 600;
+      padding: 4px 12px; border-radius: 8px; box-shadow: 0 1px 1px rgba(10,30,50,.08); letter-spacing: .2px;
+    }
+    .fecha-flotante {
+      position: absolute; left: 50%; transform: translate(-50%, -6px); z-index: 4; opacity: 0;
+      transition: opacity .2s, transform .2s; pointer-events: none; white-space: nowrap;
+    }
+    .fecha-flotante.visible { opacity: 1; transform: translate(-50%, 0); }
     .cargando-previo { text-align: center; color: ${TOKENS.textoSuave}; font-size: 12px; padding: 6px 0 10px; }
     .msg.previo .archivo-no-disponible { display: block; font-style: italic; color: ${TOKENS.textoSuave}; opacity: .9; }
     .cuerpo { flex: 1; overflow-y: auto; padding: 16px; background: ${TOKENS.fondo}; scroll-behavior: smooth; }
@@ -406,11 +450,11 @@
     }
     .guardada .activar-avisos:hover { background: #DCE7F2; }
     .guardada .ocultar-guardada {
-      position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; padding: 0;
-      background: none; border: 0; border-radius: 50%; color: #9AA8B6; font-size: 12px;
+      position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; padding: 0;
+      background: #E6ECF2; border: 0; border-radius: 50%; color: #3E5065; font-size: 16px; font-weight: 700; line-height: 1;
       cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s;
     }
-    .guardada .ocultar-guardada:hover { background: ${TOKENS.burbujaBot}; color: ${TOKENS.texto}; }
+    .guardada .ocultar-guardada:hover, .guardada .ocultar-guardada:focus-visible { background: #D3DDE8; color: ${TOKENS.texto}; outline: none; }
     .qr-panel {
       display: none; position: absolute; inset: 0; z-index: 20; background: rgba(255,255,255,.98);
       flex-direction: column; align-items: center; justify-content: center; gap: 12px;
@@ -725,7 +769,7 @@
         <button type="button" class="qr-regenerar" style="display:none;">Generar otro código</button>
         <button type="button" class="qr-cerrar">Cerrar</button>
       </div>
-      <button class="nuevo-mensaje" type="button">Mensaje nuevo ⬇️</button>
+      <button class="nuevo-mensaje" type="button" aria-label="Ir al último mensaje" title="Ir al último mensaje"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg><span class="nm-cuenta"></span></button>
       <div class="responder-banner">
         <span class="texto-cita"></span>
         <button class="cancelar-responder" type="button" aria-label="Cancelar respuesta">✕</button>
@@ -1118,6 +1162,7 @@
   // atendida por un asesor humano -- ver "asignado"/"en_cola"/"mensaje_bot"
   // /"conversacion_cerrada" en el switch del WebSocket, y actualizarIconoEnviar().
   let atendidoPorAsesor = false;
+  let esperandoAsesor = false;     // en cola: al volver del reposo también se reconecta (para ver cuando lo asignan)
 
   function urlArchivoWidget(ruta, convId) {
     return `${API_BASE}/widget/archivo?conversacion_id=${encodeURIComponent(convId || conversacionIdActual)}`
@@ -1132,6 +1177,49 @@
   let intentosReconexion = 0;
   let reconectando = false;
   let cerradoManualmente = false;
+  // ---------------------------------------------------------------------
+  // Reposo: la conexión se suelta cuando el chat no se está usando (cerrado 5 min, o la pestaña en segundo plano
+  // 3 min) y se vuelve a abrir sola al regresar. El servidor tiene un tope de conexiones simultáneas (Cloud Run,
+  // una instancia): así no lo ocupan las pestañas olvidadas. Mientras tanto, si el asesor responde, al cliente le
+  // llega el aviso push o el SMS, como cuando cierra la página. Al volver se recupera todo con el historial.
+  // ---------------------------------------------------------------------
+  const REPOSO_CERRADO_MS = 5 * 60 * 1000;
+  const REPOSO_OCULTO_MS = 3 * 60 * 1000;
+  let enReposo = false;
+  let ultimoIdAntesDeReposo = 0;
+  let timerReposo = null;
+  function ultimoIdMensaje() {
+    let max = 0;
+    $cuerpo.querySelectorAll(".msg[data-id]").forEach((el) => { const n = Number(el.dataset.id) || 0; if (n > max) max = n; });
+    return max;
+  }
+  function programarReposo() {
+    clearTimeout(timerReposo);
+    const oculta = document.visibilityState === "hidden";
+    if (panelAbierto && !oculta) return;            // lo está usando
+    timerReposo = setTimeout(soltarConexion, oculta ? REPOSO_OCULTO_MS : REPOSO_CERRADO_MS);
+  }
+  function soltarConexion() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (panelAbierto && document.visibilityState !== "hidden") return;
+    // Nada a medias: mensajes sin confirmar, una subida o una nota de voz. Se reintenta más tarde.
+    if (outbox.length || grabandoAudio || $adjuntarBtn.disabled) { programarReposo(); return; }
+    enReposo = true;
+    ultimoIdAntesDeReposo = ultimoIdMensaje();
+    const viejo = ws;
+    ws = null;
+    conexionLista = false;
+    try { viejo.close(1000, "reposo"); } catch (e) { /* ya cerrada */ }
+  }
+  let volviendoDeReposo = false;   // al reconectar no se repiten los avisos "En cola" / "Te está atendiendo…"
+  function salirDeReposo() {
+    clearTimeout(timerReposo);
+    if (!enReposo) return;
+    enReposo = false;
+    volviendoDeReposo = true;
+    intentosReconexion = 0;
+    if (!ws && !cerradoManualmente && !movidoAOtroDispositivo) conectar();
+  }
 
   // Textos/sonido parametrizables desde /editor (configuracion_global) — se
   // usa un valor por defecto mientras llega la respuesta, o si el fetch falla.
@@ -1257,7 +1345,14 @@
   }
   document.addEventListener("visibilitychange", () => {
     reportarVisibilidad();
-    if (document.visibilityState === "visible") marcarLeidoSiLoVe();
+    if (document.visibilityState === "visible") {
+      marcarLeidoSiLoVe();
+      // Al volver: si tenía el chat abierto o lo atiende un asesor, se reconecta (con el globo de no leídos al día).
+      if (enReposo && (panelAbierto || atendidoPorAsesor || esperandoAsesor)) salirDeReposo();
+      if (!panelAbierto) programarReposo(); else clearTimeout(timerReposo);
+    } else {
+      programarReposo();
+    }
   });
   window.addEventListener("pagehide", () => { ultimaVisibilidadInformada = null; reportarVisibilidad(); });
 
@@ -1335,13 +1430,16 @@
     noLeidos = 0;
     actualizarBadge();
     if (modoEncuestaSms) { scrollAlFinal(); return; }   // solo la encuesta del SMS: sin conversación hasta que quiera escribir
-    if (!ws) conectar();
+    clearTimeout(timerReposo);
+    if (enReposo) { salirDeReposo(); }
+    else if (!ws) conectar();
     else { marcarLeidoSiLoVe(); reportarVisibilidad(); }
     scrollAlFinal();
     revisarHistorialPrevio(700);
   }
   function cerrarPanel() {
     panelAbierto = false;
+    programarReposo();
     $panel.classList.remove("abierto");
     $burbuja.classList.remove("oculta");
     reportarVisibilidad();
@@ -1520,6 +1618,10 @@
   // Render de mensajes
   // ---------------------------------------------------------------------
   let scrollPendiente = false;
+  let pegadoAlFinal = true;   // ver mantenerAbajo()
+  let bajandoHasta = 0;       // mientras dura el scroll suave hacia abajo, no cuenta como "subió a leer"
+  let mensajesSinVer = 0;
+  const $nmCuenta = $nuevoMensaje.querySelector(".nm-cuenta");
   let checksPendientesRecibido = []; // FIFO: el orden de llegada de las confirmaciones coincide con el de envío
   let divsPendientesId = []; // FIFO paralelo: le asigna a cada burbuja propia su "id" real de la base de datos en cuanto el servidor confirma, para poder editarla/responderla/eliminarla después
   function scrollAlFinal() {
@@ -1529,12 +1631,31 @@
     // medio camino con otro es lo que lo dejaba cortado antes de llegar al final.
     if (scrollPendiente) return;
     scrollPendiente = true;
+    pegadoAlFinal = true;
+    bajandoHasta = Date.now() + 700;
     requestAnimationFrame(() => {
       scrollPendiente = false;
       $cuerpo.scrollTop = $cuerpo.scrollHeight;
     });
     ocultarIndicadorNuevoMensaje();
   }
+  // "Pegado al final" (como WhatsApp): mientras la persona esté viendo lo último, todo lo que cambie de alto
+  // (una foto que termina de cargar, los botones del bot, el teclado del celular que se abre o cierra) la mantiene
+  // abajo. Si subió a leer algo anterior, no se la mueve: aparece el botón para bajar.
+  function mantenerAbajo() {
+    if (!pegadoAlFinal) return;
+    bajandoHasta = Date.now() + 300;   // no es un scroll de la persona: sin fecha flotante
+    $cuerpo.scrollTop = $cuerpo.scrollHeight;
+  }
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => mantenerAbajo());
+    ro.observe($cuerpo);
+    new MutationObserver((cambios) => cambios.forEach((c) => c.addedNodes.forEach((n) => {
+      if (n.nodeType === 1) ro.observe(n);
+    }))).observe($cuerpo, { childList: true });
+  }
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", () => requestAnimationFrame(mantenerAbajo));
+  $cuerpo.addEventListener("load", (e) => { if (e.target && e.target.tagName === "IMG") mantenerAbajo(); }, true);
 
   // Umbral de "está viendo el final del chat" — si el usuario se desplazó
   // más arriba que esto (revisando mensajes viejos), un mensaje nuevo no lo
@@ -1543,14 +1664,24 @@
   function estaCercaDelFinal() {
     return $cuerpo.scrollHeight - $cuerpo.scrollTop - $cuerpo.clientHeight < 80;
   }
-  function mostrarIndicadorNuevoMensaje() {
+  function mostrarIndicadorNuevoMensaje(nuevo) {
+    if (nuevo) mensajesSinVer++;
+    $nmCuenta.textContent = mensajesSinVer > 99 ? "99+" : String(mensajesSinVer);
+    $nmCuenta.classList.toggle("con", mensajesSinVer > 0);
+    $nuevoMensaje.setAttribute("aria-label", mensajesSinVer ? `Ir al último mensaje (${mensajesSinVer} nuevos)` : "Ir al último mensaje");
     $nuevoMensaje.classList.add("visible");
   }
   function ocultarIndicadorNuevoMensaje() {
+    mensajesSinVer = 0;
+    $nmCuenta.classList.remove("con");
     $nuevoMensaje.classList.remove("visible");
   }
   $cuerpo.addEventListener("scroll", () => {
-    if (estaCercaDelFinal()) ocultarIndicadorNuevoMensaje();
+    // Lejos del final (más de media pantalla), el botón para bajar siempre está a mano.
+    if (Date.now() < bajandoHasta && !estaCercaDelFinal()) return;
+    pegadoAlFinal = estaCercaDelFinal();
+    if (pegadoAlFinal) ocultarIndicadorNuevoMensaje();
+    else if ($cuerpo.scrollHeight - $cuerpo.scrollTop - $cuerpo.clientHeight > Math.max(160, $cuerpo.clientHeight * 0.5)) mostrarIndicadorNuevoMensaje(false);
     if ($cuerpo.scrollTop < 80) pedirHistorialPrevio();
   }, { passive: true });
 
@@ -1593,17 +1724,13 @@
       }
     }, ms || 400);
   }
-  function fechaCorta(iso) {
-    if (!iso) return "";
-    try { return new Date(iso).toLocaleDateString("es-PE", { day: "numeric", month: "short", year: "numeric" }); }
-    catch (e) { return ""; }
-  }
   function crearSeparadorConv(convId, info) {
     if (sepPorConv[convId]) sepPorConv[convId].remove();
     const sep = document.createElement("div");
     sep.className = "sep-hist";
     const t = document.createElement("span");
-    const partes = ["Conversación anterior", fechaCorta(info && info.iniciado_en)];
+    // La fecha ya la muestra el separador del día; aquí, de qué fue esa conversación.
+    const partes = ["Conversación anterior"];
     if (info && info.campana) partes.push(info.campana);
     t.textContent = partes.filter(Boolean).join(" · ");
     sep.appendChild(t);
@@ -1614,6 +1741,7 @@
     const tipo = m.emisor_tipo === "usuario" ? "usuario" : m.emisor_tipo === "sistema" ? "sistema" : "bot";
     const div = document.createElement("div");
     div.className = "msg previo " + tipo;
+    div.dataset.enviado = String(m.enviado_en ? new Date(m.enviado_en).getTime() : 0);
     if (m.eliminado_en) {
       div.classList.add("eliminado");
       const sp = document.createElement("span");
@@ -1700,6 +1828,7 @@
       frag.insertBefore(fin, frag.firstChild);
     }
     $cuerpo.insertBefore(frag, $cuerpo.firstChild);
+    actualizarSeparadoresDia(false);   // antes de medir, para que la posición no salte
     previoCursor = msgs[0].id;
     previoCargados += msgs.length;
     previoFin = !p.hay_mas;
@@ -1720,6 +1849,108 @@
     scrollAlFinal();
     marcarLeidoSiLoVe();
   });
+
+  // ---------------------------------------------------------------------
+  // Fechas como en WhatsApp: un separador cada vez que cambia el día ("Hoy", "Ayer", "Martes",
+  // "12 de octubre", "12 de octubre de 2025") y, mientras se hace scroll, la fecha de lo que se está
+  // viendo flotando arriba. Así, al subir a conversaciones anteriores se sabe de cuándo son.
+  // ---------------------------------------------------------------------
+  const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+  const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  function claveDia(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate(); }
+  function etiquetaDia(ms) {
+    const d = new Date(ms);
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    const dia = new Date(d); dia.setHours(0, 0, 0, 0);
+    const dif = Math.round((hoy - dia) / 86400000);
+    if (dif === 0) return "Hoy";
+    if (dif === 1) return "Ayer";
+    if (dif > 1 && dif < 7) return DIAS_SEMANA[d.getDay()];
+    return `${d.getDate()} de ${MESES[d.getMonth()]}` + (d.getFullYear() !== hoy.getFullYear() ? ` de ${d.getFullYear()}` : "");
+  }
+  const msDe = (el) => Number((el && el.dataset && el.dataset.enviado) || 0);
+  let rehaciendoDias = false;
+  // Rehace todos los separadores de día. conservarVista: mantiene en su lugar lo que la persona está mirando
+  // (si se agregan separadores arriba de lo visible, el contenido no salta).
+  function actualizarSeparadoresDia(conservarVista) {
+    rehaciendoDias = true;
+    try {
+      const abajo = estaCercaDelFinal();
+      let ancla = null, desfase = 0;
+      if (conservarVista && !abajo) {
+        ancla = [...$cuerpo.children].find((el) => !el.classList.contains("sep-dia") && el.offsetTop + el.offsetHeight > $cuerpo.scrollTop);
+        if (ancla) desfase = ancla.offsetTop - $cuerpo.scrollTop;
+      }
+      $cuerpo.querySelectorAll(":scope > .sep-dia").forEach((el) => el.remove());
+      let diaPrevio = null;
+      [...$cuerpo.children].forEach((el) => {
+        if (!el.classList.contains("msg")) return;
+        const ms = msDe(el);
+        if (!ms) return;
+        const clave = claveDia(new Date(ms));
+        if (clave === diaPrevio) return;
+        diaPrevio = clave;
+        const sep = document.createElement("div");
+        sep.className = "sep-dia";
+        sep.dataset.enviado = String(ms);
+        const t = document.createElement("span");
+        t.textContent = etiquetaDia(ms);
+        sep.appendChild(t);
+        // Va antes del separador "Conversación anterior / actual" que encabeza ese mensaje, si lo hay.
+        let antes = el;
+        while (antes.previousElementSibling && /\bsep-(hist|actual)\b/.test(antes.previousElementSibling.className)) antes = antes.previousElementSibling;
+        $cuerpo.insertBefore(sep, antes);
+      });
+      if (ancla) {
+        $cuerpo.style.scrollBehavior = "auto";
+        $cuerpo.scrollTop = ancla.offsetTop - desfase;
+        $cuerpo.style.scrollBehavior = "";
+      } else if (conservarVista && abajo) {
+        $cuerpo.style.scrollBehavior = "auto";
+        $cuerpo.scrollTop = $cuerpo.scrollHeight;
+        $cuerpo.style.scrollBehavior = "";
+      }
+    } finally {
+      rehaciendoDias = false;
+    }
+  }
+  // Cualquier mensaje nuevo (en vivo, reconexión, historial anterior) vuelve a ordenar los separadores.
+  let diasPendiente = false;
+  new MutationObserver((cambios) => {
+    if (rehaciendoDias || diasPendiente) return;
+    const relevante = cambios.some((c) => [...c.addedNodes, ...c.removedNodes].some((n) => n.nodeType === 1 && n.classList.contains("msg")));
+    if (!relevante) return;
+    diasPendiente = true;
+    requestAnimationFrame(() => { diasPendiente = false; actualizarSeparadoresDia(true); });
+  }).observe($cuerpo, { childList: true });
+  // A medianoche "Hoy" pasa a ser "Ayer" aunque el chat siga abierto.
+  setInterval(() => {
+    $cuerpo.querySelectorAll(":scope > .sep-dia").forEach((el) => {
+      const t = etiquetaDia(msDe(el));
+      if (el.firstChild && el.firstChild.textContent !== t) el.firstChild.textContent = t;
+    });
+  }, 60000);
+
+  const $fechaFlotante = document.createElement("div");
+  $fechaFlotante.className = "fecha-flotante";
+  $fechaFlotante.setAttribute("aria-hidden", "true");
+  $panel.appendChild($fechaFlotante);
+  let fechaTimer = null;
+  function mostrarFechaFlotante() {
+    if (Date.now() < bajandoHasta) return;   // bajada automática al último mensaje: no hace falta la fecha
+    const arriba = $cuerpo.scrollTop;
+    // El primer mensaje (o separador de día) visible define la fecha.
+    const primero = [...$cuerpo.children].find((el) => msDe(el) && el.offsetTop + el.offsetHeight > arriba + 4);
+    if (!primero || $cuerpo.scrollHeight <= $cuerpo.clientHeight + 4) return;
+    // Si el separador de ese día ya se ve arriba, no hace falta repetirlo.
+    const sepVisible = [...$cuerpo.querySelectorAll(":scope > .sep-dia")].some((s) => s.offsetTop >= arriba && s.offsetTop < arriba + 34);
+    $fechaFlotante.textContent = etiquetaDia(msDe(primero));
+    $fechaFlotante.style.top = ($cuerpo.offsetTop + 8) + "px";
+    $fechaFlotante.classList.toggle("visible", !sepVisible);
+    clearTimeout(fechaTimer);
+    fechaTimer = setTimeout(() => $fechaFlotante.classList.remove("visible"), 1300);
+  }
+  $cuerpo.addEventListener("scroll", mostrarFechaFlotante, { passive: true });
 
   function formatearHora(fecha) {
     const d = fecha ? new Date(fecha) : new Date();
@@ -2018,10 +2249,10 @@
     // estaba revisando mensajes viejos más arriba, un mensaje del bot o del
     // asesor NO la arrastra de un jalón — solo se enciende la flechita
     // "Mensaje nuevo ⬇️" para que decida cuándo bajar.
-    if (tipo === "usuario" || cercaDelFinalAntes) {
+    if (tipo === "usuario" || cercaDelFinalAntes || pegadoAlFinal) {
       scrollAlFinal();
     } else {
-      mostrarIndicadorNuevoMensaje();
+      mostrarIndicadorNuevoMensaje(true);
     }
     if (!panelAbierto && tipo !== "usuario") {
       noLeidos++;
@@ -2411,7 +2642,7 @@
     const ancla = acciones.length ? acciones[acciones.length - 1] : null;
     if (ancla) $cuerpo.insertBefore(card, ancla); else $cuerpo.appendChild(card);
     if (estaCercaDelFinal() || ancla || p.codigo_sms) card.scrollIntoView({ block: "start", behavior: p.codigo_sms ? "auto" : "smooth" });
-    else mostrarIndicadorNuevoMensaje();
+    else mostrarIndicadorNuevoMensaje(true);
     if (!panelAbierto) { noLeidos++; actualizarBadge(); }
   }
 
@@ -2839,6 +3070,8 @@
   }
 
   function quitarAccionesOtp() {
+    $textoInput.removeAttribute("autocomplete");
+    $textoInput.removeAttribute("inputmode");
     if (waTimerAparece) { clearTimeout(waTimerAparece); waTimerAparece = null; }
     if (otpTimerId) {
       clearInterval(otpTimerId);
@@ -2852,6 +3085,9 @@
 
   function agregarAccionesOtp(reenvios, puedeLlamar) {
     quitarAccionesOtp();
+    // El teclado del celular ofrece el código que llegó por SMS (iPhone: "De Mensajes"; Android: sugerencia).
+    $textoInput.setAttribute("autocomplete", "one-time-code");
+    $textoInput.setAttribute("inputmode", "numeric");
     const cont = document.createElement("div");
     cont.className = "opciones";
 
@@ -3182,6 +3418,7 @@
     sesionTokenActual = sesionToken;
     const url = `${WS_BASE}/ws/widget${sesionToken ? "?sesion_token=" + encodeURIComponent(sesionToken) : ""}`;
     ws = new WebSocket(url);
+    const esteWs = ws;   // para no confundir el cierre tardío de una conexión vieja con la actual
 
     ws.onopen = () => {
       conexionLista = false;
@@ -3210,6 +3447,7 @@
 
     ws.onclose = () => {
       clearInterval(latido);
+      if (ws !== esteWs) return;   // ya se reemplazó (o se soltó por reposo): no tocar la conexión actual
       quitarEscribiendo();
       ws = null;
       conexionLista = false;
@@ -3218,6 +3456,7 @@
         $enviarBtn.disabled = true;
         return;
       }
+      if (enReposo) return;   // se soltó a propósito: se reconecta al volver (salirDeReposo)
       // Sin red el campo sigue habilitado: lo que escriba queda en cola y se envía al reconectar.
 
       reconectando = true;
@@ -3261,7 +3500,12 @@
         case "encuesta_resultado":
           resultadoEncuesta(p);
           break;
+        case "archivo_reutilizado":
+          // Archivos de su última solicitud que el cliente eligió reenviar (SCTR): se ven como enviados por él.
+          agregarMensaje(`📎 ${p.nombre || "Archivo"}`, "usuario", urlArchivoWidget(p.ruta), p.ruta);
+          break;
         case "traspaso_listo":
+          if (p.para === "pc") { mostrarEnlacePc(p); break; }
           $qrImg.src = p.qr;
           $qrImg.style.display = "";
           $qrEstado.textContent = `Válido por ${Math.round(p.expira_seg / 60)} minutos y de un solo uso.`;
@@ -3273,6 +3517,7 @@
           }, p.expira_seg * 1000);
           break;
         case "traspaso_error":
+          if (ayudaPcPendiente) { ayudaPcPendiente.textContent = "No pudimos generar el enlace. Inténtalo de nuevo en un momento."; ayudaPcPendiente = null; break; }
           $qrEstado.textContent = "No pudimos generar el código. Inténtalo de nuevo.";
           $qrRegenerar.style.display = "";
           break;
@@ -3335,11 +3580,20 @@
           scrollAlFinal();
           break;
         case "historial":
+          // Al volver del reposo con el chat cerrado: lo que llegó mientras tanto cuenta como no leído en la burbuja.
+          if (ultimoIdAntesDeReposo && !panelAbierto) {
+            const nuevos = (p.mensajes || []).filter((m) => (Number(m.id) || 0) > ultimoIdAntesDeReposo
+              && m.emisor_tipo !== "usuario" && m.tipo_contenido !== "opciones").length;
+            if (nuevos) { noLeidos += nuevos; actualizarBadge(); }
+          }
+          ultimoIdAntesDeReposo = 0;
+          if (volviendoDeReposo) setTimeout(() => { volviendoDeReposo = false; }, 3000);  // el estado llega justo después
           // Reconstruye la pantalla tras una reconexión (deploy, corte de red, etc.)
           $cuerpo.innerHTML = "";
           resetPrevio();
           (p.mensajes || []).forEach((msg, i, arr) => agregarMensajeHistorial(msg, i === arr.length - 1));
           if (avisoUnion) { agregarMensaje(avisoUnion, "sistema"); avisoUnion = ""; }
+          actualizarSeparadoresDia(false);
           scrollAlFinal();
           revisarHistorialPrevio(500);
           marcarConexionLista(true);
@@ -3352,6 +3606,7 @@
         case "mensaje_bot":
           agregarMensaje(p.texto, "bot", p.imagen_url);
           if (p.opciones) agregarOpciones(p.opciones);
+          if (p.widget === "ayuda_archivos") mostrarAyudaArchivos(!!p.plantilla);
           // "codigo_nodo" llega en TODO captura_dato (ver bot_engine.py);
           // acá solo nos importa cuando es el que pide el código OTP, para
           // mostrarle a la persona el botón de reenviar/llamar. El reenvío
@@ -3442,16 +3697,20 @@
         }
         case "en_cola":
           $estadoTexto.textContent = "En cola";
-          agregarMensaje("⏳ En breve te atenderá un asesor...", "sistema");
+          if (!volviendoDeReposo) agregarMensaje("⏳ En breve te atenderá un asesor...", "sistema");
+          volviendoDeReposo = false;
           avisoPuedesSalir();
           atendidoPorAsesor = false;
+          esperandoAsesor = true;
           actualizarIconoEnviar();
           break;
         case "asignado":
           $estadoTexto.textContent = `Con ${p.asesor_nombre}`;
-          agregarMensaje(`✅ Te está atendiendo ${p.asesor_nombre}`, "sistema");
+          if (!volviendoDeReposo) agregarMensaje(`✅ Te está atendiendo ${p.asesor_nombre}`, "sistema");
+          volviendoDeReposo = false;
           avisoPuedesSalir();
           atendidoPorAsesor = true;
+          esperandoAsesor = false;
           actualizarIconoEnviar();
           break;
         case "conversacion_cerrada":
@@ -3460,6 +3719,7 @@
           agregarMensaje("— Conversación finalizada —", "sistema");
           agregarAccionesCierre();
           atendidoPorAsesor = false;
+          esperandoAsesor = false;
           actualizarIconoEnviar();
           break;
       }
@@ -3579,7 +3839,7 @@
   window.addEventListener("online", () => {
     if (cerradoManualmente || movidoAOtroDispositivo) return;
     if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch (e) { /* ya cerrada */ } }
-    else if (!ws && !modoEncuestaSms) { intentosReconexion = 0; conectar(); }
+    else if (!ws && !modoEncuestaSms && !enReposo) { intentosReconexion = 0; conectar(); }
   });
 
   // ---------------------------------------------------------------------
@@ -3924,6 +4184,71 @@
     confirmarPegadas(archivos);
   });
 
+  // ---------------------------------------------------------------------
+  // Guía para adjuntar archivos: las formas de enviarnos la planilla, cada una con un botón que la hace.
+  // ---------------------------------------------------------------------
+  let ayudaPcPendiente = null;   // caja donde mostrar el enlace para la computadora cuando llegue
+  function mostrarAyudaArchivos(conPlantilla) {
+    const esMovil = host.classList.contains("movil");
+    const card = document.createElement("div");
+    card.className = "ayuda-arch";
+    const op = (accion, icono, titulo, detalle) =>
+      `<button type="button" class="aa-op" data-a="${accion}"><span class="aa-ic">${icono}</span><span><b>${titulo}</b><small>${detalle}</small></span></button>`;
+    card.innerHTML = `<div class="aa-tit">📎 ¿Cómo enviarnos tu archivo?</div>
+      ${op("adjuntar", "📎", esMovil ? "Desde este celular" : "Desde esta computadora", "Toca aquí y elige tu Excel, PDF o foto.")}
+      ${esMovil ? op("pc", "💻", "Enviarlo desde mi computadora", "¿Tu Excel está en la PC? Te damos un enlace para abrir este mismo chat allí.") + '<div class="aa-det aa-pc" hidden></div>' : ""}
+      ${op("wa", "📲", "Me llegó por WhatsApp o correo", "Mira cómo guardarlo primero para poder enviarlo.")}
+      <div class="aa-det aa-pasos" hidden><ol>
+        <li>Abre el archivo en WhatsApp o en tu correo.</li>
+        <li>Toca <b>⋮</b> o <b>Compartir</b> y elige <b>Guardar</b> o <b>Descargar</b>.</li>
+        <li>Vuelve aquí, toca <b>📎 › Documento</b> y búscalo en <b>Descargas</b>.</li></ol></div>
+      ${conPlantilla ? op("plantilla", "📥", "¿No tienes la planilla?", "Genera tu plantilla Excel de SCTR, complétala y envíanosla.") : ""}
+      <div class="aa-nota">Excel, CSV, PDF o foto · hasta 20 MB</div>`;
+    // Abre el mismo menú del 📎 (Documento, Fotos, Cámara), para que elija el tipo de archivo.
+    card.querySelector('[data-a="adjuntar"]').onclick = (e) => { e.stopPropagation(); $adjuntarMenu.classList.add("abierto"); };
+    const pasos = card.querySelector(".aa-pasos");
+    card.querySelector('[data-a="wa"]').onclick = () => { pasos.hidden = !pasos.hidden; mantenerAbajo(); };
+    const bPc = card.querySelector('[data-a="pc"]');
+    if (bPc) bPc.onclick = () => {
+      const caja = card.querySelector(".aa-pc");
+      caja.hidden = false;
+      caja.textContent = "Generando tu enlace…";
+      ayudaPcPendiente = caja;
+      enviar({ type: "generar_traspaso", payload: { url: window.location.origin + window.location.pathname, para: "pc" } });
+      mantenerAbajo();
+    };
+    const bPl = card.querySelector('[data-a="plantilla"]');
+    if (bPl) bPl.onclick = () => {
+      bPl.disabled = true;
+      bPl.querySelector("small").textContent = "Generando tu plantilla…";
+      enviar({ type: "generar_plantilla_sctr", payload: {} });
+      setTimeout(() => { bPl.disabled = false; bPl.querySelector("small").textContent = "Genera tu plantilla Excel de SCTR, complétala y envíanosla."; }, 20000);
+    };
+    $cuerpo.appendChild(card);
+    scrollAlFinal();
+  }
+  function mostrarEnlacePc(p) {
+    const caja = ayudaPcPendiente || $cuerpo.querySelector(".ayuda-arch .aa-pc:not([hidden])");
+    ayudaPcPendiente = null;
+    if (!caja || !p.enlace) return;
+    const minutos = Math.round((p.expira_seg || 1800) / 60);
+    const textoWa = "Enlace para seguir mi chat de Sanitas en la computadora y enviar mi archivo: " + p.enlace;
+    caja.innerHTML = `Abre este enlace en tu computadora (vale ${minutos} minutos y una sola vez):
+      <input class="aa-enlace" readonly>
+      <div class="aa-bts"><button type="button" class="aa-copiar">Copiar enlace</button>
+      <a class="aa-wa" target="_blank" rel="noopener">Enviármelo por WhatsApp</a></div>
+      <div style="margin-top:6px">Tip: envíatelo por WhatsApp y ábrelo en <b>WhatsApp Web</b> desde tu PC.</div>`;
+    const inp = caja.querySelector(".aa-enlace");
+    inp.value = p.enlace;
+    caja.querySelector(".aa-wa").href = "https://wa.me/?text=" + encodeURIComponent(textoWa);
+    const bc = caja.querySelector(".aa-copiar");
+    bc.onclick = async () => {
+      try { await navigator.clipboard.writeText(p.enlace); bc.textContent = "¡Copiado! ✓"; }
+      catch (e) { inp.select(); bc.textContent = "Selecciónalo y cópialo"; }
+    };
+    mantenerAbajo();
+  }
+
   async function abrirCamara() {
     const overlay = document.createElement("div");
     overlay.className = "camara-overlay";
@@ -4228,7 +4553,7 @@
         throw { motivo };
       }
       const data = await resp.json();
-      enviar({ type: "archivo_subido", payload: { url: data.url, ruta: data.ruta, respondido_a_id: respondidoAId } });
+      enviar({ type: "archivo_subido", payload: { url: data.url, ruta: data.ruta, respondido_a_id: respondidoAId, nombre: String(nombre).slice(0, 120) } });
       div.classList.remove("subiendo");
       estadoSubida.remove();
       const urlServidor = urlArchivoWidget(data.ruta);
