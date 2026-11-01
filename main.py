@@ -5275,8 +5275,8 @@ MENSAJES_AUTOMATICOS = {
         "default": "",
     },
     "whatsapp_a_webchat": {
-        "etiqueta": "Botones de WhatsApp del sitio que abren el webchat en vez de WhatsApp: uno por línea con el formato «número | intención» (número con 51; basta el inicio, ej. 5197544847). Intenciones válidas: entrega_medicamentos, compra_sctr, consultas_generales, contratar_eps. Déjalo vacío para que todos vuelvan a ir a WhatsApp (aplica al instante, sin desplegar)",
-        "default": "5197544847 | contratar_eps",
+        "etiqueta": "Botones de WhatsApp del sitio que abren el webchat en vez de WhatsApp: un número por línea (con 51; basta el inicio, ej. 5197544847). Abre el menú principal; si quieres que entre directo a una opción, agrega « | intención» (entrega_medicamentos, compra_sctr, consultas_generales o contratar_eps). Déjalo vacío para que todos vuelvan a ir a WhatsApp (aplica al instante, sin desplegar)",
+        "default": "5197544847",
     },
     "teaser_en_celular": {
         "etiqueta": "Teaser de Sofi: escribe si para mostrarlo también en celulares o no para mostrarlo solo en computadoras",
@@ -5302,19 +5302,20 @@ def _opciones_menu_inicial() -> set | None:
 
 
 def _config_whatsapp_a_webchat() -> list:
-    """[{"prefijo": "5197544847", "intencion": "contratar_eps"}, ...] para el widget. Líneas inválidas se ignoran."""
+    """[{"prefijo": "5197544847", "intencion": None}, ...] para el widget (None = menú principal)."""
     clave = "whatsapp_a_webchat"
     valor = supervisor.obtener_configuracion(clave)
     if valor is None:
         valor = MENSAJES_AUTOMATICOS[clave]["default"]
     reglas = []
     for linea in str(valor).splitlines():
-        if "|" not in linea:
-            continue
-        numero, intencion = (x.strip() for x in linea.split("|", 1))
+        numero, _, intencion = (linea + "|").partition("|")
+        intencion = intencion.rstrip("|").strip()
         digitos = "".join(ch for ch in numero if ch.isdigit())
-        if len(digitos) >= 9 and intencion in INTENCIONES:
-            reglas.append({"prefijo": digitos, "intencion": intencion})
+        if len(digitos) < 9:
+            continue
+        # Sin intención (o una que no existe): abre el chat en el menú principal.
+        reglas.append({"prefijo": digitos, "intencion": intencion if intencion in INTENCIONES else None})
     return reglas[:10]
 
 

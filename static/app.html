@@ -19,7 +19,7 @@
   body { font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fondo); color: var(--texto); display:flex; flex-direction:column; min-height:100dvh; }
   @font-face { font-family:"Plus Jakarta Sans"; src:url(/static/imagenes/plus-jakarta-sans.woff2) format("woff2"); font-display:swap; }
   header { background: linear-gradient(160deg, var(--azul), var(--azul2)); color:#fff; padding: max(22px, env(safe-area-inset-top)) 20px 56px; }
-  header .fila { display:flex; align-items:center; gap:12px; }
+  header .fila { display:flex; align-items:center; gap:12px; max-width:488px; margin:0 auto; }
   header img { width:48px; height:48px; border-radius:50%; background:#fff; }
   header h1 { margin:0; font-size:19px; font-weight:700; }
   header p { margin:2px 0 0; font-size:13px; opacity:.85; }
@@ -75,6 +75,10 @@
       <p>Así nos escribes con un toque, como cualquier app.</p>
       <p class="nota" id="instalarManual">Si no aparece el botón: toca <b>⋮</b> (arriba a la derecha) y elige <b>Instalar app</b> o <b>Agregar a pantalla principal</b>.</p>
     </div>
+    <div id="instalarPc" style="display:none">
+      <p>Ábrela desde su ícono, como un programa más, sin buscar la página.</p>
+      <p class="nota">Si no aparece el botón: en <b>Chrome</b> o <b>Edge</b>, toca el ícono de instalar (🖥️⬇) a la derecha de la barra de direcciones. En <b>Safari</b> (Mac): menú <b>Archivo</b> → <b>Agregar al Dock</b>. En otros navegadores, guarda esta página en favoritos (Ctrl + D).</p>
+    </div>
     <div id="instalarIos" style="display:none">
       <ol>
         <li>Toca <b>Compartir</b> (□↑), abajo en Safari.</li>
@@ -82,7 +86,7 @@
       </ol>
       <p class="nota">Aparecerá el ícono de Sofi junto a tus otras apps.</p>
     </div>
-    <p class="nota" id="instalarYa" style="display:none">✅ Sofi ya está en tu pantalla de inicio. Búscala como <b>Sofi</b>.</p>
+    <p class="nota" id="instalarYa" style="display:none">✅ Sofi ya está instalada. Búscala como <b>Sofi</b> entre tus apps.</p>
   </div>
   <div class="sin-red" id="sinRed">Sin conexión. Reconéctate a internet para chatear con Sofi.</div>
   <button class="tarjeta-chat" id="btnChat">
@@ -160,6 +164,12 @@
     if (instalada) return;
     const caja = document.getElementById("cajaInstalar");
     caja.style.display = "block";
+    const esPc = window.matchMedia("(hover: hover) and (pointer: fine)").matches && !esIos;
+    if (esPc) {
+      document.getElementById("instalarAndroid").style.display = "none";
+      document.getElementById("instalarPc").style.display = "block";
+      caja.querySelector(".tit").textContent = "💻 Instala a Sofi en esta computadora";
+    }
     if (esIos) {
       document.getElementById("instalarAndroid").style.display = "none";
       document.getElementById("instalarIos").style.display = "block";
@@ -169,6 +179,7 @@
     }
     window.addEventListener("appinstalled", () => {
       document.getElementById("instalarAndroid").style.display = "none";
+      document.getElementById("instalarPc").style.display = "none";
       document.getElementById("instalarYa").style.display = "block";
     });
   })();

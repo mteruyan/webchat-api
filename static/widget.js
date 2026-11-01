@@ -2722,10 +2722,9 @@
   // saben cómo volver por su cuenta. Al terminar la conversación (después de la encuesta, si hay) se les
   // enseña una sola vez por navegador: en el celular, a agregar a Sofi a la pantalla de inicio (la app /app;
   // el navegador solo deja instalarla desde su propio dominio, por eso se abre en otra pestaña) y, a todos,
-  // que en sanitasperu.com está la burbuja. En la computadora solo se muestra a quien llegó por un enlace.
+  // que en sanitasperu.com está la burbuja. En la computadora se ofrece instalarla como programa (Chrome y Edge).
   // ---------------------------------------------------------------------
   const CLAVE_VOLVER = "sofi_volver_mostrada";
-  const ORIGENES_POR_ENLACE = { invitacion_sms: 1, enlace_sms: 1, enlace_directo: 1, enlace_intencion: 1, traspaso_qr: 1 };
   function enLaAppSofi() {
     try {
       if ((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone) return true;
@@ -2739,7 +2738,6 @@
     if (modoEncuestaSms && !host.classList.contains("movil")) return;
     if ($cuerpo.querySelector(".volver") || enLaAppSofi()) return;
     const esMovil = host.classList.contains("movil");
-    if (!esMovil && !ORIGENES_POR_ENLACE[origenApertura]) return;
     try {
       if (localStorage.getItem(CLAVE_VOLVER)) return;
       localStorage.setItem(CLAVE_VOLVER, String(Date.now()));
@@ -2771,10 +2769,14 @@
       };
       card.appendChild(btn);
     } else {
-      const p = el("p");
-      p.append("Guarda ", Object.assign(document.createElement("b"), { textContent: "sanitasperu.com" }),
-               " en tus favoritos (Ctrl + D) para encontrarnos rápido.");
-      card.appendChild(p);
+      card.appendChild(el("p", null, "Instala a Sofi en esta computadora y ábrela desde su ícono, como un programa más:"));
+      const btn = el("button", "vo-instalar", "💻 Instalar Sofi en esta computadora");
+      btn.type = "button";
+      btn.onclick = () => {
+        medir("sofi_volver_instalar_click", { dispositivo: tipo });
+        window.open(urlApp, "_blank", "noopener");
+      };
+      card.appendChild(btn);
     }
     const linea = el("p", "vo-burbuja");
     linea.append(esMovil ? "O entra a " : "Cuando quieras, entra a ", Object.assign(document.createElement("b"), { textContent: "sanitasperu.com" }),

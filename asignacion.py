@@ -56,6 +56,7 @@ def _buscar_mejor_asesor(cur, campana_id: int):
     cur.execute(
         """
         SELECT a.id, a.nombre_display, a.max_conversaciones_simultaneas,
+               COUNT(c.id) FILTER (WHERE c.estado = 'asignada' AND c.pausada_en IS NULL) AS en_principal,
                COUNT(c.id) FILTER (WHERE c.estado = 'asignada') AS activas,
                COUNT(c.id) FILTER (WHERE c.asignado_en >= date_trunc('day', NOW() AT TIME ZONE 'America/Lima')
                                                           AT TIME ZONE 'America/Lima') AS asignadas_hoy,
@@ -67,9 +68,11 @@ def _buscar_mejor_asesor(cur, campana_id: int):
         WHERE a.activo = TRUE AND a.en_pausa = FALSE
         GROUP BY a.id, a.nombre_display, a.max_conversaciones_simultaneas
         HAVING COUNT(c.id) FILTER (WHERE c.estado = 'asignada') < a.max_conversaciones_simultaneas
-        -- 1) menos activas ahora; 2) empate: menos asignadas hoy; 3) empate: quien lleva
-        -- más tiempo sin recibir una (NULLS FIRST = nunca recibió); 4) id, para que sea estable.
-        ORDER BY activas ASC, asignadas_hoy ASC, ultima_asignacion ASC NULLS FIRST, a.id ASC
+        -- 1) menos conversaciones en la bandeja PRINCIPAL (las pausadas no cuentan: el asesor no las está
+        --    trabajando); 2) empate: menos activas en total (principal + pausados); 3) empate: menos asignadas
+        --    hoy; 4) empate: quien lleva más tiempo sin recibir una (NULLS FIRST = nunca recibió); 5) id.
+        -- El cupo (HAVING) sigue contando principal + pausados.
+        ORDER BY en_principal ASC, activas ASC, asignadas_hoy ASC, ultima_asignacion ASC NULLS FIRST, a.id ASC
         LIMIT 1
         """,
         (campana_id,),
