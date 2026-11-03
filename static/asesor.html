@@ -49,6 +49,11 @@
   .historial-item:hover { background: var(--fondo); }
   .historial-item .campana { font-weight: 600; }
   .historial-item .meta { font-size: 11.5px; color: var(--texto-suave); margin-top: 2px; }
+  .historial-item .coincide { display: inline-block; font-size: 10.5px; background: #EEF3F8; color: var(--azul); border-radius: 999px; padding: 1px 7px; margin-left: 4px; }
+  .sep-dia { text-align: center; margin: 12px 0 8px; }
+  .sep-dia span { display: inline-block; background: #EEF2F6; color: var(--texto-suave); font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 3px 10px; }
+  .msg .hora-hist { display: block; font-size: 10.5px; opacity: .65; margin-top: 3px; text-align: right; }
+  .cab-hist { font-size: 12.5px; color: var(--texto-suave); margin: 8px 0 4px; }
   #historialVacio { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 20px; }
   #historialMensajesView { display: none; }
   #historialMensajesView.activa { display: block; }
@@ -252,6 +257,35 @@
   #panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #panel .chat-header { padding: 14px 20px; background: white; border-bottom: 1px solid var(--borde); display: none; align-items: center; gap: 12px; }
   #panel .chat-header.activa { display: flex; }
+  /* Conversación pasada abierta desde "Buscar": ocupa el panel como una conversación activa, en solo lectura. */
+  #panel.en-lectura > :not(#lectura) { display: none !important; }
+  /* Tareas de backoffice (plan de salud): ocupan el panel igual que una conversación, pero no son un chat. */
+  #panel.en-tarea > :not(#tarea) { display: none !important; }
+  #tarea { display: none; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--fondo); }
+  #panel.en-tarea #tarea { display: flex; }
+  .tarea-cuerpo { padding: 20px; max-width: 640px; width: 100%; box-sizing: border-box; }
+  .tarea-caja { background: white; border: 1px solid var(--borde); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .tarea-caja h4 { margin: 0 0 10px; font-size: 14px; }
+  .tarea-dni { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+  .tarea-dato { font-size: 13px; color: var(--texto-suave); margin-top: 4px; }
+  .tarea-caja label { display: block; font-size: 12.5px; font-weight: 600; margin: 10px 0 4px; }
+  .tarea-caja input[type=text], .tarea-caja select { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; font: inherit; font-size: 13.5px; }
+  .tarea-caja .ayuda { font-size: 12px; color: var(--texto-suave); margin-top: 4px; }
+  .tarea-acciones { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .tarea-estado { font-size: 13px; margin-top: 10px; min-height: 1em; }
+  .tarea-estado.error { color: #C0392B; }
+  .chip-tarea { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: #FFF3E0; color: #9A5B00; margin-top: 3px; }
+  .chip-tarea.procesando { background: #E9F1FB; color: var(--azul); }
+  .chip-tarea.error { background: #FDECEA; color: #C0392B; }
+  #lectura { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  #panel.en-lectura #lectura { display: flex; }
+  #lecturaChat { flex: 1; padding: 18px; overflow-y: auto; }
+  #lectura .chat-header { flex-wrap: nowrap; }
+  #lectura .cab-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  #lectura .cab-info .chip-lectura { align-self: flex-start; }
+  #lectura .acciones-conv { flex-shrink: 0; }
+  .chip-lectura { display: inline-block; margin-top: 3px; font-size: 11.5px; font-weight: 600; background: #EEF2F6; color: var(--texto-suave); border-radius: 999px; padding: 2px 9px; }
+  .pie-lectura { padding: 10px 16px; background: white; border-top: 1px solid var(--borde); font-size: 12.5px; color: var(--texto-suave); text-align: center; }
   #panel .chat-header .avatar { width: 34px; height: 34px; font-size: 13px; }
   #panel .chat-header .nombre { font-weight: 700; font-size: 15px; }
   #panel .chat-header .telefono { font-size: 12.5px; color: var(--texto-suave); }
@@ -680,6 +714,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
       <div class="tabs-lista">
         <div class="tab-lista activa" id="tabPrincipal" data-tab="principal">Principal (0)</div>
         <div class="tab-lista" id="tabPausados" data-tab="pausados">⏸ Pausados (0)</div>
+        <div class="tab-lista" id="tabTareas" data-tab="tareas" style="display:none">📋 Tareas (0)</div>
       </div>
       <div class="vacio-lista" id="listaVacia">Todavía no tienes conversaciones asignadas.</div>
     </div>
@@ -748,6 +783,68 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <input id="archivoInput" type="file" accept="image/*,application/pdf,.xls,.xlsx,.csv,.doc,.docx" style="display:none" />
         <button id="btnEnviar">Enviar</button>
         <button id="btnCerrar" title="Cerrar la conversación y elegir su etiqueta de cierre">✅ Cerrar</button>
+      </div>
+      <div id="lectura">
+        <div class="chat-header activa">
+          <div class="avatar" id="lecAvatar"></div>
+          <div class="cab-info">
+            <div class="nombre" id="lecNombre"></div>
+            <div class="telefono" id="lecDatos"></div>
+            <div class="telefono" id="lecFecha"></div>
+            <span class="chip-lectura" id="lecEstado"></span>
+          </div>
+          <div class="acciones-conv" style="margin-left:auto">
+            <a class="chico gris" id="lecPdf" title="Descargar la conversación en PDF" target="_blank" rel="noopener">📄 PDF</a>
+            <button class="chico gris" id="btnSalirLectura" type="button" title="Cerrar esta vista">✕ Cerrar</button>
+          </div>
+        </div>
+        <div id="lecturaChat"></div>
+        <div class="pie-lectura">🔒 Conversación de solo lectura: no se puede responder desde aquí.</div>
+      </div>
+      <div id="tarea">
+        <div class="chat-header activa">
+          <div class="avatar">📄</div>
+          <div class="cab-info">
+            <div class="nombre">Solicitud de plan de salud <span id="tarId"></span></div>
+            <div class="telefono" id="tarCuando"></div>
+          </div>
+          <div class="acciones-conv" style="margin-left:auto">
+            <button class="chico gris" id="btnCerrarTarea" type="button">✕ Cerrar</button>
+          </div>
+        </div>
+        <div class="tarea-cuerpo">
+          <div class="tarea-caja">
+            <div class="tarea-dato">DNI del afiliado</div>
+            <div class="tarea-dni" id="tarDni"></div>
+            <div class="tarea-dato" id="tarCliente"></div>
+          </div>
+          <div class="tarea-caja">
+            <h4>1. Busca el plan de este DNI en el sistema de Sanitas y descarga el PDF</h4>
+            <label for="tarPdf">2. Sube el PDF del plan</label>
+            <input type="file" id="tarPdf" accept="application/pdf,.pdf">
+            <label for="tarCodigo">Código del plan (opcional)</label>
+            <input type="text" id="tarCodigo" list="tarCodigos" maxlength="60" placeholder="Ej. el código del plan o del contrato">
+            <datalist id="tarCodigos"></datalist>
+            <div class="ayuda">Con el código, el próximo afiliado con el mismo plan lo recibe sin volver a subirlo. Si el plan ya fue cargado antes, elige su código y no hace falta subir el PDF.</div>
+            <label for="tarNombre">Nombre del plan (opcional)</label>
+            <input type="text" id="tarNombre" maxlength="150" placeholder="Si lo dejas vacío, se toma del PDF">
+            <div class="tarea-acciones">
+              <button id="btnEnviarPlan" type="button">📤 Enviar plan al cliente</button>
+              <button class="gris" id="btnNoSePudo" type="button">✖ No se pudo</button>
+            </div>
+            <div id="tarRechazo" style="display:none">
+              <label for="tarMotivo">Motivo (lo verá el cliente)</label>
+              <select id="tarMotivo">
+                <option>El DNI no tiene un plan de salud vigente con Sanitas</option>
+                <option>No encontramos ese DNI en nuestros registros</option>
+                <option value="otro">Otro motivo…</option>
+              </select>
+              <input type="text" id="tarMotivoOtro" maxlength="300" placeholder="Escribe el motivo" style="display:none;margin-top:6px">
+              <div class="tarea-acciones"><button class="rojo" id="btnConfirmarRechazo" type="button">Confirmar</button></div>
+            </div>
+            <div class="tarea-estado" id="tarEstado"></div>
+          </div>
+        </div>
       </div>
     </div>
     <aside id="datosAfiliado" aria-label="Datos del afiliado"><h2>Datos del afiliado<button type="button" class="cerrar-datos" id="btnCerrarDatosAfiliado" aria-label="Ocultar datos del afiliado" title="Ocultar">✕</button></h2>
@@ -968,7 +1065,7 @@ if (!document.getElementById('urlBase').value) {
 let conversaciones = {};  // id -> {resumen_usuario, telefono, mensajes: [], noLeidos: 0, entrada_cola, asignado_en, pausada}
 let activaId = null;
 let intervaloTiempos = null;
-let pestanaActual = 'principal';  // 'principal' | 'pausados'
+let pestanaActual = 'principal';  // 'principal' | 'pausados' | 'tareas'
 
 // Tiempo de conexión/pausa de HOY, en la barra superior (lo mismo que ya ve
 // el supervisor por cada asesor). El servidor manda el total hasta el
@@ -1324,6 +1421,7 @@ function renderLista() {
   document.getElementById('tabPausados').textContent = `⏸ Pausados (${numPausadas})`;
   document.getElementById('tabPrincipal').textContent = `Principal (${todas.length - numPausadas})`;
 
+  if (pestanaActual === 'tareas') { renderListaTareas(lista, vacio); return; }
   const entradas = todas
     .filter(([, c]) => (pestanaActual === 'pausados') === !!c.pausada)
     .sort((a, b) => new Date(b[1].ultimaActividad || 0) - new Date(a[1].ultimaActividad || 0));
@@ -1370,6 +1468,8 @@ function renderLista() {
 }
 
 function seleccionar(id) {
+  salirLectura();
+  salirTarea();
   activaId = id;
   conversaciones[id].noLeidos = 0;
   document.getElementById('entrada').classList.add('activa');
@@ -2322,7 +2422,8 @@ function conectarWs() {
         renderHistorialAgrupado(p.conversaciones || []);
         break;
       case 'mensajes_conversacion_pasada':
-        renderMensajesHistorial(p.mensajes || []);
+        if (lecturaId && String(p.conversacion_id) === lecturaId) pintarLectura(p.mensajes || []);
+        else renderMensajesHistorial(p.mensajes || [], p.conversacion_id);
         break;
       case 'lista_asesores':
         renderListaAsesoresTransferir(p.asesores || []);
@@ -2338,6 +2439,12 @@ function conectarWs() {
         }
         renderLista();
         renderChat();
+        break;
+      case 'tareas_backoffice':
+        recibirTareas(p);
+        break;
+      case 'plan_resultado':
+        resultadoPlan(p);
         break;
       case 'conversaciones_vigentes': {
         const vigentes = new Set((p.ids || []).map(String));
@@ -2889,6 +2996,7 @@ document.getElementById('btnEnviarSms').onclick = () => {
 // en cuanto el cliente manda algo (ver caso 'conversacion_reactivada'). ----
 
 document.getElementById('tabPrincipal').onclick = () => {
+  document.getElementById('tabTareas').classList.remove('activa');
   pestanaActual = 'principal';
   document.getElementById('tabPrincipal').classList.add('activa');
   document.getElementById('tabPausados').classList.remove('activa');
@@ -2896,6 +3004,7 @@ document.getElementById('tabPrincipal').onclick = () => {
 };
 
 document.getElementById('tabPausados').onclick = () => {
+  document.getElementById('tabTareas').classList.remove('activa');
   pestanaActual = 'pausados';
   document.getElementById('tabPausados').classList.add('activa');
   document.getElementById('tabPrincipal').classList.remove('activa');
@@ -3021,9 +3130,11 @@ function renderHistorialAgrupado(conversacionesPasadas) {
     }
     const item = document.createElement('div');
     item.className = 'historial-item';
+    const motivos = { celular: '📱 mismo celular', dni: '🪪 mismo DNI', navegador: '💻 mismo dispositivo' };
+    const tags = (c.coincide || []).map(k => `<span class="coincide">${motivos[k] || escapeHtml(k)}</span>`).join('');
     item.innerHTML = `
       <div class="campana">${escapeHtml(c.campana || 'Sin campaña')} ${c.etiqueta ? '· ' + escapeHtml(c.etiqueta) : ''}</div>
-      <div class="meta">${formatearHoraCorta(c.iniciado_en)} — ${c.estado}</div>
+      <div class="meta">#${escapeHtml(String(c.conversacion_id))} · ${formatearHoraCorta(c.iniciado_en)} — ${escapeHtml(c.estado)}${tags}</div>
     `;
     item.onclick = () => {
       document.getElementById('btnDescargarPdfHistorial').href =
@@ -3034,12 +3145,39 @@ function renderHistorialAgrupado(conversacionesPasadas) {
   });
 }
 
-function renderMensajesHistorial(mensajes) {
+// Separador de día ("lunes, 2 de noviembre de 2026") cuando cambia la fecha entre un mensaje y el siguiente.
+function separadorDia(iso) {
+  const sep = document.createElement('div');
+  sep.className = 'sep-dia';
+  const sp = document.createElement('span');
+  sp.textContent = new Date(iso).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  sep.appendChild(sp);
+  return sep;
+}
+function claveDia(iso) { const d = new Date(iso); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); }
+
+function renderMensajesHistorial(mensajes, conversacionId) {
   document.getElementById('historialListaView').style.display = 'none';
   document.getElementById('historialMensajesView').classList.add('activa');
   const chat = document.getElementById('historialMensajesChat');
   chat.innerHTML = '';
+  if (mensajes.length && mensajes[0].enviado_en) {
+    const cab = document.createElement('div');
+    cab.className = 'cab-hist';
+    cab.textContent = `${conversacionId ? 'Conversación #' + conversacionId + ' · ' : ''}iniciada el ${formatearFechaHoraCompleta(mensajes[0].enviado_en)}`;
+    chat.appendChild(cab);
+  }
+  pintarMensajesSoloLectura(chat, mensajes);
+}
+
+// Burbujas de una conversación pasada (historial y vista de solo lectura): separador por día y hora en cada una.
+function pintarMensajesSoloLectura(chat, mensajes) {
+  let diaPrevio = null;
   mensajes.forEach(m => {
+    if (m.enviado_en && claveDia(m.enviado_en) !== diaPrevio) {
+      diaPrevio = claveDia(m.enviado_en);
+      chat.appendChild(separadorDia(m.enviado_en));
+    }
     if (m.tipo_contenido === 'opciones') {
       const opciones = parsearOpcionesBot(m.contenido);
       if (opciones) {
@@ -3075,6 +3213,12 @@ function renderMensajesHistorial(mensajes) {
       div.appendChild(a);
     } else {
       div.textContent = m.contenido;
+    }
+    if (m.enviado_en) {
+      const h = document.createElement('span');
+      h.className = 'hora-hist';
+      h.textContent = formatearHoraCorta(m.enviado_en);
+      div.appendChild(h);
     }
     chat.appendChild(div);
   });
@@ -3276,7 +3420,9 @@ const ETIQUETAS_ESTADO = { bot: 'En bot', en_cola: 'En cola', asignada: 'Asignad
 function formatearFechaHoraCompleta(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  return d.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' }) + ' · '
+  const opc = { day: 'numeric', month: 'short' };
+  if (d.getFullYear() !== new Date().getFullYear()) opc.year = 'numeric';
+  return d.toLocaleDateString('es-PE', opc) + ' · '
        + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
@@ -3329,22 +3475,202 @@ function abrirResultadoBusqueda(r) {
     pestanaActual = conversaciones[r.conversacion_id].pausada ? 'pausados' : 'principal';
     document.getElementById('tabPrincipal').classList.toggle('activa', pestanaActual === 'principal');
     document.getElementById('tabPausados').classList.toggle('activa', pestanaActual === 'pausados');
+    document.getElementById('tabTareas').classList.remove('activa');
     renderLista();
     seleccionar(String(r.conversacion_id));
     renderLista();
     return;
   }
-  // Cualquier otra: vista de solo lectura del historial de mensajes.
+  // Cualquier otra (cerrada, de otro asesor, en el bot): se abre en el panel, en solo lectura.
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  historialOrigenBusqueda = true;
   document.getElementById('modalBuscarOverlay').classList.remove('activa');
-  document.getElementById('historialListaView').style.display = 'none';
-  document.getElementById('historialMensajesChat').innerHTML = '';
-  document.getElementById('btnDescargarPdfHistorial').href =
-    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(r.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
-  ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: Number(r.conversacion_id) } }));
-  document.getElementById('modalHistorialOverlay').classList.add('activa');
+  abrirLectura(r);
 }
+
+// ---- Tareas de backoffice: solicitudes de plan de salud (ver planes.py) ------------------------------
+// No son un chat: el asesor sube el PDF del plan (o elige un código ya cargado) o la rechaza con motivo.
+var tareasBackoffice = [];   // var: renderLista() y seleccionar() las usan y están definidas antes
+var tareaActivaId = null;
+function desdeHace(iso) {
+  if (!iso) return '';
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  return min < 1 ? 'recién' : min < 60 ? `hace ${min} min` : `hace ${Math.floor(min / 60)} h ${min % 60} min`;
+}
+function recibirTareas(p) {
+  tareasBackoffice = p.tareas || [];
+  const tab = document.getElementById('tabTareas');
+  tab.style.display = '';
+  tab.textContent = `📋 Tareas (${tareasBackoffice.length})`;
+  document.getElementById('tarCodigos').innerHTML = (p.planes || [])
+    .map(x => `<option value="${escapeHtml(x.codigo)}">${escapeHtml(x.nombre || '')}</option>`).join('');
+  if (tareaActivaId && !tareasBackoffice.some(t => String(t.id) === String(tareaActivaId))) salirTarea();
+  else if (tareaActivaId) pintarTarea();
+  if (pestanaActual === 'tareas') renderLista();
+}
+function renderListaTareas(lista, vacio) {
+  vacio.style.display = tareasBackoffice.length ? 'none' : 'block';
+  vacio.textContent = 'No tienes tareas pendientes. 🎉';
+  tareasBackoffice.forEach(t => {
+    const div = document.createElement('div');
+    div.className = 'conv-item' + (String(tareaActivaId) === String(t.id) ? ' activa' : '');
+    const chip = t.estado === 'procesando' ? '<span class="chip-tarea procesando">⏳ Digitalizando…</span>'
+               : t.error ? '<span class="chip-tarea error">⚠️ Revisar</span>' : '<span class="chip-tarea">Pendiente</span>';
+    div.innerHTML = `
+      <div class="avatar">📄</div>
+      <div class="info">
+        <div class="nombre">DNI ${escapeHtml(t.dni)}</div>
+        <div class="telefono">Plan de salud${t.nombre ? ' · ' + escapeHtml(t.nombre) : ''}</div>
+        <div>${chip}</div>
+      </div>
+      <div class="meta-derecha"><div class="ultima-hora">${desdeHace(t.creado_en)}</div></div>`;
+    div.onclick = () => abrirTarea(t.id);
+    lista.appendChild(div);
+  });
+}
+function abrirTarea(id) {
+  salirLectura();
+  tareaActivaId = String(id);
+  document.getElementById('tarPdf').value = '';
+  document.getElementById('tarCodigo').value = '';
+  document.getElementById('tarNombre').value = '';
+  document.getElementById('tarRechazo').style.display = 'none';
+  document.getElementById('tarEstado').textContent = '';
+  document.getElementById('tarEstado').className = 'tarea-estado';
+  document.getElementById('panel').classList.add('en-tarea');
+  pintarTarea();
+  renderLista();
+}
+function pintarTarea() {
+  const t = tareasBackoffice.find(x => String(x.id) === String(tareaActivaId));
+  if (!t) return;
+  document.getElementById('tarId').textContent = '#' + t.id;
+  document.getElementById('tarCuando').textContent = 'Pedida ' + desdeHace(t.creado_en) + ' · ' + formatearFechaHoraCompleta(t.creado_en);
+  document.getElementById('tarDni').textContent = t.dni;
+  document.getElementById('tarCliente').textContent = [t.nombre, t.celular].filter(Boolean).join(' · ');
+  const procesando = t.estado === 'procesando';
+  document.getElementById('btnEnviarPlan').disabled = procesando;
+  document.getElementById('btnNoSePudo').disabled = procesando;
+  const est = document.getElementById('tarEstado');
+  if (procesando) { est.className = 'tarea-estado'; est.textContent = '⏳ Leyendo el plan con IA (1 a 2 minutos). Puedes seguir con otra tarea: te avisamos al terminar.'; }
+  else if (t.error) { est.className = 'tarea-estado error'; est.textContent = '⚠️ ' + t.error; }
+}
+function salirTarea() {
+  tareaActivaId = null;
+  document.getElementById('panel').classList.remove('en-tarea');
+}
+document.getElementById('btnCerrarTarea').onclick = () => { salirTarea(); renderLista(); };
+document.getElementById('tabTareas').onclick = () => {
+  pestanaActual = 'tareas';
+  document.getElementById('tabTareas').classList.add('activa');
+  document.getElementById('tabPrincipal').classList.remove('activa');
+  document.getElementById('tabPausados').classList.remove('activa');
+  renderLista();
+};
+document.getElementById('btnEnviarPlan').onclick = async () => {
+  const id = Number(tareaActivaId);
+  const archivo = document.getElementById('tarPdf').files[0];
+  const codigo = document.getElementById('tarCodigo').value.trim();
+  const nombre = document.getElementById('tarNombre').value.trim();
+  const est = document.getElementById('tarEstado');
+  est.className = 'tarea-estado';
+  if (!archivo && !codigo) { est.className = 'tarea-estado error'; est.textContent = 'Sube el PDF del plan o elige el código de un plan ya cargado.'; return; }
+  if (archivo && !/\.pdf$/i.test(archivo.name)) { est.className = 'tarea-estado error'; est.textContent = 'El archivo debe ser un PDF.'; return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) { est.className = 'tarea-estado error'; est.textContent = 'Sin conexión. Intenta de nuevo en un momento.'; return; }
+  const btn = document.getElementById('btnEnviarPlan');
+  btn.disabled = true;
+  let ruta = null;
+  try {
+    if (archivo) {
+      est.textContent = 'Subiendo el PDF…';
+      const fd = new FormData();
+      fd.append('file', archivo, archivo.name);
+      const r = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${tokenGuardado}` } });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'No se pudo subir el archivo');
+      ruta = (await r.json()).ruta;
+    }
+    est.textContent = 'Enviando…';
+    ws.send(JSON.stringify({ type: 'plan_atender', payload: { solicitud_id: id, ruta, codigo_plan: codigo, nombre_plan: nombre, archivo_nombre: archivo ? archivo.name : null } }));
+  } catch (e) {
+    est.className = 'tarea-estado error'; est.textContent = '⚠️ ' + e.message; btn.disabled = false;
+  }
+};
+document.getElementById('btnNoSePudo').onclick = () => {
+  const caja = document.getElementById('tarRechazo');
+  caja.style.display = caja.style.display === 'none' ? 'block' : 'none';
+};
+document.getElementById('tarMotivo').onchange = (e) => {
+  document.getElementById('tarMotivoOtro').style.display = e.target.value === 'otro' ? '' : 'none';
+};
+document.getElementById('btnConfirmarRechazo').onclick = () => {
+  const sel = document.getElementById('tarMotivo').value;
+  const motivo = sel === 'otro' ? document.getElementById('tarMotivoOtro').value.trim() : sel;
+  const est = document.getElementById('tarEstado');
+  if (!motivo) { est.className = 'tarea-estado error'; est.textContent = 'Escribe el motivo.'; return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'plan_rechazar', payload: { solicitud_id: Number(tareaActivaId), motivo } }));
+};
+function resultadoPlan(p) {
+  const esActiva = String(p.solicitud_id) === String(tareaActivaId);
+  const est = document.getElementById('tarEstado');
+  if (!p.ok) {
+    if (esActiva) { est.className = 'tarea-estado error'; est.textContent = '⚠️ ' + (p.motivo || 'No se pudo.'); document.getElementById('btnEnviarPlan').disabled = false; }
+    else if (p.digitalizado) alert(`Tarea #${p.solicitud_id}: ${p.motivo || 'no se pudo digitalizar el plan.'}`);
+    return;
+  }
+  if (p.procesar) { if (esActiva) pintarTarea(); return; }   // queda digitalizando
+  const msg = p.reutilizado ? `✅ Ese PDF ya estaba cargado${p.nombre ? ' (' + p.nombre + ')' : ''}: se asignó el mismo plan al DNI de la tarea #${p.solicitud_id}, sin volver a digitalizarlo. Ya le avisamos al cliente.`
+            : p.digitalizado ? `✅ Plan de la tarea #${p.solicitud_id} cargado${p.nombre ? ' (' + p.nombre + ')' : ''}. Ya le avisamos al cliente.`
+            : `✅ Tarea #${p.solicitud_id} lista. Ya le avisamos al cliente.`;
+  if (esActiva) salirTarea();
+  mostrarAvisoTarea(msg);
+}
+function mostrarAvisoTarea(texto) {
+  let el = document.getElementById('avisoTarea');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'avisoTarea';
+    el.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1E7B4E;color:#fff;padding:10px 16px;border-radius:10px;font-size:13.5px;z-index:3000;box-shadow:0 6px 20px rgba(0,0,0,.2)';
+    document.body.appendChild(el);
+  }
+  el.textContent = texto;
+  el.style.display = 'block';
+  clearTimeout(mostrarAvisoTarea.t);
+  mostrarAvisoTarea.t = setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
+// ---- Conversación pasada desde "Buscar": se abre en el panel, como una conversación activa (solo lectura) ----
+var lecturaId = null;   // var: se usa desde seleccionar(), definida antes
+function abrirLectura(r) {
+  salirTarea();
+  lecturaId = String(r.conversacion_id);
+  const nombre = r.usuario_nombre || ('Usuario ' + r.conversacion_id);
+  document.getElementById('lecAvatar').textContent = iniciales(nombre);
+  document.getElementById('lecNombre').textContent = nombre;
+  document.getElementById('lecDatos').textContent =
+    ['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · ');
+  document.getElementById('lecFecha').textContent = 'Inició: ' + formatearFechaHoraCompleta(r.iniciado_en)
+    + (r.cerrado_en ? ' · Cerró: ' + formatearFechaHoraCompleta(r.cerrado_en) : '');
+  const detalle = r.estado === 'cerrada' ? r.etiqueta : (r.estado === 'asignada' ? r.asesor_nombre : null);
+  document.getElementById('lecEstado').textContent =
+    (ETIQUETAS_ESTADO[r.estado] || r.estado) + (detalle ? ' · ' + detalle : '') + (r.campana ? ' · ' + r.campana : '');
+  document.getElementById('lecPdf').href =
+    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(r.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+  document.getElementById('lecturaChat').innerHTML = '<div class="cab-hist">Cargando mensajes...</div>';
+  document.getElementById('panel').classList.add('en-lectura');
+  ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: Number(r.conversacion_id) } }));
+}
+function pintarLectura(mensajes) {
+  const chat = document.getElementById('lecturaChat');
+  chat.innerHTML = '';
+  if (!mensajes.length) chat.innerHTML = '<div class="cab-hist">Esta conversación no tiene mensajes.</div>';
+  pintarMensajesSoloLectura(chat, mensajes);
+  chat.scrollTop = chat.scrollHeight;
+}
+function salirLectura() {
+  lecturaId = null;
+  document.getElementById('panel').classList.remove('en-lectura');
+}
+document.getElementById('btnSalirLectura').onclick = salirLectura;
 
 // El botón "Cerrar" del modal de historial también debe limpiar la marca de origen.
 document.getElementById('btnCerrarModalHistorial').addEventListener('click', () => { historialOrigenBusqueda = false; });

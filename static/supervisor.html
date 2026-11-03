@@ -315,6 +315,17 @@
   .panel-header .acciones-top { margin-left: auto; display: flex; gap: 6px; }
 
   #chatEscucha { flex: 1; padding: 16px; overflow-y: auto; display: none; }
+  /* Conversación pasada desde "Buscar": se abre en el panel como las demás, en solo lectura (sin acciones). */
+  #panelHeader.lectura .tiempos-cab, #panelHeader.lectura .bandera-selector,
+  #panelHeader.lectura .acciones-supervisor > :not(#btnDescargarPdf):not(#btnSalirLectura) { display: none !important; }
+  #panelHeader.lectura .cab-info { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; flex: 1 1 auto; min-width: 0; max-width: none; }
+  #panelHeader.lectura .cab-info .nombre { flex-basis: 100%; }
+  #panelHeader.lectura .acciones-top { flex: 0 0 auto; margin-left: auto; }
+  #btnSalirLectura, .chip-lectura { display: none !important; }
+  #panelHeader.lectura #btnSalirLectura { display: inline-flex !important; }
+  #panelHeader.lectura .chip-lectura { display: inline-block !important; margin-top: 3px; font-size: 11.5px; font-weight: 600; background: #EEF2F6; color: var(--texto-suave); border-radius: 999px; padding: 2px 9px; }
+  .sep-dia { text-align: center; margin: 12px 0 8px; }
+  .sep-dia span { display: inline-block; background: #EEF2F6; color: var(--texto-suave); font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 3px 10px; }
   #chatEscucha.activa { display: block; }
   #chatEscucha.arrastrando { outline: 2px dashed var(--azul); outline-offset: -8px; background: #F4F8FC; }
   .msg { position: relative; margin: 6px 0; max-width: 72%; padding: 9px 13px; border-radius: 14px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; box-shadow: 0 1px 1.5px rgba(10,20,30,.08); }
@@ -819,6 +830,8 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
           <div class="nombre" id="phNombre"></div>
           <div class="telefono" id="phTelefono"></div>
           <div class="telefono" id="phDni"></div>
+          <div class="telefono" id="phFecha"></div>
+          <span class="chip-lectura" id="phLectura"></span>
         </div>
         <div class="tiempos-cab" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
           <div>⏱ Esperó: <b id="phTiempoEspera">--</b></div>
@@ -844,7 +857,8 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
           <button class="chico gris" id="btnTransferir" title="Transferir esta conversación a otro asesor">🔀 Transf.</button>
           <button class="chico gris" id="btnDejarEscuchar" title="Dejar de escuchar esta conversación">🔇 Dejar</button>
           <button class="chico rojo" id="btnControl" title="Tomar control de la conversación">✋ Control</button>
-          <button class="chico rojo" id="btnCerrarConversacion" title="Cerrar la conversación">✅ Cerrar</button></div>
+          <button class="chico rojo" id="btnCerrarConversacion" title="Cerrar la conversación">✅ Cerrar</button>
+          <button class="chico gris" id="btnSalirLectura" type="button" title="Cerrar esta vista">✕ Cerrar vista</button></div>
         </div>
       </div>
       <div id="notaClienteBanner">
@@ -1780,10 +1794,15 @@ function conectarWs() {
         pintarValidacionPendiente(p.validacion_pendiente);
         const chat = document.getElementById('chatEscucha');
         chat.innerHTML = '';
+        chat.dataset.ultimoDia = '';
+        const primero = (p.historial || []).find(m => m.enviado_en);
+        document.getElementById('phFecha').textContent = '#' + p.conversacion_id
+          + (primero ? ' · Inició: ' + formatearFechaHoraCompleta(primero.enviado_en) : '');
         (p.historial || []).forEach(m => {
           if (m.tipo_contenido === 'opciones') {
             const opciones = parsearOpcionesBot(m.contenido);
             if (opciones) {
+              agregarSeparadorDiaEscucha(chat, m.enviado_en);
               chat.appendChild(crearBurbujaOpciones(opciones, m.enviado_en));
               return;
             }
@@ -1862,7 +1881,8 @@ function conectarWs() {
     } else if (data.type === 'resultados_busqueda') {
       renderResultadosBusqueda(p.resultados || []);
     } else if (data.type === 'detalle_conversacion') {
-      renderDetalleConversacion(p.historial || []);
+      if (conversacionLectura && String(p.conversacion_id) === conversacionLectura) pintarLecturaPanel(p.historial || []);
+      else renderDetalleConversacion(p.historial || []);
     } else if (data.type === 'mensaje_propio_guardado') {
       if (p.cid) { confirmarEntradaStaff(p.cid); quitarPendienteEscucha(p.cid); }
       else { const ent = confirmarSinCid(p.conversacion_id); if (ent) quitarPendienteEscucha(ent.cid); }
@@ -2119,6 +2139,7 @@ function _pintarTablero() {
 }
 
 function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni) {
+  salirLecturaPanel();
   if (conversacionEscuchada && String(conversacionEscuchada) !== String(conversacionId)) {
     ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
   }
@@ -2132,9 +2153,11 @@ function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni
   document.getElementById('phNombre').textContent = nombre;
   document.getElementById('phTelefono').textContent = telefono || '';
   document.getElementById('phDni').textContent = dni ? ('DNI: ' + dni) : '';
+  document.getElementById('phFecha').textContent = '#' + conversacionId;
   document.getElementById('btnDescargarPdf').href =
     `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(conversacionId)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
   document.getElementById('chatEscucha').innerHTML = '';
+  document.getElementById('chatEscucha').dataset.ultimoDia = '';
   pintarValidacionPendiente(null);
 
   entradaColaActual = entradaCola || null;
@@ -2166,6 +2189,7 @@ function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni
 }
 
 function cerrarPanel() {
+  salirLecturaPanel();
   if (conversacionEscuchada && ws) {
     ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
   }
@@ -2562,9 +2586,23 @@ function agregarBotonAccionesEscucha(div, { mensajeId, tipo, texto, enviadoEnMs,
   div.appendChild(menu);
 }
 
+function agregarSeparadorDiaEscucha(chat, iso) {
+  const d = iso ? new Date(iso) : new Date();
+  const clave = d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+  if (chat.dataset.ultimoDia === clave) return;
+  chat.dataset.ultimoDia = clave;
+  const sep = document.createElement('div');
+  sep.className = 'sep-dia';
+  const sp = document.createElement('span');
+  sp.textContent = d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  sep.appendChild(sp);
+  chat.appendChild(sep);
+}
+
 function agregarMensajeEscucha(texto, emisorTipo, horaIso, ruta, extra) {
   extra = extra || {};
   const chat = document.getElementById('chatEscucha');
+  agregarSeparadorDiaEscucha(chat, horaIso);
   const div = document.createElement('div');
   div.className = 'msg ' + emisorTipo;
   const enviadoEnMs = horaIso ? new Date(horaIso).getTime() : Date.now();
@@ -3325,7 +3363,9 @@ document.getElementById('buscarInput').addEventListener('keydown', (e) => { if (
 function formatearFechaHoraCompleta(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  return d.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' }) + ' · '
+  const opc = { day: 'numeric', month: 'short' };
+  if (d.getFullYear() !== new Date().getFullYear()) opc.year = 'numeric';
+  return d.toLocaleDateString('es-PE', opc) + ' · '
        + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
@@ -3363,17 +3403,70 @@ function abrirResultadoBusqueda(r) {
     escuchar(r.conversacion_id, r.usuario_nombre, r.telefono, r.entrada_cola, r.asignado_en, r.dni);
     return;
   }
-  // bot / en_cola / cerrada: vista de solo lectura, sin susurro/control/cierre.
+  // bot / en_cola / cerrada: se abre en el panel, como las demás, pero en solo lectura.
   if (!ws) return;
-  ws.send(JSON.stringify({ type: 'ver_conversacion', payload: { conversacion_id: Number(r.conversacion_id) } }));
-  document.getElementById('detalleNombre').textContent = r.usuario_nombre;
-  document.getElementById('detalleSubtitulo').textContent =
-    [r.telefono, r.dni ? 'DNI ' + r.dni : null, ETIQUETAS_ESTADO[r.estado] || r.estado, r.etiqueta].filter(Boolean).join(' · ');
-  document.getElementById('btnDescargarPdfDetalle').href =
-    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(r.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
-  document.getElementById('detalleConvChat').innerHTML = '';
-  document.getElementById('modalDetalleOverlay').classList.add('activa');
+  abrirLecturaPanel(r);
 }
+
+var conversacionLectura = null;   // var: se usa desde escuchar() y cerrarPanel(), definidas antes
+function abrirLecturaPanel(r) {
+  if (conversacionEscuchada) {
+    ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
+    conversacionEscuchada = null;
+  }
+  if (intervaloTiempos) { clearInterval(intervaloTiempos); intervaloTiempos = null; }
+  conversacionLectura = String(r.conversacion_id);
+  pintarValidacionPendiente(null);
+  document.getElementById('panelVacio').style.display = 'none';
+  document.getElementById('panelHeader').classList.add('activa', 'lectura');
+  document.getElementById('chatEscucha').classList.add('activa');
+  document.getElementById('acciones').classList.remove('activa');
+  document.getElementById('phNombre').textContent = r.usuario_nombre || ('Usuario ' + r.conversacion_id);
+  document.getElementById('phTelefono').textContent = r.telefono || '';
+  document.getElementById('phDni').textContent = r.dni ? ('DNI: ' + r.dni) : '';
+  document.getElementById('phFecha').textContent = '#' + r.conversacion_id + ' · Inició: ' + formatearFechaHoraCompleta(r.iniciado_en)
+    + (r.cerrado_en ? ' · Cerró: ' + formatearFechaHoraCompleta(r.cerrado_en) : '');
+  document.getElementById('phLectura').textContent = '🔒 Solo lectura · ' + (ETIQUETAS_ESTADO[r.estado] || r.estado)
+    + (r.etiqueta ? ' · ' + r.etiqueta : '') + (r.campana ? ' · ' + r.campana : '');
+  document.getElementById('btnDescargarPdf').href =
+    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(r.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+  const chat = document.getElementById('chatEscucha');
+  chat.innerHTML = '';
+  chat.dataset.ultimoDia = '';
+  cargarNotaCliente(r.conversacion_id);
+  ws.send(JSON.stringify({ type: 'ver_conversacion', payload: { conversacion_id: Number(r.conversacion_id) } }));
+}
+
+function pintarLecturaPanel(historial) {
+  const chat = document.getElementById('chatEscucha');
+  chat.innerHTML = '';
+  chat.dataset.ultimoDia = '';
+  historial.forEach(m => {
+    if (m.tipo_contenido === 'opciones') {
+      const opciones = parsearOpcionesBot(m.contenido);
+      if (opciones) {
+        agregarSeparadorDiaEscucha(chat, m.enviado_en);
+        chat.appendChild(crearBurbujaOpciones(opciones, m.enviado_en));
+        return;
+      }
+    }
+    const esArchivo = m.tipo_contenido === 'archivo';
+    // Sin mensajeId: en solo lectura no hay menú para editar o eliminar.
+    agregarMensajeEscucha(esArchivo ? '📎 Ver archivo enviado' : m.contenido, m.emisor_tipo, m.enviado_en,
+      esArchivo ? m.contenido : null, { respondidoA: m.respondido_a, editadoEn: m.editado_en,
+        eliminadoEn: m.eliminado_en, eliminadoPor: m.eliminado_por });
+  });
+  if (!historial.length) chat.innerHTML = '<div style="text-align:center;color:var(--texto-suave);padding:20px">Esta conversación no tiene mensajes.</div>';
+  chat.scrollTop = chat.scrollHeight;
+}
+
+document.getElementById('btnSalirLectura').onclick = () => cerrarPanel();
+
+function salirLecturaPanel() {
+  conversacionLectura = null;
+  document.getElementById('panelHeader').classList.remove('lectura');
+}
+
 
 document.getElementById('btnCerrarModalDetalle').onclick = () => {
   document.getElementById('modalDetalleOverlay').classList.remove('activa');

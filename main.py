@@ -57,6 +57,7 @@ import encuesta
 import archivos_cliente
 import seguimiento
 import avisos_cliente
+import planes
 
 LIMA_TZ = timezone(timedelta(hours=-5))
 
@@ -1260,6 +1261,9 @@ async def _procesar_eventos_bot(conversacion_id: int, websocket: WebSocket, even
     """Manda los eventos del bot al widget y, si alguno es 'en_cola', dispara
     el intento de asignación inmediata."""
     for evento in eventos:
+        if evento.get("type") == "_plan_solicitud":
+            _lanzar_tarea(_plan_asignar_y_avisar())   # solicitud de plan nueva: al backoffice
+            continue
         if str(evento.get("type") or "").startswith("_"):
             continue  # evento interno del motor (p. ej. "_celular_verificado"): no es para el widget
         await websocket.send_json(evento)
@@ -1761,31 +1765,63 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
             pass  # solo es un contador: no debe romper el cierre
 
 
+# Celular (últimos 9 dígitos) y DNI de una conversación: los del usuario o, si no los tiene, los que se
+# capturaron en esa conversación (variables_sesion).
+_SQL_TEL_CONV = r"right(regexp_replace(COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR', ''), '\D', '', 'g'), 9)"
+_SQL_DNI_CONV = r"regexp_replace(COALESCE(NULLIF(u.dni, ''), c.variables_sesion->>'DNI', ''), '\D', '', 'g')"
+
+
 def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
-    """Todas las conversaciones anteriores del mismo usuario (por usuario_id),
-    sin incluir la actual — para el botón de historial en la consola de asesor."""
+    """Conversaciones anteriores del mismo cliente, sin incluir la actual — para el botón de historial en la
+    consola de asesor. Antes se buscaba solo por usuario_id (el mismo navegador): si el cliente escribía desde
+    otro celular u otro navegador, o tocaba "Cambiar mis datos", la asesora no veía sus conversaciones
+    pasadas. Ahora también por el mismo celular o el mismo DNI, y con ellas las demás conversaciones de esos
+    mismos navegadores. `coincide` dice por qué se encontró."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT usuario_id FROM conversaciones WHERE id = %s", (conversacion_id_actual,))
-            row = cur.fetchone()
-            if not row:
-                return []
-            usuario_id = row[0]
             cur.execute(
-                """SELECT c.id, c.iniciado_en, c.estado, cam.nombre, et.nombre
-                   FROM conversaciones c
-                   LEFT JOIN campanas cam ON cam.id = c.campana_id
-                   LEFT JOIN etiquetas_cierre et ON et.id = c.etiqueta_cierre_id
-                   WHERE c.usuario_id = %s AND c.id != %s
-                   ORDER BY c.iniciado_en DESC""",
-                (usuario_id, conversacion_id_actual),
+                f"""WITH a AS (
+                       SELECT c.usuario_id, {_SQL_TEL_CONV} AS tel, {_SQL_DNI_CONV} AS dni
+                       FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                       WHERE c.id = %s
+                   ), x AS (
+                       SELECT c.id, c.iniciado_en, c.estado, c.campana_id, c.etiqueta_cierre_id, c.usuario_id,
+                              {_SQL_TEL_CONV} AS tel, {_SQL_DNI_CONV} AS dni
+                       FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                       WHERE c.id <> %s
+                   ), m AS (   -- las que coinciden directo
+                       SELECT x.*, x.usuario_id = a.usuario_id AS mismo_navegador,
+                              (a.tel ~ '^9[0-9]{{8}}$' AND x.tel = a.tel) AS mismo_celular,
+                              (length(a.dni) >= 8 AND x.dni = a.dni) AS mismo_dni
+                       FROM x CROSS JOIN a
+                       WHERE x.usuario_id = a.usuario_id
+                          OR (a.tel ~ '^9[0-9]{{8}}$' AND x.tel = a.tel)
+                          OR (length(a.dni) >= 8 AND x.dni = a.dni)
+                   ), todas AS (   -- y además las otras de esos mismos navegadores
+                       SELECT id, iniciado_en, estado, campana_id, etiqueta_cierre_id,
+                              mismo_navegador, mismo_celular, mismo_dni FROM m
+                       UNION ALL
+                       SELECT x.id, x.iniciado_en, x.estado, x.campana_id, x.etiqueta_cierre_id, TRUE, FALSE, FALSE
+                       FROM x WHERE x.usuario_id IN (SELECT usuario_id FROM m) AND x.id NOT IN (SELECT id FROM m)
+                   )
+                   SELECT x.id, x.iniciado_en, x.estado, cam.nombre, et.nombre,
+                          x.mismo_navegador, x.mismo_celular, x.mismo_dni
+                   FROM todas x
+                   LEFT JOIN campanas cam ON cam.id = x.campana_id
+                   LEFT JOIN etiquetas_cierre et ON et.id = x.etiqueta_cierre_id
+                   ORDER BY x.iniciado_en DESC
+                   LIMIT 100""",
+                (conversacion_id_actual, conversacion_id_actual),
             )
-            return [
-                {"conversacion_id": cid, "iniciado_en": ts.isoformat(), "estado": estado,
-                 "campana": campana, "etiqueta": etiqueta}
-                for cid, ts, estado, campana, etiqueta in cur.fetchall()
-            ]
+            resultado = []
+            for cid, ts, estado, campana, etiqueta, mismo_nav, mismo_cel, mismo_dni in cur.fetchall():
+                coincide = [t for t, ok in (("celular", mismo_cel), ("dni", mismo_dni)) if ok]
+                if mismo_nav and not coincide:
+                    coincide = ["navegador"]
+                resultado.append({"conversacion_id": cid, "iniciado_en": ts.isoformat() if ts else None,
+                                  "estado": estado, "campana": campana, "etiqueta": etiqueta, "coincide": coincide})
+            return resultado
     finally:
         release_connection(conn)
 
@@ -3741,6 +3777,13 @@ async def _loop_inactividad():
                 await _revisar_inactividad()
             except Exception:
                 logger.exception("Error revisando inactividad de conversaciones")
+        if vuelta % 6 == 2:   # cada minuto: tareas de plan de salud atascadas o sin asignar
+            try:
+                for asesor_id in await asyncio.to_thread(planes.liberar_atascadas):
+                    await _enviar_tareas(asesor_id)
+                await _plan_asignar_y_avisar()
+            except Exception:
+                logger.exception("Error revisando las tareas de plan de salud")
         if vuelta % 6 == 5:   # cada minuto: encuestas por SMS a quien no vio la encuesta en el chat
             try:
                 await asyncio.to_thread(_enviar_encuestas_sms)
@@ -5194,6 +5237,22 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "URL pública donde vive el widget (la página del sitio de Sanitas que tiene el script del webchat) — se usa para armar el enlace del SMS saliente",
         "default": "",
     },
+    "plan_salud_activo": {
+        "etiqueta": "Mi plan de salud: escribe si para mostrar la opción a todos los clientes, o no para mantenerla oculta (solo la ven los celulares de plan_salud_testers). Aplica al instante, sin desplegar",
+        "default": "no",
+    },
+    "plan_salud_testers": {
+        "etiqueta": "Mi plan de salud: celulares que la ven aunque esté oculta (para probar), separados por comas. Ej. 975448483, 997855645",
+        "default": "",
+    },
+    "mensaje_sms_plan_listo": {
+        "etiqueta": "Plan de salud: SMS cuando el backoffice ya cargó el plan del cliente. Usa {{LINK}} (obligatorio); sin tildes para que sea 1 solo SMS",
+        "default": "Sanitas: tu plan de salud ya esta listo. Preguntale a Sofi lo que necesites: {{LINK}}",
+    },
+    "mensaje_sms_plan_rechazado": {
+        "etiqueta": "Plan de salud: SMS cuando el backoffice no pudo obtener el plan. Usa {{LINK}} (obligatorio); sin tildes",
+        "default": "Sanitas: no pudimos obtener tu plan de salud. Revisa el detalle en el chat: {{LINK}}",
+    },
     "mensaje_sms_saliente": {
         "etiqueta": 'SMS que se manda al cliente para avisarle que le escriban de vuelta en el webchat. Usa {{LINK}} para el enlace directo a su conversación (obligatorio en el texto)',
         "default": "Sanitas: tienes un mensaje nuevo de tu asesor. Ingresa aquí para verlo: {{LINK}}",
@@ -5274,8 +5333,12 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "Teaser de Sofi: elementos del portal que NUNCA debe tapar (por ejemplo el botón principal del banner), como selectores CSS separados por coma (ej. .banner .btn-principal, #cotizar). Mientras los taparía, el teaser espera y aparece cuando la persona hace scroll",
         "default": "",
     },
+    "whatsapp_a_webchat_activo": {
+        "etiqueta": "Botones de WhatsApp del sitio que abren el webchat: escribe si para activarlo o no para que todos los botones vuelvan a ir a WhatsApp (aplica al instante, sin desplegar). Los números se configuran en whatsapp_a_webchat",
+        "default": "no",
+    },
     "whatsapp_a_webchat": {
-        "etiqueta": "Botones de WhatsApp del sitio que abren el webchat en vez de WhatsApp: un número por línea (con 51; basta el inicio, ej. 5197544847). Abre el menú principal; si quieres que entre directo a una opción, agrega « | intención» (entrega_medicamentos, compra_sctr, consultas_generales o contratar_eps). Déjalo vacío para que todos vuelvan a ir a WhatsApp (aplica al instante, sin desplegar)",
+        "etiqueta": "Botones de WhatsApp del sitio que abren el webchat en vez de WhatsApp: un número por línea (con 51; basta el inicio, ej. 5197544847). Abre el menú principal; si quieres que entre directo a una opción, agrega « | intención» (entrega_medicamentos, compra_sctr, consultas_generales o contratar_eps). Se prende y apaga con whatsapp_a_webchat_activo",
         "default": "5197544847",
     },
     "teaser_en_celular": {
@@ -5303,6 +5366,10 @@ def _opciones_menu_inicial() -> set | None:
 
 def _config_whatsapp_a_webchat() -> list:
     """[{"prefijo": "5197544847", "intencion": None}, ...] para el widget (None = menú principal)."""
+    activo = (supervisor.obtener_configuracion("whatsapp_a_webchat_activo")
+              or MENSAJES_AUTOMATICOS["whatsapp_a_webchat_activo"]["default"]).strip().lower()
+    if activo not in ("si", "sí", "s", "1", "true", "on"):
+        return []
     clave = "whatsapp_a_webchat"
     valor = supervisor.obtener_configuracion(clave)
     if valor is None:
@@ -5952,7 +6019,23 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
     finally:
         release_connection(conn)
 
+    # Campaña backoffice (tareas de plan de salud): una campaña más. Sus tareas no son conversaciones, así que no
+    # cambian los totales; aparecen en "Por campaña", en "Por asesor" y con su propio bloque de indicadores.
+    backoffice = None
+    bo_id = _id_campana_backoffice()
+    if bo_id is not None and (campanas_filtro is None or bo_id in campanas_filtro):
+        backoffice = planes.estadisticas(fecha_desde, fecha_hasta)
+    if backoffice and backoffice["solicitudes"]:
+        por_campana = sorted(por_campana + [{"campana": "backoffice (tareas de plan de salud)",
+                                             "cantidad": backoffice["solicitudes"]}],
+                             key=lambda r: -r["cantidad"])
+        por_asesor = sorted(por_asesor + [{"asesor": f'{a["asesor"]} · tareas backoffice',
+                                           "cantidad": a["atendidas"] + a["rechazadas"] + a["en_curso"]}
+                                          for a in backoffice["por_asesor"]],
+                            key=lambda r: -r["cantidad"])
+
     return {
+        "backoffice": backoffice,
         "total": total,
         "total_atendidas": total_atendidas,
         "por_dia": por_dia,
@@ -5976,6 +6059,18 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
         "por_metodo_token": por_metodo_token,
         "por_pagina": por_pagina,
     }
+
+
+def _id_campana_backoffice():
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM campanas WHERE codigo = %s", (planes.CAMPANA_BACKOFFICE,))
+            fila = cur.fetchone()
+        conn.rollback()
+        return fila[0] if fila else None
+    finally:
+        release_connection(conn)
 
 
 def _rango_dashboard(desde: str, hasta: str):
@@ -6390,6 +6485,88 @@ def _reenviar_asignaciones_activas(asesor_id: int) -> list:
         release_connection(conn)
 
 
+# ---------------------------------------------------------------------------
+# Plan de salud (ver planes.py): tareas del backoffice y aviso al cliente
+# ---------------------------------------------------------------------------
+_tareas_fondo: set = set()
+
+
+def _lanzar_tarea(coro):
+    """Corre una corutina en segundo plano sin perderla (se guarda la referencia hasta que termina)."""
+    t = asyncio.get_running_loop().create_task(coro)
+    _tareas_fondo.add(t)
+    t.add_done_callback(_tareas_fondo.discard)
+
+
+async def _enviar_tareas(asesor_id: int):
+    datos = await asyncio.to_thread(planes.tareas_de_asesor, asesor_id)
+    await manager.enviar_a_asesor(asesor_id, {"type": "tareas_backoffice", "payload": datos})
+
+
+async def _plan_asignar_y_avisar():
+    try:
+        for asesor_id in await asyncio.to_thread(planes.asignar_pendientes):
+            await _enviar_tareas(asesor_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Plan de salud: no se pudieron asignar las solicitudes")
+
+
+async def _procesar_plan(sid: int, asesor_id: int, ruta: str, codigo, nombre, archivo_nombre=None):
+    """Gemini digitaliza el PDF (1 a 2 minutos, en un hilo aparte) y luego se avisa al asesor y al cliente."""
+    try:
+        r = await asyncio.to_thread(planes.digitalizar_y_cerrar, sid, asesor_id, ruta, codigo, nombre, archivo_nombre)
+    except Exception:  # noqa: BLE001
+        logger.exception("Plan de salud: falló la digitalización de la solicitud %s", sid)
+        r = {"ok": False, "motivo": "No se pudo digitalizar el plan."}
+    await manager.enviar_a_asesor(asesor_id, {"type": "plan_resultado",
+                                              "payload": {"solicitud_id": sid, "digitalizado": True, **r}})
+    await _enviar_tareas(asesor_id)
+    if r.get("ok"):
+        await _avisar_cliente_plan(sid)
+
+
+def _link_widget(sesion_token: str | None) -> str | None:
+    widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
+    if not widget_url:
+        return None
+    sep = "&" if "?" in widget_url else "?"
+    return f"{widget_url}{sep}wcs={sesion_token}" if sesion_token else f"{widget_url}{sep}ac=1"
+
+
+async def _avisar_cliente_plan(sid: int):
+    """Plan listo (o rechazado): si el cliente sigue en esa conversación del bot, Sofi se lo dice en el chat (y
+    entra a las preguntas); si no está mirando el chat, además le llega un SMS con el enlace."""
+    datos = await asyncio.to_thread(planes.datos_para_aviso, sid)
+    if not datos or datos["estado"] not in ("atendida", "rechazada"):
+        return
+    listo = datos["estado"] == "atendida"
+    conv = datos["conversacion_id"]
+    en_bot = datos["estado_conversacion"] == "bot"
+    visto = False
+    if conv and en_bot:
+        nodo = "plan_listo" if listo else "plan_rechazado"
+        eventos = await asyncio.to_thread(entrar_a_nodo, conv, nodo,
+                                          {"PLAN_DNI": datos["dni"], "PLAN_MOTIVO": datos["motivo"] or ""})
+        ws_cliente = manager.widget_connections.get(conv)
+        if eventos and ws_cliente is not None:
+            try:
+                await _procesar_eventos_bot(conv, ws_cliente, eventos)
+                visto = bool(manager.widget_visible.get(conv))
+            except Exception:  # noqa: BLE001
+                logger.warning("Plan de salud: no se pudo avisar en el chat (conversación %s)", conv, exc_info=True)
+    if visto or not datos["celular"]:
+        return
+    link = _link_widget(datos["sesion_token"] if en_bot else None)
+    if not link:
+        return
+    clave = "mensaje_sms_plan_listo" if listo else "mensaje_sms_plan_rechazado"
+    plantilla = await asyncio.to_thread(supervisor.obtener_configuracion, clave) or MENSAJES_AUTOMATICOS[clave]["default"]
+    mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
+    ok = await asyncio.to_thread(enviar_sms_danaconnect, datos["celular"], mensaje)
+    logger.info("Plan de salud: SMS de %s a la solicitud %s: %s", "plan listo" if listo else "rechazo", sid,
+                "enviado" if ok else "falló")
+
+
 @app.websocket("/ws/asesor")
 async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
     """
@@ -6427,6 +6604,10 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
             "payload": {"ids": [a["conversacion_id"] for a in activas_conexion]},
         })
         await asignacion.asignar_desde_cola_para_asesor(asesor_id, manager)
+        es_backoffice = await asyncio.to_thread(planes.es_backoffice, asesor_id)
+        if es_backoffice:
+            await _plan_asignar_y_avisar()
+            await _enviar_tareas(asesor_id)
 
         while True:
             data = await websocket.receive_json()
@@ -6584,6 +6765,39 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 if not pausado:
                     # al reanudar, intenta tomar de la cola de inmediato
                     await asignacion.asignar_desde_cola_para_asesor(asesor_id, manager)
+                    if es_backoffice:
+                        await _plan_asignar_y_avisar()
+
+            elif tipo == "obtener_tareas":
+                await _enviar_tareas(asesor_id)
+
+            elif tipo == "plan_atender":
+                # Backoffice: sube el PDF del plan (o elige el código de un plan ya cargado).
+                try:
+                    sid = int(payload.get("solicitud_id"))
+                except (TypeError, ValueError):
+                    sid = 0
+                ruta = (payload.get("ruta") or "").strip() or None
+                codigo = (payload.get("codigo_plan") or "").strip() or None
+                archivo_nombre = str(payload.get("archivo_nombre") or "").strip()[:200] or None
+                r = await asyncio.to_thread(planes.preparar_atencion, sid, asesor_id, ruta, codigo, archivo_nombre)
+                await manager.enviar_a_asesor(asesor_id, {"type": "plan_resultado", "payload": {"solicitud_id": sid, **r}})
+                if r.get("procesar"):
+                    _lanzar_tarea(_procesar_plan(sid, asesor_id, ruta, codigo, payload.get("nombre_plan"), archivo_nombre))
+                elif r.get("listo"):
+                    await _avisar_cliente_plan(sid)
+                await _enviar_tareas(asesor_id)
+
+            elif tipo == "plan_rechazar":
+                try:
+                    sid = int(payload.get("solicitud_id"))
+                except (TypeError, ValueError):
+                    sid = 0
+                r = await asyncio.to_thread(planes.rechazar, sid, asesor_id, payload.get("motivo"))
+                await manager.enviar_a_asesor(asesor_id, {"type": "plan_resultado", "payload": {"solicitud_id": sid, **r}})
+                if r.get("ok"):
+                    await _avisar_cliente_plan(sid)
+                await _enviar_tareas(asesor_id)
 
             elif tipo == "marcar_leido":
                 conversacion_id = payload.get("conversacion_id")
@@ -6617,7 +6831,8 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 await manager.enviar_a_asesor(asesor_id, {
                     "type": "historial_usuario",
                     "payload": {"conversacion_id": conversacion_id_actual,
-                                "conversaciones": _obtener_historial_usuario(conversacion_id_actual)},
+                                "conversaciones": await asyncio.to_thread(_obtener_historial_usuario,
+                                                                          conversacion_id_actual)},
                 })
 
             elif tipo == "obtener_mensajes_conversacion_pasada":

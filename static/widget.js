@@ -156,6 +156,16 @@
     .sofi-teaser .st-cerrar:hover { background: #EEF2F8; color: #1A2B3C; }
     @media (max-width: 599px) { .sofi-teaser .st-chips { grid-template-columns: 1fr; } }
     :host(.movil) .sofi-teaser .st-chips { grid-template-columns: 1fr; }
+    /* Celular: versión compacta (~20 % menos alto) para no tapar tanto la página. Misma información y botones. */
+    :host(.movil) .sofi-teaser { padding: 10px 10px 10px 13px; border-radius: 16px; }
+    :host(.movil) .sofi-teaser .st-cab { gap: 8px; }
+    :host(.movil) .sofi-teaser .st-cab img { width: 30px; height: 30px; }
+    :host(.movil) .sofi-teaser .st-nombre { font-size: 14px; }
+    :host(.movil) .sofi-teaser .st-sub { font-size: 11.5px; }
+    :host(.movil) .sofi-teaser .st-msg { margin: 7px 0 8px; font-size: 13.5px; }
+    :host(.movil) .sofi-teaser .st-chips { gap: 5px; }
+    :host(.movil) .sofi-teaser .st-chip { min-height: 36px; padding: 6px 10px; font-size: 13px; border-radius: 10px; }
+    :host(.movil) .sofi-teaser .st-cerrar { top: 4px; right: 4px; width: 32px; height: 32px; font-size: 18px; }
     @media (prefers-reduced-motion: reduce) {
       .sofi-teaser, .sofi-teaser.visible { transition: none; transform: scale(var(--k, 1)); }
     }

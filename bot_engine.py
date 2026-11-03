@@ -29,6 +29,7 @@ from datetime import datetime, timezone, timedelta
 from db import get_connection, release_connection
 import supervisor
 import archivos_cliente
+import planes
 from api_handlers import (
     validar_horario_consultas, consulta_doi, listar_distritos, update_doi_distrito,
     seleccionar_direccion, registrar_direccion, crear_doi_nuevo, procesar_receta, trae_escoge,
@@ -386,6 +387,66 @@ def _validar_ubicacion(ubicacion, solo_peru: bool):
     return lat, lng, precision, None
 
 
+def _ultimos9(valor) -> str:
+    digitos = "".join(ch for ch in str(valor or "") if ch.isdigit())
+    return digitos[-9:] if len(digitos) >= 9 else ""
+
+
+def _interruptor_activo(cur, conversacion_id: int, variables: dict, nombre: str) -> bool:
+    """Opción "oculta" mientras se prueba: visible si en el Editor <nombre>_activo = si, o si el celular de
+    la conversación está en <nombre>_testers (celulares separados por comas)."""
+    if (supervisor.obtener_configuracion(f"{nombre}_activo") or "no").strip().lower() in ("si", "sí", "s", "1", "true", "on"):
+        return True
+    testers = {_ultimos9(t) for t in (supervisor.obtener_configuracion(f"{nombre}_testers") or "").split(",")}
+    testers.discard("")
+    if not testers:
+        return False
+    celular = _ultimos9((variables or {}).get("CELULAR"))
+    if not celular:
+        cur.execute("""SELECT u.telefono FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                       WHERE c.id = %s""", (conversacion_id,))
+        fila = cur.fetchone()
+        celular = _ultimos9(fila[0] if fila else None)
+    return celular in testers
+
+
+def _opciones_visibles(cur, conversacion_id: int, opciones, variables: dict = None):
+    """Filtra las opciones de un menú:
+    - "interruptor": "<nombre>" -> oculta mientras se prueba (ver _interruptor_activo).
+    - "solo_en_horario": "<codigo de campaña>" -> solo en el horario de esa campaña (p. ej. "Mi plan de salud",
+      que depende del backoffice). Con "visible_si_tiene_plan": true se muestra igual fuera de horario a quien
+      ya tiene su plan cargado (preguntarle a la IA no depende del backoffice)."""
+    if not opciones or not any(isinstance(o, dict) and (o.get("solo_en_horario") or o.get("interruptor"))
+                               for o in opciones):
+        return opciones
+    en_horario, interruptores, tiene_plan, visibles = {}, {}, None, []
+    for o in opciones:
+        if not isinstance(o, dict):
+            visibles.append(o)
+            continue
+        interruptor = o.get("interruptor")
+        if interruptor:
+            if interruptor not in interruptores:
+                interruptores[interruptor] = _interruptor_activo(cur, conversacion_id, variables, interruptor)
+            if not interruptores[interruptor]:
+                continue
+        campana = o.get("solo_en_horario")
+        if campana:
+            if campana not in en_horario:
+                r = (validar_horario_consultas({"campana_codigo": campana}, {}) or {}).get("response") or {}
+                en_horario[campana] = not r.get("outOfTime", True)
+            ok = en_horario[campana]
+            if not ok and o.get("visible_si_tiene_plan"):
+                if tiene_plan is None:
+                    tiene_plan = planes.usuario_tiene_plan(cur, conversacion_id)
+                ok = tiene_plan
+            if not ok:
+                continue
+        visibles.append({k: v for k, v in o.items()
+                         if k not in ("solo_en_horario", "visible_si_tiene_plan", "interruptor")})
+    return visibles
+
+
 def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> list:
     """Ejecuta nodos en cadena hasta toparse con uno que requiera input del usuario
     (captura_dato, menu) o uno terminal (cierre, derivar_asesor). Devuelve la lista
@@ -425,7 +486,7 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             if (nodo["accion_config"] or {}).get("opciones_dinamicas") == "direcciones_doi":
                 opciones_a_mostrar = _construir_opciones_direcciones(variables, nodo["siguiente_codigo"])
             else:
-                opciones_a_mostrar = nodo["opciones"]
+                opciones_a_mostrar = _opciones_visibles(cur, conversacion_id, nodo["opciones"], variables)
             eventos.append({"type": "mensaje_bot", "payload": {
                 "texto": texto, "opciones": opciones_a_mostrar, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
             # El texto del menú también se guarda (antes solo se guardaban las
@@ -478,6 +539,10 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             # (lo intercepta main.py en cualquier punto del bot).
             texto = sustituir_variables(nodo["texto"] or "", variables)
             botones = _botones_temas_ia(_temas_ia(nodo))
+            es_plan = (nodo["accion_config"] or {}).get("fuente") == "plan"
+            if es_plan:
+                # Su plan en PDF, para que lo revise cuando quiera (se ve y descarga desde el chat).
+                eventos.extend(_eventos_pdf_plan(cur, conversacion_id, variables))
             if texto or botones:
                 payload = {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}
                 if botones:
@@ -513,6 +578,11 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             if accion_config.get("api") == "sctr_archivo_previo":
                 # Archivos de la última solicitud de esta empresa (ver archivos_cliente.py): necesita la base.
                 resultado = archivos_cliente.accion_archivo_previo(cur, conversacion_id, variables)
+            elif accion_config.get("api") == "plan_buscar":
+                resultado = planes.accion_buscar(cur, conversacion_id, variables)
+            elif accion_config.get("api") == "plan_solicitar":
+                resultado, eventos_plan = planes.accion_solicitar(cur, conversacion_id, variables)
+                eventos.extend(eventos_plan)   # internos ("_plan_solicitud"): main.py asigna la tarea al backoffice
             elif accion_config.get("api") == "sctr_reusar_archivo":
                 resultado, eventos_archivo = archivos_cliente.accion_reusar(
                     cur, conversacion_id, variables, datetime.now(LIMA_TZ))
@@ -625,11 +695,13 @@ def iniciar_conversacion(conversacion_id: int, nodo_inicial: str, variables_inic
 
 
 class _TurnoIA:
-    """Marca interna: el nodo actual es 'conversacion_ia' y el turno se atiende fuera del árbol."""
-    def __init__(self, nodo_codigo: str, variables: dict, temas: list = None):
+    """Marca interna: el nodo actual es 'conversacion_ia' y el turno se atiende fuera del árbol.
+    fuente: None = agente de sofi-apis; "plan" = IA con el plan de salud del DNI (planes.py)."""
+    def __init__(self, nodo_codigo: str, variables: dict, temas: list = None, fuente: str = None):
         self.nodo_codigo = nodo_codigo
         self.variables = variables
         self.temas = temas or []
+        self.fuente = fuente
 
 
 def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
@@ -704,6 +776,24 @@ def _botones_temas_ia(temas: list) -> list:
     return [{"id": f"ia_t:{i}", "label": t["label"]} for i, t in enumerate(temas)]
 
 
+ID_PLAN_PDF = "plan_pdf"
+
+
+def _eventos_pdf_plan(cur, conversacion_id: int, variables: dict) -> list:
+    """El PDF del plan del DNI como archivo del chat (mismo evento que un archivo enviado por un asesor)."""
+    ruta = planes.ruta_pdf(cur, (variables or {}).get("PLAN_DNI"))
+    if not ruta:
+        return []
+    texto = "📄 Aquí tienes tu plan completo. Ábrelo cuando quieras para revisarlo con calma:"
+    _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+    cur.execute("""INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                   VALUES (%s, 'bot', 'archivo', %s, %s) RETURNING id""",
+                (conversacion_id, ruta, datetime.now(LIMA_TZ)))
+    mensaje_id = cur.fetchone()[0]
+    return [{"type": "mensaje_bot", "payload": {"texto": texto}},
+            {"type": "archivo_asesor", "payload": {"ruta": ruta, "mensaje_id": mensaje_id}}]
+
+
 def _botones_seguimiento_ia(temas: list) -> list:
     """Botones que acompañan cada respuesta del agente (solo si el nodo tiene temas configurados)."""
     if not temas:
@@ -766,6 +856,18 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
     temas = turno.temas
     texto = (texto or "").strip()
 
+    # --- Plan de salud: "📄 Ver mi plan" manda el PDF (no llama a la IA) ----------------------------
+    if turno.fuente == "plan" and not texto and opcion_id == ID_PLAN_PDF:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                _guardar_mensaje(cur, conversacion_id, "usuario", "texto", "📄 Ver mi plan")
+                eventos = _eventos_pdf_plan(cur, conversacion_id, turno.variables)
+            conn.commit()
+        finally:
+            release_connection(conn)
+        return eventos or [{"type": "mensaje_bot", "payload": {"texto": "No encontré el PDF de tu plan 😕"}}]
+
     # --- Botones de temas: no llaman al agente ---------------------------------------------------
     if not texto and opcion_id:
         if opcion_id == ID_IA_TEMAS:
@@ -804,8 +906,9 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
                 "texto": "Por ahora solo puedo leer mensajes de texto. Cuéntame tu consulta "
                          "escribiéndola, o escribe *menu* para volver al menú principal."}}]
         return []   # formulario viejo en pantalla: se ignora
-    celular = _celular_para_agente(conversacion_id, turno.variables)
-    if not celular:
+    es_plan = turno.fuente == "plan"
+    celular = "" if es_plan else _celular_para_agente(conversacion_id, turno.variables)
+    if not es_plan and not celular:
         return [{"type": "mensaje_bot", "payload": {
             "texto": "Necesito tu número de celular para ayudarte. Escribe *menu* para volver al menú principal."}}]
 
@@ -823,13 +926,19 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
         botones = _botones_seguimiento_ia(temas)
         return [{"type": "mensaje_bot", "payload": {"texto": aviso, **({"opciones": botones} if botones else {})}}]
 
-    resultado = API_HANDLERS["consulta_agente_ia"]({"pregunta": texto, "celular": celular}, turno.variables)
-    respuesta = ((resultado or {}).get("response") or {}).get("respuesta") or ""
+    if es_plan:
+        # IA con el plan de salud del DNI (Gemini). Responde solo con lo que dice el plan.
+        respuesta = planes.responder(conversacion_id, turno.variables.get("PLAN_DNI"), texto)
+    else:
+        resultado = API_HANDLERS["consulta_agente_ia"]({"pregunta": texto, "celular": celular}, turno.variables)
+        respuesta = ((resultado or {}).get("response") or {}).get("respuesta") or ""
     if not respuesta:
         from api_handlers import MENSAJE_RESPALDO_IA
         respuesta = MENSAJE_RESPALDO_IA
 
     botones = _botones_seguimiento_ia(temas)
+    if es_plan and botones:
+        botones = [{"id": ID_PLAN_PDF, "label": "📄 Ver mi plan"}] + botones
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -881,7 +990,8 @@ def _recibir_entrada_usuario_arbol(conversacion_id: int, texto: str = None,
                     "texto": "Escribe 'menu' para iniciar."}}]
 
             if nodo["tipo"] == "conversacion_ia":
-                return _TurnoIA(nodo["codigo"], variables, _temas_ia(nodo))
+                return _TurnoIA(nodo["codigo"], variables, _temas_ia(nodo),
+                                (nodo["accion_config"] or {}).get("fuente"))
 
             if nodo["tipo"] == "captura_dato":
                 validacion = nodo["validacion"] or {}
