@@ -263,6 +263,14 @@
   #panel.en-tarea > :not(#tarea) { display: none !important; }
   #tarea { display: none; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--fondo); }
   #panel.en-tarea #tarea { display: flex; }
+  #panel.en-carga > :not(#cargaPlan) { display: none !important; }
+  #cargaPlan { display: none; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--fondo); }
+  #panel.en-carga #cargaPlan { display: flex; }
+  .tarea-caja textarea { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; font: inherit; font-size: 13.5px; min-height: 70px; resize: vertical; }
+  .carga-item { font-size: 13px; padding: 8px 0; border-top: 1px solid var(--borde); }
+  .carga-item:first-child { border-top: none; }
+  .carga-item.error { color: #C0392B; }
+  .conv-item.cargar-plan .nombre { color: var(--azul); }
   .tarea-cuerpo { padding: 20px; max-width: 640px; width: 100%; box-sizing: border-box; }
   .tarea-caja { background: white; border: 1px solid var(--borde); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
   .tarea-caja h4 { margin: 0 0 10px; font-size: 14px; }
@@ -274,6 +282,8 @@
   .tarea-acciones { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
   .tarea-estado { font-size: 13px; margin-top: 10px; min-height: 1em; }
   .tarea-estado.error { color: #C0392B; }
+  .tarea-aviso { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: #FFF6E5; border: 1px solid #F3D9A4; color: #7A4B00; font-size: 13px; }
+  .chip-tarea.renovacion { background: #FFF6E5; color: #7A4B00; }
   .chip-tarea { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: #FFF3E0; color: #9A5B00; margin-top: 3px; }
   .chip-tarea.procesando { background: #E9F1FB; color: var(--azul); }
   .chip-tarea.error { background: #FDECEA; color: #C0392B; }
@@ -817,6 +827,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
             <div class="tarea-dato">DNI del afiliado</div>
             <div class="tarea-dni" id="tarDni"></div>
             <div class="tarea-dato" id="tarCliente"></div>
+            <div class="tarea-aviso" id="tarAviso" style="display:none"></div>
           </div>
           <div class="tarea-caja">
             <h4>1. Busca el plan de este DNI en el sistema de Sanitas y descarga el PDF</h4>
@@ -843,6 +854,41 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
               <div class="tarea-acciones"><button class="rojo" id="btnConfirmarRechazo" type="button">Confirmar</button></div>
             </div>
             <div class="tarea-estado" id="tarEstado"></div>
+          </div>
+        </div>
+      </div>
+      <div id="cargaPlan">
+        <div class="chat-header activa">
+          <div class="avatar">➕</div>
+          <div class="cab-info">
+            <div class="nombre">Cargar un plan de salud</div>
+            <div class="telefono">Sin esperar a que el cliente lo pida</div>
+          </div>
+          <div class="acciones-conv" style="margin-left:auto">
+            <button class="chico gris" id="btnCerrarCarga" type="button">✕ Cerrar</button>
+          </div>
+        </div>
+        <div class="tarea-cuerpo">
+          <div class="tarea-caja">
+            <label for="cargaPdf">PDF del plan</label>
+            <input type="file" id="cargaPdf" accept="application/pdf,.pdf">
+            <div class="ayuda">Si ese PDF ya fue cargado antes, no se vuelve a leer: se usa el mismo plan al instante.</div>
+            <label for="cargaDnis">DNI de los afiliados (opcional)</label>
+            <textarea id="cargaDnis" placeholder="Uno por línea, o separados por comas"></textarea>
+            <div class="ayuda">Quedan con este plan desde ya. Si lo dejas vacío, el plan queda cargado y, cuando un afiliado lo pida, lo atiendes subiendo el mismo PDF o eligiendo su código.</div>
+            <label for="cargaCodigo">Código del plan (opcional)</label>
+            <input type="text" id="cargaCodigo" list="tarCodigos" maxlength="60" placeholder="Ej. el código del plan o del contrato">
+            <div class="ayuda">Sin PDF: elige el código de un plan ya cargado para asignarlo a los DNI.</div>
+            <label for="cargaNombre">Nombre del plan (opcional)</label>
+            <input type="text" id="cargaNombre" maxlength="150" placeholder="Si lo dejas vacío, se toma del PDF">
+            <div class="tarea-acciones">
+              <button id="btnCargarPlan" type="button">📤 Cargar plan</button>
+            </div>
+            <div class="tarea-estado" id="cargaEstado"></div>
+          </div>
+          <div class="tarea-caja" id="cargaHistorialCaja" style="display:none">
+            <h4>Cargas de esta sesión</h4>
+            <div id="cargaHistorial"></div>
           </div>
         </div>
       </div>
@@ -2446,6 +2492,9 @@ function conectarWs() {
       case 'plan_resultado':
         resultadoPlan(p);
         break;
+      case 'plan_carga_resultado':
+        resultadoCarga(p);
+        break;
       case 'conversaciones_vigentes': {
         const vigentes = new Set((p.ids || []).map(String));
         Object.keys(conversaciones).forEach(k => {
@@ -3510,6 +3559,18 @@ function recibirTareas(p) {
 function renderListaTareas(lista, vacio) {
   vacio.style.display = tareasBackoffice.length ? 'none' : 'block';
   vacio.textContent = 'No tienes tareas pendientes. 🎉';
+  const nuevo = document.createElement('div');
+  nuevo.className = 'conv-item cargar-plan' + (cargaAbierta ? ' activa' : '');
+  const enCurso = cargasPlan.filter(c => c.estado === 'procesando').length;
+  nuevo.innerHTML = `
+    <div class="avatar">➕</div>
+    <div class="info">
+      <div class="nombre">Cargar un plan</div>
+      <div class="telefono">Digitalízalo antes de que lo pidan</div>
+      ${enCurso ? `<div><span class="chip-tarea procesando">⏳ ${enCurso} en proceso</span></div>` : ''}
+    </div>`;
+  nuevo.onclick = abrirCarga;
+  lista.appendChild(nuevo);
   tareasBackoffice.forEach(t => {
     const div = document.createElement('div');
     div.className = 'conv-item' + (String(tareaActivaId) === String(t.id) ? ' activa' : '');
@@ -3519,8 +3580,8 @@ function renderListaTareas(lista, vacio) {
       <div class="avatar">📄</div>
       <div class="info">
         <div class="nombre">DNI ${escapeHtml(t.dni)}</div>
-        <div class="telefono">Plan de salud${t.nombre ? ' · ' + escapeHtml(t.nombre) : ''}</div>
-        <div>${chip}</div>
+        <div class="telefono">${t.tipo === 'renovacion' ? 'Renovar plan de salud' : 'Plan de salud'}${t.nombre ? ' · ' + escapeHtml(t.nombre) : ''}</div>
+        <div>${t.tipo === 'renovacion' ? '<span class="chip-tarea renovacion">🔄 Renovación</span> ' : ''}${chip}</div>
       </div>
       <div class="meta-derecha"><div class="ultima-hora">${desdeHace(t.creado_en)}</div></div>`;
     div.onclick = () => abrirTarea(t.id);
@@ -3547,6 +3608,9 @@ function pintarTarea() {
   document.getElementById('tarCuando').textContent = 'Pedida ' + desdeHace(t.creado_en) + ' · ' + formatearFechaHoraCompleta(t.creado_en);
   document.getElementById('tarDni').textContent = t.dni;
   document.getElementById('tarCliente').textContent = [t.nombre, t.celular].filter(Boolean).join(' · ');
+  const aviso = document.getElementById('tarAviso');
+  aviso.style.display = t.aviso ? '' : 'none';
+  aviso.textContent = t.aviso ? '🔄 ' + t.aviso : '';
   const procesando = t.estado === 'procesando';
   document.getElementById('btnEnviarPlan').disabled = procesando;
   document.getElementById('btnNoSePudo').disabled = procesando;
@@ -3557,6 +3621,7 @@ function pintarTarea() {
 function salirTarea() {
   tareaActivaId = null;
   document.getElementById('panel').classList.remove('en-tarea');
+  salirCarga();   // abrir una conversación, una lectura o una tarea también cierra el panel de carga
 }
 document.getElementById('btnCerrarTarea').onclick = () => { salirTarea(); renderLista(); };
 document.getElementById('tabTareas').onclick = () => {
@@ -3643,6 +3708,8 @@ var lecturaId = null;   // var: se usa desde seleccionar(), definida antes
 function abrirLectura(r) {
   salirTarea();
   lecturaId = String(r.conversacion_id);
+  // Celular: viene de la ventana de "Buscar", no de la lista -> pasar a la pantalla de la conversación.
+  if (window.matchMedia('(max-width: 900px)').matches) document.body.classList.add('movil-chat');
   const nombre = r.usuario_nombre || ('Usuario ' + r.conversacion_id);
   document.getElementById('lecAvatar').textContent = iniciales(nombre);
   document.getElementById('lecNombre').textContent = nombre;
@@ -3666,11 +3733,89 @@ function pintarLectura(mensajes) {
   pintarMensajesSoloLectura(chat, mensajes);
   chat.scrollTop = chat.scrollHeight;
 }
+// --- Carga directa de planes (backoffice) ---------------------------------------------------------------
+var cargaAbierta = false;   // var: se usa desde salirTarea() y la lista, definidas antes
+var cargasPlan = [];   // {ref, archivo, dnis, estado: 'procesando'|'ok'|'error', texto}
+function abrirCarga() {
+  salirLectura();
+  if (tareaActivaId) salirTarea();
+  cargaAbierta = true;
+  document.getElementById('panel').classList.add('en-carga');
+  pintarCargas();
+  renderLista();
+}
+function salirCarga() {
+  cargaAbierta = false;
+  document.getElementById('panel').classList.remove('en-carga');
+}
+document.getElementById('btnCerrarCarga').onclick = () => { salirCarga(); renderLista(); };
+function pintarCargas() {
+  const caja = document.getElementById('cargaHistorialCaja');
+  caja.style.display = cargasPlan.length ? '' : 'none';
+  document.getElementById('cargaHistorial').innerHTML = cargasPlan.slice().reverse().map(c =>
+    `<div class="carga-item${c.estado === 'error' ? ' error' : ''}">${c.estado === 'procesando' ? '⏳' : c.estado === 'ok' ? '✅' : '⚠️'} `
+    + `<b>${escapeHtml(c.archivo)}</b>${c.dnis ? ' · ' + c.dnis + ' DNI' : ''}<br>${escapeHtml(c.texto)}</div>`).join('');
+}
+document.getElementById('btnCargarPlan').onclick = async () => {
+  const archivo = document.getElementById('cargaPdf').files[0];
+  const dnis = document.getElementById('cargaDnis').value.trim();
+  const codigo = document.getElementById('cargaCodigo').value.trim();
+  const nombre = document.getElementById('cargaNombre').value.trim();
+  const est = document.getElementById('cargaEstado');
+  const btn = document.getElementById('btnCargarPlan');
+  est.className = 'tarea-estado';
+  if (!archivo && !(codigo && dnis)) { est.className = 'tarea-estado error'; est.textContent = 'Sube el PDF del plan, o elige el código de un plan ya cargado y escribe los DNI.'; return; }
+  if (archivo && !/\.pdf$/i.test(archivo.name)) { est.className = 'tarea-estado error'; est.textContent = 'El archivo debe ser un PDF.'; return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN) { est.className = 'tarea-estado error'; est.textContent = 'Sin conexión. Intenta de nuevo en un momento.'; return; }
+  btn.disabled = true;
+  const ref = 'c' + Date.now();
+  const cantidad = dnis ? dnis.split(/[\s,;]+/).filter(Boolean).length : 0;
+  try {
+    let ruta = null;
+    if (archivo) {
+      est.textContent = 'Subiendo el PDF…';
+      const fd = new FormData();
+      fd.append('file', archivo, archivo.name);
+      const r = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${tokenGuardado}` } });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'No se pudo subir el archivo');
+      ruta = (await r.json()).ruta;
+    }
+    cargasPlan.push({ ref, archivo: archivo ? archivo.name : 'Código ' + codigo, dnis: cantidad, estado: 'procesando', texto: 'Enviando…' });
+    ws.send(JSON.stringify({ type: 'plan_cargar', payload: { ref, ruta, dnis, codigo_plan: codigo, nombre_plan: nombre, archivo_nombre: archivo ? archivo.name : null } }));
+    est.textContent = '';
+    pintarCargas();
+  } catch (e) {
+    est.className = 'tarea-estado error'; est.textContent = '⚠️ ' + e.message;
+  }
+  btn.disabled = false;
+};
+function resultadoCarga(p) {
+  const c = cargasPlan.find(x => x.ref === p.ref);
+  if (!c) return;
+  if (p.procesando) {
+    c.texto = 'Leyendo el plan con IA (1 a 3 minutos). Puedes seguir con otra cosa: te avisamos al terminar.';
+    // Formulario listo para el siguiente plan
+    ['cargaPdf', 'cargaDnis', 'cargaCodigo', 'cargaNombre'].forEach(id => { document.getElementById(id).value = ''; });
+  } else if (!p.ok) {
+    c.estado = 'error'; c.texto = p.motivo || 'No se pudo cargar el plan.';
+    if (!cargaAbierta) alert(`Carga de ${c.archivo}: ${c.texto}`);
+  } else {
+    c.estado = 'ok';
+    const como = p.reutilizado ? 'Ese PDF ya estaba cargado: se usó el mismo plan' : p.digitalizado ? 'Plan digitalizado' : 'Plan asignado';
+    c.texto = `${como}${p.nombre ? ' (' + p.nombre + ')' : ''}.`
+      + (p.dnis ? ` ${p.dnis} DNI con este plan.` : ' Quedó cargado, sin DNI asignados.')
+      + (p.avisados ? ` Avisamos a ${p.avisados} cliente(s) que ya lo habían pedido.` : '');
+    mostrarAvisoTarea('✅ ' + c.archivo + ': ' + c.texto);
+  }
+  pintarCargas();
+  if (pestanaActual === 'tareas') renderLista();
+}
+
 function salirLectura() {
   lecturaId = null;
   document.getElementById('panel').classList.remove('en-lectura');
 }
-document.getElementById('btnSalirLectura').onclick = salirLectura;
+document.getElementById('btnSalirLectura').onclick = () => { salirLectura(); document.body.classList.remove('movil-chat'); };
 
 // El botón "Cerrar" del modal de historial también debe limpiar la marca de origen.
 document.getElementById('btnCerrarModalHistorial').addEventListener('click', () => { historialOrigenBusqueda = false; });

@@ -6525,6 +6525,27 @@ async def _procesar_plan(sid: int, asesor_id: int, ruta: str, codigo, nombre, ar
         await _avisar_cliente_plan(sid)
 
 
+async def _cargar_plan_directo(asesor_id: int, ref: str, payload: dict):
+    """Carga directa desde la consola: digitaliza (o reutiliza) el plan, lo asigna a los DNI escritos y avisa a los
+    clientes que ya lo habían pedido."""
+    try:
+        r = await asyncio.to_thread(planes.cargar_directo, asesor_id, payload.get("ruta"), payload.get("codigo_plan"),
+                                    payload.get("nombre_plan"), payload.get("archivo_nombre"), payload.get("dnis"))
+    except Exception:  # noqa: BLE001
+        logger.exception("Plan de salud: falló la carga directa")
+        r = {"ok": False, "motivo": "No se pudo cargar el plan."}
+    avisar = r.pop("avisar", []) or []
+    r["avisados"] = len(avisar)
+    await manager.enviar_a_asesor(asesor_id, {"type": "plan_carga_resultado", "payload": {"ref": ref, **r}})
+    for sid, _asesor in avisar:
+        try:
+            await _avisar_cliente_plan(sid)
+        except Exception:  # noqa: BLE001
+            logger.exception("Plan de salud: no se pudo avisar la solicitud %s", sid)
+    for otro in {a for _s, a in avisar if a} | {asesor_id}:
+        await _enviar_tareas(otro)
+
+
 def _link_widget(sesion_token: str | None) -> str | None:
     widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
     if not widget_url:
@@ -6787,6 +6808,20 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 elif r.get("listo"):
                     await _avisar_cliente_plan(sid)
                 await _enviar_tareas(asesor_id)
+
+            elif tipo == "plan_cargar":
+                # Backoffice: carga directa de un plan (sin esperar a que el cliente lo pida).
+                ref = str(payload.get("ref") or "")[:40]
+                if not await asyncio.to_thread(planes.es_backoffice, asesor_id):
+                    r = {"ok": False, "motivo": "Solo el equipo de backoffice puede cargar planes."}
+                else:
+                    r = planes.validar_carga(payload.get("ruta"), payload.get("codigo_plan"), payload.get("dnis"))
+                if r:
+                    await manager.enviar_a_asesor(asesor_id, {"type": "plan_carga_resultado", "payload": {"ref": ref, **r}})
+                else:
+                    await manager.enviar_a_asesor(asesor_id, {"type": "plan_carga_resultado",
+                                                              "payload": {"ref": ref, "ok": True, "procesando": True}})
+                    _lanzar_tarea(_cargar_plan_directo(asesor_id, ref, payload))
 
             elif tipo == "plan_rechazar":
                 try:

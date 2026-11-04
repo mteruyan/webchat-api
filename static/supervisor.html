@@ -2138,8 +2138,16 @@ function _pintarTablero() {
   if (scrollTablero) tablero.scrollTop = scrollTablero;
 }
 
+// En celular se ve una pantalla a la vez (lista o conversación). Las conversaciones que se abren desde
+// "Buscar conversación" o "Ayudar en el bot" vienen de una ventana emergente, no de la lista: hay que
+// pasar a la pantalla de la conversación a mano.
+function mostrarPanelMovil() {
+  if (window.matchMedia('(max-width: 900px)').matches) document.body.classList.add('movil-chat');
+}
+
 function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni) {
   salirLecturaPanel();
+  mostrarPanelMovil();
   if (conversacionEscuchada && String(conversacionEscuchada) !== String(conversacionId)) {
     ws.send(JSON.stringify({ type: 'dejar_de_escuchar', payload: { conversacion_id: Number(conversacionEscuchada) } }));
   }
@@ -2197,6 +2205,7 @@ function cerrarPanel() {
   pintarValidacionPendiente(null);
   if (intervaloTiempos) { clearInterval(intervaloTiempos); intervaloTiempos = null; }
   document.getElementById('panelVacio').style.display = 'flex';
+  document.body.classList.remove('movil-chat');   // celular: vuelve a la lista
   document.getElementById('panelHeader').classList.remove('activa');
   document.getElementById('chatEscucha').classList.remove('activa');
   document.getElementById('acciones').classList.remove('activa');
@@ -3416,6 +3425,7 @@ function abrirLecturaPanel(r) {
   }
   if (intervaloTiempos) { clearInterval(intervaloTiempos); intervaloTiempos = null; }
   conversacionLectura = String(r.conversacion_id);
+  mostrarPanelMovil();
   pintarValidacionPendiente(null);
   document.getElementById('panelVacio').style.display = 'none';
   document.getElementById('panelHeader').classList.add('activa', 'lectura');

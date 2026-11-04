@@ -773,7 +773,9 @@ def _temas_ia(nodo: dict) -> list:
 
 
 def _botones_temas_ia(temas: list) -> list:
-    return [{"id": f"ia_t:{i}", "label": t["label"]} for i, t in enumerate(temas)]
+    """Botones de los temas + "🏠 Menú principal" al mismo nivel (para salir sin tener que escribir *menu*)."""
+    botones = [{"id": f"ia_t:{i}", "label": t["label"]} for i, t in enumerate(temas)]
+    return botones + [{"id": ID_IA_MENU, "label": "🏠 Menú principal"}] if botones else []
 
 
 ID_PLAN_PDF = "plan_pdf"
