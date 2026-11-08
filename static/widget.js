@@ -154,6 +154,18 @@
       display: flex; align-items: center; justify-content: center;
     }
     .sofi-teaser .st-cerrar:hover { background: #EEF2F8; color: #1A2B3C; }
+    /* Pie del teaser: invitación a instalar el app (QR en computadora, botón en celular). */
+    .sofi-teaser .st-app { margin-top: 12px; padding-top: 10px; border-top: 1px solid #E3E8F2; display: flex; gap: 10px;
+      align-items: center; font-size: 12.5px; line-height: 1.35; color: #4A5868; cursor: default; }
+    .sofi-teaser .st-app[hidden] { display: none; }
+    .sofi-teaser .st-app img { width: 72px; height: 72px; flex-shrink: 0; display: block; }
+    .sofi-teaser .st-app b { display: block; color: #0B2A8A; font-size: 13px; margin-bottom: 2px; }
+    .sofi-teaser .st-app-btn {
+      width: 100%; min-height: 40px; padding: 6px 10px; border: none; border-radius: 12px; background: #E7F5EE; color: #17663F;
+      font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .sofi-teaser .st-app-btn:active { background: #CFEBDD; }
+    .sofi-teaser .st-app-btn:focus-visible { outline: 3px solid rgba(23, 102, 63, .45); outline-offset: 2px; }
     @media (max-width: 599px) { .sofi-teaser .st-chips { grid-template-columns: 1fr; } }
     :host(.movil) .sofi-teaser .st-chips { grid-template-columns: 1fr; }
     /* Celular: versión compacta (~20 % menos alto) para no tapar tanto la página. Misma información y botones. */
@@ -166,6 +178,8 @@
     :host(.movil) .sofi-teaser .st-chips { gap: 5px; }
     :host(.movil) .sofi-teaser .st-chip { min-height: 36px; padding: 6px 10px; font-size: 13px; border-radius: 10px; }
     :host(.movil) .sofi-teaser .st-cerrar { top: 4px; right: 4px; width: 32px; height: 32px; font-size: 18px; }
+    :host(.movil) .sofi-teaser .st-app { margin-top: 5px; padding-top: 0; border-top: none; }
+    :host(.movil) .sofi-teaser .st-app-btn { min-height: 36px; border-radius: 10px; font-size: 13px; }
     @media (prefers-reduced-motion: reduce) {
       .sofi-teaser, .sofi-teaser.visible { transition: none; transform: scale(var(--k, 1)); }
     }
@@ -751,6 +765,7 @@
       </div>
       <p class="st-msg"></p>
       <div class="st-chips"></div>
+      <div class="st-app" hidden></div>
     </div>
     <div class="panel">
       <div class="cabecera">
@@ -2891,6 +2906,55 @@
       });
       $chips.appendChild(b);
     });
+    armarPromoApp();
+  }
+
+  // Pie del teaser: invitación a instalar el app. En la computadora, un QR para escanear con el celular (donde se
+  // instala); en el celular, un botón que abre la instalación (/app, en otra pestaña: el navegador solo deja
+  // instalarla desde su propio dominio). No sale si ya está dentro del app. Se apaga desde el Editor
+  // (teaser_promo_app). Se cuenta en el dashboard (panel «App»): vieron, tocaron, llegaron e instalaron.
+  let promoOrigen = null;
+  function contarPromo(evento) {
+    if (!promoOrigen) return;
+    medir("sofi_teaser_app_" + evento, { origen: promoOrigen });
+    try {
+      fetch(`${API_BASE}/widget/promo-app`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evento, origen: promoOrigen }), keepalive: true }).catch(() => {});
+    } catch (e) { /* nada */ }
+  }
+  function armarPromoApp() {
+    const $app = $teaser.querySelector(".st-app");
+    $app.innerHTML = "";
+    $app.hidden = true;
+    promoOrigen = null;
+    if (!cfgTeaser.promo_app || enLaAppSofi()) return;
+    const urlApp = `${API_BASE || window.location.origin}/app?instalar=1`;
+    $app.addEventListener("click", (e) => e.stopPropagation());   // el pie no abre el chat
+    if (host.classList.contains("movil")) {
+      promoOrigen = "teaser_boton";
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "st-app-btn";
+      b.textContent = "📲 Agregar Sofi a mi pantalla de inicio";
+      b.addEventListener("click", () => {
+        contarPromo("clic");
+        window.open(`${urlApp}&origen=teaser_boton`, "_blank", "noopener");
+      });
+      $app.appendChild(b);
+    } else {
+      promoOrigen = "teaser_qr";
+      const img = document.createElement("img");
+      img.src = `${API_BASE}/widget/qr-app.svg`;   // lo arma el servidor con su propia dirección
+      img.width = 72;
+      img.height = 72;   // tamaño fijo: el teaser se ubica antes de que cargue la imagen
+      img.alt = "Código QR para instalar a Sofi en tu celular";
+      const texto = document.createElement("div");
+      const titulo = document.createElement("b");
+      titulo.textContent = "📲 Tenme en tu celular";
+      texto.append(titulo, "Escanea con la cámara y agrégame a tu pantalla de inicio.");
+      $app.append(img, texto);
+    }
+    $app.hidden = false;
   }
 
   // Decide si el teaser se ve ahora y dónde. Se llama al cumplirse la espera, al hacer scroll y al cambiar el tamaño.
@@ -2922,7 +2986,7 @@
     if (!estabaVisible) {
       teaserVisible = true;
       requestAnimationFrame(() => $teaser.classList.add("visible"));
-      if (!teaserMedido) { teaserMedido = true; medir("sofi_teaser_shown", {}); }
+      if (!teaserMedido) { teaserMedido = true; medir("sofi_teaser_shown", {}); contarPromo("visto"); }
     }
   }
   let rafTeaser = 0;

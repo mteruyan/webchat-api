@@ -537,9 +537,21 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             # esperando texto. Es un BUCLE: cada mensaje del usuario se responde en
             # recibir_entrada_usuario (_turno_ia) SIN avanzar de nodo; se sale con "menu"
             # (lo intercepta main.py en cualquier punto del bot).
+            es_plan = (nodo["accion_config"] or {}).get("fuente") == "plan"
+            if es_plan:
+                vigentes, elegido = _plan_elegido(cur, variables)
+                if elegido is None and len(vigentes) > 1:
+                    # Varios planes: primero elige sobre cuál quiere preguntar.
+                    variables.pop("PLAN_ID", None)
+                    eventos.extend(_eventos_elegir_plan(cur, conversacion_id, vigentes))
+                    _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
+                    break
+                if elegido:
+                    eventos.extend(_bienvenida_plan(cur, conversacion_id, nodo, variables, elegido))
+                    _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
+                    break
             texto = sustituir_variables(nodo["texto"] or "", variables)
             botones = _botones_temas_ia(_temas_ia(nodo))
-            es_plan = (nodo["accion_config"] or {}).get("fuente") == "plan"
             if es_plan:
                 # Su plan en PDF, para que lo revise cuando quiera (se ve y descarga desde el chat).
                 eventos.extend(_eventos_pdf_plan(cur, conversacion_id, variables))
@@ -781,9 +793,66 @@ def _botones_temas_ia(temas: list) -> list:
 ID_PLAN_PDF = "plan_pdf"
 
 
+ID_PLAN_ELEGIR = "plan_sel:"      # plan_sel:<plan_id>
+ID_PLAN_CAMBIAR = "plan_cambiar"
+
+
+def _plan_elegido(cur, variables: dict) -> tuple:
+    """(planes vigentes [(id, nombre)], plan elegido (id, nombre) o None). Un DNI puede tener varios planes: el
+    elegido se guarda en PLAN_ID; con un solo plan vigente, ese es el elegido."""
+    vigentes = planes.planes_vigentes(cur, (variables or {}).get("PLAN_DNI"))
+    pid = str((variables or {}).get("PLAN_ID") or "")
+    elegido = next((p for p in vigentes if str(p[0]) == pid), None)
+    if elegido is None and len(vigentes) == 1:
+        elegido = vigentes[0]
+    return vigentes, elegido
+
+
+def _botones_elegir_plan(vigentes: list) -> list:
+    botones, vistos = [], {}
+    for pid, nombre in vigentes:
+        etiqueta = (nombre or "Plan de salud")[:45]
+        vistos[etiqueta] = vistos.get(etiqueta, 0) + 1
+        if vistos[etiqueta] > 1:     # dos planes con el mismo nombre: se numeran
+            etiqueta = f"{etiqueta} ({vistos[etiqueta]})"
+        botones.append({"id": f"{ID_PLAN_ELEGIR}{pid}", "label": "📋 " + etiqueta})
+    return botones + [{"id": ID_IA_MENU, "label": "🏠 Menú principal"}]
+
+
+def _eventos_elegir_plan(cur, conversacion_id: int, vigentes: list, texto: str = None) -> list:
+    texto = texto or f"Tienes *{len(vigentes)} planes de salud* 📋 ¿Sobre cuál quieres consultar? Elige uno 👇"
+    botones = _botones_elegir_plan(vigentes)
+    _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+    _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(botones))
+    return [{"type": "mensaje_bot", "payload": {"texto": texto, "opciones": botones}}]
+
+
+def _bienvenida_plan(cur, conversacion_id: int, nodo: dict, variables: dict, elegido: tuple) -> list:
+    """Plan elegido: su PDF + la bienvenida del nodo (con el nombre de ESE plan) + los temas."""
+    variables["PLAN_ID"] = elegido[0]
+    anterior = variables.get("PLAN") if isinstance(variables.get("PLAN"), dict) else {}
+    respuesta = dict(anterior.get("response") or {}) if isinstance(anterior.get("response"), dict) else {}
+    respuesta.update({"nombre": elegido[1], "plan_id": elegido[0]})
+    variables["PLAN"] = {**anterior, "response": respuesta}   # {{PLAN.response.nombre}} del texto del nodo
+    eventos = _eventos_pdf_plan(cur, conversacion_id, variables)
+    texto = sustituir_variables(nodo["texto"] or "", variables)
+    botones = _botones_temas_ia(_temas_ia(nodo))
+    if texto or botones:
+        payload = {"texto": texto, "imagen_url": sustituir_variables(nodo.get("imagen_url"), variables)}
+        if botones:
+            payload["opciones"] = botones
+        eventos.append({"type": "mensaje_bot", "payload": payload})
+        if texto:
+            _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+        if botones:
+            _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(botones))
+    return eventos
+
+
 def _eventos_pdf_plan(cur, conversacion_id: int, variables: dict) -> list:
-    """El PDF del plan del DNI como archivo del chat (mismo evento que un archivo enviado por un asesor)."""
-    ruta = planes.ruta_pdf(cur, (variables or {}).get("PLAN_DNI"))
+    """El PDF del plan del DNI (el elegido, si tiene varios) como archivo del chat (mismo evento que un archivo
+    enviado por un asesor)."""
+    ruta = planes.ruta_pdf(cur, (variables or {}).get("PLAN_DNI"), (variables or {}).get("PLAN_ID"))
     if not ruta:
         return []
     texto = "📄 Aquí tienes tu plan completo. Ábrelo cuando quieras para revisarlo con calma:"
@@ -858,6 +927,33 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
     temas = turno.temas
     texto = (texto or "").strip()
 
+    # --- Plan de salud con varios planes: elegir / cambiar de plan (no llama a la IA) ---------------
+    if turno.fuente == "plan" and not texto and opcion_id and (
+            opcion_id.startswith(ID_PLAN_ELEGIR) or opcion_id == ID_PLAN_CAMBIAR):
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                variables = dict(turno.variables)
+                vigentes, _actual = _plan_elegido(cur, variables)
+                elegido = next((p for p in vigentes if f"{ID_PLAN_ELEGIR}{p[0]}" == opcion_id), None)
+                if elegido:
+                    _guardar_mensaje(cur, conversacion_id, "usuario", "texto", "📋 " + elegido[1])
+                    eventos = _bienvenida_plan(cur, conversacion_id, _obtener_nodo(cur, turno.nodo_codigo),
+                                               variables, elegido)
+                else:
+                    _guardar_mensaje(cur, conversacion_id, "usuario", "texto", "🔀 Cambiar de plan")
+                    variables.pop("PLAN_ID", None)
+                    eventos = (_eventos_elegir_plan(cur, conversacion_id, vigentes) if len(vigentes) > 1 else
+                               [{"type": "mensaje_bot", "payload": {
+                                   "texto": "Ahora tienes un solo plan cargado. Pregúntame lo que necesites 😊"}}])
+                    if len(vigentes) == 1:
+                        variables["PLAN_ID"] = vigentes[0][0]
+                _guardar_estado(cur, conversacion_id, turno.nodo_codigo, variables)
+            conn.commit()
+        finally:
+            release_connection(conn)
+        return eventos
+
     # --- Plan de salud: "📄 Ver mi plan" manda el PDF (no llama a la IA) ----------------------------
     if turno.fuente == "plan" and not texto and opcion_id == ID_PLAN_PDF:
         conn = get_connection()
@@ -909,6 +1005,20 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
                          "escribiéndola, o escribe *menu* para volver al menú principal."}}]
         return []   # formulario viejo en pantalla: se ignora
     es_plan = turno.fuente == "plan"
+    vigentes, elegido = [], None
+    if es_plan:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                vigentes, elegido = _plan_elegido(cur, turno.variables)
+            conn.commit()
+        finally:
+            release_connection(conn)
+        if elegido is None and len(vigentes) > 1:
+            # Varios planes y todavía no eligió: primero que elija (su pregunta queda guardada en el chat).
+            return _responder_con_botones_ia(
+                conversacion_id, texto, "Para responderte bien, primero elige sobre cuál de tus planes es tu "
+                "pregunta 👇 (luego vuelve a escribirla)", _botones_elegir_plan(vigentes))
     celular = "" if es_plan else _celular_para_agente(conversacion_id, turno.variables)
     if not es_plan and not celular:
         return [{"type": "mensaje_bot", "payload": {
@@ -930,7 +1040,8 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
 
     if es_plan:
         # IA con el plan de salud del DNI (Gemini). Responde solo con lo que dice el plan.
-        respuesta = planes.responder(conversacion_id, turno.variables.get("PLAN_DNI"), texto)
+        respuesta = planes.responder(conversacion_id, turno.variables.get("PLAN_DNI"), texto,
+                                     elegido[0] if elegido else None)
     else:
         resultado = API_HANDLERS["consulta_agente_ia"]({"pregunta": texto, "celular": celular}, turno.variables)
         respuesta = ((resultado or {}).get("response") or {}).get("respuesta") or ""
@@ -940,7 +1051,9 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
 
     botones = _botones_seguimiento_ia(temas)
     if es_plan and botones:
-        botones = [{"id": ID_PLAN_PDF, "label": "📄 Ver mi plan"}] + botones
+        botones = ([{"id": ID_PLAN_PDF, "label": "📄 Ver mi plan"}]
+                   + ([{"id": ID_PLAN_CAMBIAR, "label": "🔀 Cambiar de plan"}] if len(vigentes) > 1 else [])
+                   + botones)
     conn = get_connection()
     try:
         with conn.cursor() as cur:

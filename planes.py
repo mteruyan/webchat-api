@@ -15,6 +15,7 @@ Flujo:
 Tablas: migracion_plan_salud.sql. IA: Vertex AI (Gemini) en el mismo proyecto de Google Cloud.
 """
 
+import contextlib
 import logging
 import os
 import re
@@ -162,16 +163,31 @@ def _inicio_de_plan(cur, plan_id: int, inicio, texto_si_falta: str | None):
     return inicio
 
 
-def _plan_de_dni(cur, dni: str):
-    """(id, nombre, inicio_cobertura) del plan del DNI, o None."""
-    cur.execute("""SELECT p.id, COALESCE(NULLIF(p.nombre, ''), 'tu plan de salud'), p.inicio_cobertura,
-                          CASE WHEN p.inicio_cobertura IS NULL THEN left(p.texto, 20000) END
+def _planes_de_dni(cur, dni: str) -> list:
+    """[(id, nombre, inicio_cobertura)] de los planes del DNI. Un DNI puede tener varios (hasta 4 en la base de
+    afiliados): se listan en el orden en que se le asignaron."""
+    cur.execute("""SELECT p.id, COALESCE(NULLIF(p.nombre, ''), NULLIF(p.archivo_nombre, ''), 'Plan de salud'),
+                          p.inicio_cobertura, CASE WHEN p.inicio_cobertura IS NULL THEN left(p.texto, 20000) END
                    FROM planes_dni d JOIN planes_salud p ON p.id = d.plan_id
-                   WHERE d.dni = %s""", (dni,))
-    fila = cur.fetchone()
-    if not fila:
-        return None
-    return fila[0], fila[1], _inicio_de_plan(cur, fila[0], fila[2], fila[3])
+                   WHERE d.dni = %s ORDER BY d.asignado_en, p.id""", (dni,))
+    filas = cur.fetchall()
+    return [(i, n, _inicio_de_plan(cur, i, ini, t)) for i, n, ini, t in filas]
+
+
+def planes_vigentes(cur, dni) -> list:
+    """[(id, nombre)] de los planes VIGENTES del DNI (menos de un año desde su inicio de cobertura)."""
+    dni = normalizar_dni(dni)
+    if not dni:
+        return []
+    return _con_savepoint(cur, "sp_plan_vigentes",
+                          lambda c: [(i, n) for i, n, ini in _planes_de_dni(c, dni) if not plan_vencido(ini)], [])
+
+
+def _quitar_vencidos(cur, dni: str, conservar=()):
+    """Quita del DNI los planes de más de un año (ya se cargó su versión nueva, o no hay renovación)."""
+    for pid, _n, ini in _planes_de_dni(cur, dni):
+        if pid not in conservar and plan_vencido(ini):
+            cur.execute("DELETE FROM planes_dni WHERE dni = %s AND plan_id = %s", (dni, pid))
 
 
 def usuario_tiene_plan(cur, conversacion_id: int) -> bool:
@@ -189,34 +205,63 @@ def usuario_tiene_plan(cur, conversacion_id: int) -> bool:
     return _con_savepoint(cur, "sp_plan_tiene", _q, False)
 
 
+def _insertar_solicitud(c, conversacion_id: int, dni: str, variables: dict, plan_anterior: int | None) -> int:
+    c.execute("""SELECT c.usuario_id, COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR'),
+                        COALESCE(NULLIF(u.nombre, ''), c.variables_sesion->>'NOMBRE_USUARIO')
+                 FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
+              (conversacion_id,))
+    usuario_id, celular, nombre = c.fetchone() or (None, None, None)
+    c.execute("""INSERT INTO solicitudes_plan (dni, conversacion_id, usuario_id, celular, nombre, tipo, plan_anterior_id)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+              (dni, conversacion_id, usuario_id, celular or variables.get("CELULAR"), nombre,
+               "renovacion" if plan_anterior else "nuevo", plan_anterior))
+    return c.fetchone()[0]
+
+
 def accion_buscar(cur, conversacion_id: int, variables: dict) -> dict:
     """Nodo accion_api "plan_buscar". response.estado: cargado | pendiente | nuevo | dni_invalido.
-    Fuera del horario del backoffice también devuelve "nuevo": la solicitud se registra igual (accion_solicitar
-    avisa que está fuera de horario) y queda pendiente para cuando el backoffice vuelva."""
+    - cargado: tiene al menos un plan vigente. Con uno solo queda elegido (variable PLAN_ID); con varios, el
+      cliente elige en el chat (bot_engine). Si además tiene alguno de más de un año, se pide su renovación al
+      backoffice sin hacerlo esperar (sigue usando los vigentes).
+    - pendiente: no tiene plan vigente y ya hay una solicitud abierta.
+    - nuevo: no tiene plan vigente: se pide (accion_solicitar), también fuera del horario del backoffice."""
     dni = normalizar_dni(variables.get("PLAN_DNI"))
     if not dni:
         return {"status": 400, "response": {"estado": "dni_invalido"}}
     variables["PLAN_DNI"] = dni
 
     def _q(c):
-        plan = _plan_de_dni(c, dni)
-        if plan and not plan_vencido(plan[2]):
-            return {"status": 200, "response": {"estado": "cargado", "plan_id": plan[0], "nombre": plan[1]}}
+        planes = _planes_de_dni(c, dni)
+        vigentes = [p for p in planes if not plan_vencido(p[2])]
+        vencidos = [p for p in planes if plan_vencido(p[2])]
         c.execute("""SELECT id FROM solicitudes_plan WHERE dni = %s AND estado IN ('pendiente', 'asignada', 'procesando')
                      ORDER BY id DESC LIMIT 1""", (dni,))
-        fila = c.fetchone()
-        if fila:
+        abierta = c.fetchone()
+        if abierta:
             # Ya está pedido: el aviso de "listo" irá a ESTA conversación (la más reciente del cliente).
             c.execute("""UPDATE solicitudes_plan SET conversacion_id = %s,
                                 usuario_id = (SELECT usuario_id FROM conversaciones WHERE id = %s)
-                         WHERE id = %s""", (conversacion_id, conversacion_id, fila[0]))
-            return {"status": 200, "response": {"estado": "pendiente", "solicitud_id": fila[0]}}
+                         WHERE id = %s""", (conversacion_id, conversacion_id, abierta[0]))
+        if vigentes:
+            if vencidos and not abierta:
+                sid = _insertar_solicitud(c, conversacion_id, dni, variables, vencidos[0][0])
+                logger.info("planes: DNI %s tiene %s plan(es) de más de un año: renovación pedida (solicitud %s)",
+                            dni, len(vencidos), sid)
+            if len(vigentes) == 1:
+                variables["PLAN_ID"] = vigentes[0][0]
+            else:
+                variables.pop("PLAN_ID", None)
+            return {"status": 200, "response": {"estado": "cargado", "planes": len(vigentes),
+                                                "plan_id": vigentes[0][0] if len(vigentes) == 1 else None,
+                                                "nombre": vigentes[0][1] if len(vigentes) == 1 else ""}}
+        if abierta:
+            return {"status": 200, "response": {"estado": "pendiente", "solicitud_id": abierta[0]}}
         return None
 
     r = _con_savepoint(cur, "sp_plan_buscar", _q, {"status": 500, "response": {"estado": "error"}})
     if r is not None:
         return r
-    # Sin plan, o con un plan de más de un año (sin una solicitud abierta): se pide (accion_solicitar).
+    # Sin plan vigente (sin plan, o solo con planes de más de un año) y sin solicitud abierta: se pide.
     return {"status": 200, "response": {"estado": "nuevo"}}
 
 
@@ -229,18 +274,9 @@ def accion_solicitar(cur, conversacion_id: int, variables: dict) -> tuple[dict, 
     en_horario, mensaje = backoffice_en_horario()
 
     def _q(c):
-        c.execute("""SELECT c.usuario_id, COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR'),
-                            COALESCE(NULLIF(u.nombre, ''), c.variables_sesion->>'NOMBRE_USUARIO')
-                     FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
-                  (conversacion_id,))
-        usuario_id, celular, nombre = c.fetchone() or (None, None, None)
-        plan = _plan_de_dni(c, dni)
-        anterior = plan[0] if plan and plan_vencido(plan[2]) else None
-        c.execute("""INSERT INTO solicitudes_plan (dni, conversacion_id, usuario_id, celular, nombre, tipo, plan_anterior_id)
-                     VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                  (dni, conversacion_id, usuario_id, celular or variables.get("CELULAR"), nombre,
-                   "renovacion" if anterior else "nuevo", anterior))
-        return c.fetchone()[0], anterior
+        vencidos = [p for p in _planes_de_dni(c, dni) if plan_vencido(p[2])]
+        anterior = vencidos[0][0] if vencidos else None
+        return _insertar_solicitud(c, conversacion_id, dni, variables, anterior), anterior
 
     creada = _con_savepoint(cur, "sp_plan_solicitar", _q)
     sid, renovacion = creada if creada else (None, None)
@@ -365,23 +401,181 @@ def _huella_pdf(pdf: bytes) -> str:
     return hashlib.sha256(pdf).hexdigest()
 
 
-def preparar_atencion(solicitud_id: int, asesor_id: int, ruta: str | None, codigo_plan: str | None,
-                      archivo_nombre: str | None = None) -> dict:
-    """Primer paso al pulsar "Enviar plan".
-    - Si viene un PDF que YA se digitalizó antes (mismo contenido, aunque sea para otro DNI o tenga otro nombre de
-      archivo): se le asigna ese mismo plan al DNI y queda atendida al instante, sin volver a pasar por la IA.
-    - Si viene un PDF nuevo -> estado 'procesando' (la digitalización la hace digitalizar_y_cerrar en segundo plano).
+MAX_PDFS = 6   # PDF por tarea o por carga (en la base, un DNI tiene hasta 4 planes)
+
+
+class _ErrorPlan(Exception):
+    """Un PDF o código que no se puede usar. El texto es el motivo que ve la asesora."""
+
+
+def _lista(valor) -> list:
+    """Acepta un valor suelto o una lista (los mensajes viejos de la consola mandan "ruta"; los nuevos, "rutas")."""
+    if not valor:
+        return []
+    return [v for v in (valor if isinstance(valor, (list, tuple)) else [valor]) if v]
+
+
+def _validar_rutas(rutas: list) -> str | None:
+    if len(rutas) > MAX_PDFS:
+        return f"Máximo {MAX_PDFS} PDF a la vez."
+    for ruta in rutas:
+        if not isinstance(ruta, str) or ".." in ruta or not ruta.startswith("webchat/") or not ruta.lower().endswith(".pdf"):
+            return "Los archivos deben ser los PDF de los planes."
+    return None
+
+
+def _motivo_de_error(e: Exception) -> str:
+    t = " ".join(str(e).split())
+    if any(x in t.lower() for x in ("timeout", "timed out", "deadline")):
+        return "La IA tardó demasiado en leer el plan. Vuelve a intentarlo en un momento."
+    if es_saturacion(e):
+        return _TEXTO_SATURADO
+    if _falta_migracion(e):
+        return ("Falta correr la migración del plan de salud en la base de datos (migracion_plan_salud.sql). "
+                "Avísale al administrador.")
+    return f"No se pudo leer el PDF ({t[:120]}). Revisa el archivo y vuelve a subirlo."
+
+
+def _buscar_por_huella(huella: str):
+    """(id, nombre, inicio_cobertura) del plan ya cargado con ese mismo PDF, o None."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, COALESCE(NULLIF(nombre, ''), NULLIF(archivo_nombre, ''), ''), inicio_cobertura,
+                                  CASE WHEN inicio_cobertura IS NULL THEN left(texto, 20000) END
+                           FROM planes_salud WHERE huella_pdf = %s ORDER BY actualizado_en DESC LIMIT 1""", (huella,))
+            f = cur.fetchone()
+            r = (f[0], f[1], _inicio_de_plan(cur, f[0], f[2], f[3])) if f else None
+        conn.commit()
+        return r
+    finally:
+        release_connection(conn)
+
+
+def _plan_por_codigo(cur, codigo_plan: str) -> tuple:
+    """(id, nombre) del plan con ese código. _ErrorPlan si no existe o tiene más de un año."""
+    cur.execute("""SELECT id, COALESCE(NULLIF(nombre, ''), ''), inicio_cobertura,
+                          CASE WHEN inicio_cobertura IS NULL THEN left(texto, 20000) END
+                   FROM planes_salud WHERE lower(codigo_plan) = lower(%s)""", (codigo_plan,))
+    f = cur.fetchone()
+    if not f:
+        raise _ErrorPlan(f"No hay un plan cargado con el código {codigo_plan}. Sube el PDF.")
+    inicio = _inicio_de_plan(cur, f[0], f[2], f[3])
+    if plan_vencido(inicio):
+        raise _ErrorPlan(_texto_vencido(inicio, codigo_plan))
+    return f[0], f[1]
+
+
+def _poner_codigo(plan_id: int, codigo_plan: str):
+    """PDF ya cargado sin código: se le pone el código escrito (si ningún otro plan lo usa)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE planes_salud SET codigo_plan = %s WHERE id = %s AND codigo_plan IS NULL
+                           AND NOT EXISTS (SELECT 1 FROM planes_salud WHERE lower(codigo_plan) = lower(%s))""",
+                        (codigo_plan, plan_id, codigo_plan))
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+
+def _plan_desde_pdf(ruta: str, asesor_id: int, codigo_plan: str | None, nombre_plan: str | None,
+                    archivo_nombre: str | None) -> dict:
+    """El plan de un PDF: si ese mismo PDF ya estaba cargado se reutiliza; si no, la IA lo lee y se GUARDA de
+    inmediato (aunque la tarea no termine, si se vuelve a subir ya no se lee de nuevo).
+    Devuelve {"id", "nombre", "reutilizado"}. Lanza _ErrorPlan con el motivo si no se puede usar."""
+    archivo_nombre = (archivo_nombre or "").strip()[:200] or None
+    try:
+        pdf = _descargar_pdf(ruta)
+        huella = _huella_pdf(pdf)
+        igual = _buscar_por_huella(huella)
+        if igual:
+            if plan_vencido(igual[2]):
+                raise _ErrorPlan("Ese PDF ya estaba cargado. " + _texto_vencido(igual[2]))
+            if codigo_plan:
+                _poner_codigo(igual[0], codigo_plan)
+            logger.info("planes: %s ya estaba cargado como plan %s; se reutiliza", archivo_nombre or ruta, igual[0])
+            return {"id": igual[0], "nombre": igual[1], "reutilizado": True}
+        texto, paginas, tokens, anexo_id = transcribir_pdf(ruta, pdf)
+    except _ErrorPlan:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error("planes: no se pudo leer %s: %s", archivo_nombre or ruta, " ".join(str(e).split())[:400])
+        raise _ErrorPlan(_motivo_de_error(e)) from e
+    if len(texto.strip()) < 500:
+        raise _ErrorPlan("El PDF casi no tiene texto legible. ¿Es el plan correcto?")
+    inicio_cob = fecha_inicio_cobertura(texto)
+    if plan_vencido(inicio_cob):
+        raise _ErrorPlan(_texto_vencido(inicio_cob))
+    nombre = (nombre_plan or "").strip()[:150] or _nombre_desde_texto(texto)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            plan_id = _guardar_plan(cur, codigo_plan, nombre, ruta, texto, paginas, tokens, asesor_id, anexo_id,
+                                    huella, archivo_nombre)
+        conn.commit()
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("planes: no se pudo guardar el plan de %s", archivo_nombre or ruta)
+        raise _ErrorPlan(_motivo_de_error(e) if _falta_migracion(e) else
+                         "No se pudo guardar el plan. Vuelve a intentarlo.") from e
+    finally:
+        release_connection(conn)
+    logger.info("planes: %s digitalizado como plan %s (%s páginas, ~%s tokens)", archivo_nombre or ruta, plan_id,
+                paginas, tokens)
+    return {"id": plan_id, "nombre": nombre or archivo_nombre or "", "reutilizado": False}
+
+
+def _asignar(cur, dni: str, plan_ids: list, asesor_id: int, reemplazar: bool = False):
+    """Suma los planes al DNI (un DNI puede tener varios). Con reemplazar, quita los que tenía y no están aquí."""
+    if reemplazar:
+        cur.execute("DELETE FROM planes_dni WHERE dni = %s AND NOT (plan_id = ANY(%s))", (dni, list(plan_ids)))
+    for pid in plan_ids:
+        cur.execute("""INSERT INTO planes_dni (dni, plan_id, asignado_por) SELECT %s, %s, %s
+                       WHERE NOT EXISTS (SELECT 1 FROM planes_dni WHERE dni = %s AND plan_id = %s)""",
+                    (dni, pid, asesor_id, dni, pid))
+
+
+def _cerrar_con_planes(cur, solicitud_id: int, dni: str, plan_ids: list, asesor_id: int):
+    _asignar(cur, dni, plan_ids, asesor_id)
+    _quitar_vencidos(cur, dni, plan_ids)   # renovación: el plan viejo deja su lugar al nuevo
+    cur.execute("""UPDATE solicitudes_plan SET estado = 'atendida', plan_id = %s, atendido_en = now(), error = NULL
+                   WHERE id = %s""", (plan_ids[0], solicitud_id))
+    # Si había otras solicitudes abiertas del mismo DNI (pedidas desde otro navegador), también quedan atendidas.
+    cur.execute("""UPDATE solicitudes_plan SET estado = 'atendida', plan_id = %s, atendido_en = now()
+                   WHERE dni = %s AND id <> %s AND estado IN ('pendiente', 'asignada')""",
+                (plan_ids[0], dni, solicitud_id))
+
+
+def _nombres(planes: list) -> str:
+    return ", ".join(p["nombre"] for p in planes if p.get("nombre"))
+
+
+def preparar_atencion(solicitud_id: int, asesor_id: int, rutas, codigo_plan: str | None,
+                      archivo_nombres=None) -> dict:
+    """Primer paso al pulsar "Enviar plan". La asesora puede subir 1 o varios PDF (un DNI puede tener varios planes).
+    - Si TODOS esos PDF ya se digitalizaron antes (mismo contenido): se asignan al DNI y la tarea queda atendida al
+      instante, sin volver a pasar por la IA.
+    - Si alguno es nuevo -> estado 'procesando' (digitalizar_y_cerrar lo hace en segundo plano).
     - Si solo viene un código de plan ya cargado -> se asigna al DNI y queda atendida al instante."""
+    rutas = _lista(rutas)
     codigo_plan = (codigo_plan or "").strip()[:60] or None
-    if ruta and (".." in ruta or not ruta.startswith("webchat/") or not ruta.lower().endswith(".pdf")):
-        return {"ok": False, "motivo": "El archivo debe ser el PDF del plan."}
-    huella = None
-    if ruta:
+    error = _validar_rutas(rutas)
+    if error:
+        return {"ok": False, "motivo": error}
+    nombres_archivo = _lista(archivo_nombres)
+    conocidos = []
+    for i, ruta in enumerate(rutas):
         try:
-            huella = _huella_pdf(_descargar_pdf(ruta))
+            igual = _buscar_por_huella(_huella_pdf(_descargar_pdf(ruta)))
         except Exception as e:  # noqa: BLE001
-            # Si no se pudo descargar, se sigue el camino normal (digitalizar): ahí se reporta el error.
+            # Si no se pudo revisar, se sigue el camino normal (digitalizar): ahí se reporta el error.
             logger.warning("planes: no se pudo revisar si el PDF %s ya estaba cargado: %s", ruta, str(e)[:200])
+            igual = None
+        if igual and plan_vencido(igual[2]):
+            etiqueta = (nombres_archivo[i] + ": ") if len(rutas) > 1 and i < len(nombres_archivo) else ""
+            return {"ok": False, "motivo": etiqueta + "Ese PDF ya estaba cargado. " + _texto_vencido(igual[2])}
+        conocidos.append(igual)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -389,24 +583,16 @@ def preparar_atencion(solicitud_id: int, asesor_id: int, ruta: str | None, codig
             if not fila or fila[2] not in ("asignada",):
                 conn.rollback()
                 return {"ok": False, "motivo": "Esta tarea ya no está pendiente."}
-            if ruta and huella:
-                cur.execute("""SELECT id, nombre, archivo_nombre, inicio_cobertura,
-                                      CASE WHEN inicio_cobertura IS NULL THEN left(texto, 20000) END
-                               FROM planes_salud WHERE huella_pdf = %s
-                               ORDER BY actualizado_en DESC LIMIT 1""", (huella,))
-                igual = cur.fetchone()
-                if igual:
-                    inicio_cob = _inicio_de_plan(cur, igual[0], igual[3], igual[4])
-                    if plan_vencido(inicio_cob):
-                        conn.commit()
-                        return {"ok": False, "motivo": "Ese PDF ya estaba cargado. " + _texto_vencido(inicio_cob)}
-                    _cerrar_con_plan(cur, solicitud_id, fila[1], igual[0], asesor_id)
-                    conn.commit()
-                    logger.info("planes: el PDF de la solicitud %s (%s) ya estaba cargado como plan %s; se reutiliza",
-                                solicitud_id, archivo_nombre or ruta, igual[0])
-                    return {"ok": True, "listo": True, "reutilizado": True, "plan_id": igual[0],
-                            "nombre": igual[1] or igual[2] or ""}
-            if ruta:
+            if rutas and all(conocidos):
+                _cerrar_con_planes(cur, solicitud_id, fila[1], [c[0] for c in conocidos], asesor_id)
+                conn.commit()
+                if codigo_plan and len(rutas) == 1:
+                    _poner_codigo(conocidos[0][0], codigo_plan)
+                logger.info("planes: los PDF de la solicitud %s ya estaban cargados (planes %s); se reutilizan",
+                            solicitud_id, [c[0] for c in conocidos])
+                return {"ok": True, "listo": True, "reutilizado": True, "plan_id": conocidos[0][0],
+                        "nombre": ", ".join(c[1] for c in conocidos if c[1])}
+            if rutas:
                 cur.execute("""UPDATE solicitudes_plan SET estado = 'procesando', error = NULL, procesando_desde = now()
                                WHERE id = %s""", (solicitud_id,))
                 conn.commit()
@@ -414,19 +600,14 @@ def preparar_atencion(solicitud_id: int, asesor_id: int, ruta: str | None, codig
             if not codigo_plan:
                 conn.rollback()
                 return {"ok": False, "motivo": "Sube el PDF del plan o elige el código de un plan ya cargado."}
-            cur.execute("""SELECT id, inicio_cobertura, CASE WHEN inicio_cobertura IS NULL THEN left(texto, 20000) END
-                           FROM planes_salud WHERE lower(codigo_plan) = lower(%s)""", (codigo_plan,))
-            plan = cur.fetchone()
-            if not plan:
-                conn.rollback()
-                return {"ok": False, "motivo": f"No hay un plan cargado con el código {codigo_plan}. Sube el PDF."}
-            inicio_cob = _inicio_de_plan(cur, plan[0], plan[1], plan[2])
-            if plan_vencido(inicio_cob):
+            try:
+                plan_id, nombre = _plan_por_codigo(cur, codigo_plan)
+            except _ErrorPlan as e:
                 conn.commit()
-                return {"ok": False, "motivo": _texto_vencido(inicio_cob, codigo_plan)}
-            _cerrar_con_plan(cur, solicitud_id, fila[1], plan[0], asesor_id)
+                return {"ok": False, "motivo": str(e)}
+            _cerrar_con_planes(cur, solicitud_id, fila[1], [plan_id], asesor_id)
         conn.commit()
-        return {"ok": True, "listo": True}
+        return {"ok": True, "listo": True, "nombre": nombre}
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         if not _falta_migracion(e):
@@ -436,48 +617,29 @@ def preparar_atencion(solicitud_id: int, asesor_id: int, ruta: str | None, codig
         release_connection(conn)
 
 
-def _cerrar_con_plan(cur, solicitud_id: int, dni: str, plan_id: int, asesor_id: int):
-    cur.execute("""INSERT INTO planes_dni (dni, plan_id, asignado_por) VALUES (%s, %s, %s)
-                   ON CONFLICT (dni) DO UPDATE SET plan_id = EXCLUDED.plan_id, asignado_en = now(),
-                                                   asignado_por = EXCLUDED.asignado_por""",
-                (dni, plan_id, asesor_id))
-    cur.execute("""UPDATE solicitudes_plan SET estado = 'atendida', plan_id = %s, atendido_en = now(), error = NULL
-                   WHERE id = %s""", (plan_id, solicitud_id))
-    # Si había otras solicitudes abiertas del mismo DNI (pedidas desde otro navegador), también quedan atendidas.
-    cur.execute("""UPDATE solicitudes_plan SET estado = 'atendida', plan_id = %s, atendido_en = now()
-                   WHERE dni = %s AND id <> %s AND estado IN ('pendiente', 'asignada')""", (plan_id, dni, solicitud_id))
-
-
-def digitalizar_y_cerrar(solicitud_id: int, asesor_id: int, ruta: str, codigo_plan: str | None,
-                         nombre_plan: str | None, archivo_nombre: str | None = None) -> dict:
-    """Segundo paso (en un hilo aparte: tarda 1 o 2 minutos): Gemini transcribe el PDF, se guarda el plan y la
-    solicitud queda atendida. Si falla, vuelve a 'asignada' con el error para que el asesor reintente."""
+def digitalizar_y_cerrar(solicitud_id: int, asesor_id: int, rutas, codigo_plan: str | None,
+                         nombre_plan: str | None, archivo_nombres=None) -> dict:
+    """Segundo paso (en un hilo aparte): cada PDF se reutiliza o lo lee la IA (1 a 3 minutos por plan nuevo), y la
+    solicitud queda atendida con todos. Si alguno falla, vuelve a 'asignada' con el error para que el asesor
+    reintente (los que ya se leyeron quedan guardados y no se vuelven a leer)."""
+    rutas = _lista(rutas)
+    nombres_archivo = _lista(archivo_nombres)
+    varios = len(rutas) > 1
     codigo_plan = (codigo_plan or "").strip()[:60] or None
     inicio = time.monotonic()
-    try:
-        pdf = _descargar_pdf(ruta)
-        huella = _huella_pdf(pdf)
-        texto, paginas, tokens, anexo_id = transcribir_pdf(ruta, pdf)
-    except Exception as e:  # noqa: BLE001
-        logger.error("planes: no se pudo digitalizar el plan de la solicitud %s: %s", solicitud_id,
-                     " ".join(str(e).split())[:400])
-        if "timeout" in str(e).lower() or "timed out" in str(e).lower() or "deadline" in str(e).lower():
-            _marcar_error(solicitud_id, "La IA tardó más de 10 minutos en leer el plan. Vuelve a intentarlo en un momento.")
-            return {"ok": False, "motivo": "La IA tardó demasiado en leer el plan. Vuelve a intentarlo."}
-        if es_saturacion(e):
-            _marcar_error(solicitud_id, _TEXTO_SATURADO)
-            return {"ok": False, "motivo": _TEXTO_SATURADO}
-        _marcar_error(solicitud_id, f"No se pudo leer el PDF ({str(e)[:120]}). Revisa el archivo y vuelve a subirlo.")
-        return {"ok": False, "motivo": "No se pudo leer el PDF. Revisa el archivo y vuelve a subirlo."}
-    if len(texto.strip()) < 500:
-        _marcar_error(solicitud_id, "El PDF casi no tiene texto legible. ¿Es el plan correcto?")
-        return {"ok": False, "motivo": "El PDF casi no tiene texto legible. ¿Es el plan correcto?"}
-    inicio_cob = fecha_inicio_cobertura(texto)
-    if plan_vencido(inicio_cob):
-        _marcar_error(solicitud_id, _texto_vencido(inicio_cob))
-        return {"ok": False, "motivo": _texto_vencido(inicio_cob)}
-    nombre = (nombre_plan or "").strip()[:150] or _nombre_desde_texto(texto)
-    archivo_nombre = (archivo_nombre or "").strip()[:200] or None
+    planes = []
+    for i, ruta in enumerate(rutas):
+        archivo = nombres_archivo[i] if i < len(nombres_archivo) else None
+        try:
+            # Con varios PDF, el código y el nombre escritos no se aplican (serían de un solo plan).
+            planes.append(_plan_desde_pdf(ruta, asesor_id, None if varios else codigo_plan,
+                                          None if varios else nombre_plan, archivo))
+        except _ErrorPlan as e:
+            motivo = (f"{archivo or f'PDF {i + 1}'}: " if varios else "") + str(e)
+            if varios and planes:
+                motivo += " Los PDF anteriores ya quedaron leídos: al reintentar no se vuelven a leer."
+            _marcar_error(solicitud_id, motivo)
+            return {"ok": False, "motivo": motivo}
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -485,16 +647,14 @@ def digitalizar_y_cerrar(solicitud_id: int, asesor_id: int, ruta: str, codigo_pl
             if not fila or fila[2] != "procesando":
                 conn.rollback()
                 return {"ok": False, "motivo": "La tarea cambió mientras se digitalizaba el plan."}
-            plan_id = _guardar_plan(cur, codigo_plan, nombre, ruta, texto, paginas, tokens, asesor_id, anexo_id,
-                                    huella, archivo_nombre)
-            _cerrar_con_plan(cur, solicitud_id, fila[1], plan_id, asesor_id)
+            _cerrar_con_planes(cur, solicitud_id, fila[1], [p["id"] for p in planes], asesor_id)
         conn.commit()
-        logger.info("planes: plan %s digitalizado para la solicitud %s (%s páginas, ~%s tokens, %.0f s)",
-                    plan_id, solicitud_id, paginas, tokens, time.monotonic() - inicio)
-        return {"ok": True, "plan_id": plan_id, "nombre": nombre}
+        logger.info("planes: solicitud %s atendida con %s plan(es) %s (%.0f s)", solicitud_id, len(planes),
+                    [p["id"] for p in planes], time.monotonic() - inicio)
+        return {"ok": True, "plan_id": planes[0]["id"], "nombre": _nombres(planes), "planes": len(planes)}
     except Exception:  # noqa: BLE001
         conn.rollback()
-        logger.exception("planes: no se pudo guardar el plan de la solicitud %s", solicitud_id)
+        logger.exception("planes: no se pudo cerrar la solicitud %s", solicitud_id)
         _marcar_error(solicitud_id, "No se pudo guardar el plan. Vuelve a intentarlo.")
         return {"ok": False, "motivo": "No se pudo guardar el plan. Vuelve a intentarlo."}
     finally:
@@ -544,130 +704,90 @@ def dnis_de_texto(texto: str) -> tuple[list, list]:
     return validos, invalidos
 
 
-def validar_carga(ruta: str | None, codigo_plan: str | None, dnis_texto: str | None) -> dict | None:
+def validar_carga(rutas, codigo_plan: str | None, dnis_texto: str | None) -> dict | None:
     """Revisión rápida antes de lanzar la carga: un dict con el motivo si algo está mal, None si se puede seguir."""
-    if ruta and (".." in ruta or not ruta.startswith("webchat/") or not ruta.lower().endswith(".pdf")):
-        return {"ok": False, "motivo": "El archivo debe ser el PDF del plan."}
+    rutas = _lista(rutas)
+    error = _validar_rutas(rutas)
+    if error:
+        return {"ok": False, "motivo": error}
     dnis, invalidos = dnis_de_texto(dnis_texto)
     if invalidos:
         return {"ok": False, "motivo": "Revisa estos DNI: " + ", ".join(invalidos[:10])}
     if len(dnis) > MAX_DNIS_CARGA:
         return {"ok": False, "motivo": f"Máximo {MAX_DNIS_CARGA} DNI por carga."}
-    if not ruta and not ((codigo_plan or "").strip() and dnis):
+    if not rutas and not ((codigo_plan or "").strip() and dnis):
         return {"ok": False, "motivo": "Sube el PDF del plan, o elige el código de un plan ya cargado y escribe los DNI."}
     return None
 
 
-def _asignar_dnis(cur, plan_id: int, dnis: list, asesor_id: int) -> list:
-    """Asigna el plan a los DNI. Las solicitudes abiertas de esos DNI (pedidas por el widget) quedan atendidas:
-    devuelve [(solicitud_id, asesor_id)] para avisar a esos clientes y refrescar las tareas de sus asesores."""
+def _asignar_dnis(cur, plan_ids: list, dnis: list, asesor_id: int, reemplazar: bool = False) -> list:
+    """Asigna los planes a los DNI (se suman a los que ya tienen; con reemplazar, quedan SOLO estos). Los planes de
+    más de un año de esos DNI se quitan. Las solicitudes abiertas de esos DNI quedan atendidas: devuelve
+    [(solicitud_id, asesor_id)] para avisar a esos clientes y refrescar las tareas de sus asesores."""
     avisar = []
     for dni in dnis:
-        cur.execute("""INSERT INTO planes_dni (dni, plan_id, asignado_por) VALUES (%s, %s, %s)
-                       ON CONFLICT (dni) DO UPDATE SET plan_id = EXCLUDED.plan_id, asignado_en = now(),
-                                                       asignado_por = EXCLUDED.asignado_por""",
-                    (dni, plan_id, asesor_id))
+        _asignar(cur, dni, plan_ids, asesor_id, reemplazar)
+        _quitar_vencidos(cur, dni, plan_ids)
         cur.execute("""UPDATE solicitudes_plan SET estado = 'atendida', plan_id = %s, atendido_en = now(), error = NULL
                        WHERE dni = %s AND estado IN ('pendiente', 'asignada') RETURNING id, asesor_id""",
-                    (plan_id, dni))
+                    (plan_ids[0], dni))
         avisar.extend(cur.fetchall())
     return avisar
 
 
-def cargar_directo(asesor_id: int, ruta: str | None, codigo_plan: str | None, nombre_plan: str | None,
-                   archivo_nombre: str | None, dnis_texto: str | None) -> dict:
+def cargar_directo(asesor_id: int, rutas, codigo_plan: str | None, nombre_plan: str | None,
+                   archivo_nombres, dnis_texto: str | None, reemplazar: bool = False) -> dict:
     """Carga directa desde la consola (sin esperar a que el cliente lo pida). Corre en un hilo aparte.
-    - Con PDF: si ese PDF ya estaba cargado se reutiliza; si no, la IA lo lee y se guarda (1 a 3 minutos).
+    - Con 1 o varios PDF: cada uno se reutiliza si ya estaba cargado; si no, la IA lo lee (1 a 3 minutos cada uno).
     - Sin PDF: se usa el plan del código elegido.
-    - Los DNI son opcionales: si se escriben, quedan con ese plan (y si alguno ya lo había pedido, se le avisa)."""
-    error = validar_carga(ruta, codigo_plan, dnis_texto)
+    - Los DNI son opcionales. Si se escriben, los planes se SUMAN a los que ya tienen (con reemplazar=True quedan
+      solo estos: sirve para corregir un error). Si alguno ya lo había pedido por el chat, se le avisa."""
+    error = validar_carga(rutas, codigo_plan, dnis_texto)
     if error:
         return error
+    rutas = _lista(rutas)
+    nombres_archivo = _lista(archivo_nombres)
     dnis, _ = dnis_de_texto(dnis_texto)
     codigo_plan = (codigo_plan or "").strip()[:60] or None
-    nombre = (nombre_plan or "").strip()[:150]
-    archivo_nombre = (archivo_nombre or "").strip()[:200] or None
+    varios = len(rutas) > 1
     inicio = time.monotonic()
-    plan_id, reutilizado, datos = None, False, None
-    try:
-        if ruta:
-            pdf = _descargar_pdf(ruta)
-            huella = _huella_pdf(pdf)
-            conn = get_connection()
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""SELECT id, nombre, inicio_cobertura,
-                                          CASE WHEN inicio_cobertura IS NULL THEN left(texto, 20000) END
-                                   FROM planes_salud WHERE huella_pdf = %s
-                                   ORDER BY actualizado_en DESC LIMIT 1""", (huella,))
-                    igual = cur.fetchone()
-                    inicio_cob = _inicio_de_plan(cur, igual[0], igual[2], igual[3]) if igual else None
-                conn.commit()
-            finally:
-                release_connection(conn)
-            if igual and plan_vencido(inicio_cob):
-                return {"ok": False, "motivo": "Ese PDF ya estaba cargado. " + _texto_vencido(inicio_cob)}
-            if igual:
-                plan_id, reutilizado, nombre = igual[0], True, igual[1] or nombre
-            else:
-                texto, paginas, tokens, anexo_id = transcribir_pdf(ruta, pdf)
-                if len(texto.strip()) < 500:
-                    return {"ok": False, "motivo": "El PDF casi no tiene texto legible. ¿Es el plan correcto?"}
-                inicio_cob = fecha_inicio_cobertura(texto)
-                if plan_vencido(inicio_cob):
-                    return {"ok": False, "motivo": _texto_vencido(inicio_cob)}
-                datos = (texto, paginas, tokens, anexo_id, huella)
-                nombre = nombre or _nombre_desde_texto(texto)
-    except Exception as e:  # noqa: BLE001
-        logger.error("planes: carga directa de %s falló: %s", archivo_nombre or ruta, " ".join(str(e).split())[:400])
-        if any(x in str(e).lower() for x in ("timeout", "timed out", "deadline")):
-            return {"ok": False, "motivo": "La IA tardó demasiado en leer el plan. Vuelve a intentarlo en un momento."}
-        if es_saturacion(e):
-            return {"ok": False, "motivo": _TEXTO_SATURADO}
-        if _falta_migracion(e):
-            return {"ok": False, "motivo": "Falta correr la migración del plan de salud en la base de datos "
-                                           "(migracion_plan_salud.sql). Avísale al administrador."}
-        return {"ok": False, "motivo": f"No se pudo leer el PDF ({' '.join(str(e).split())[:120]}). "
-                                       "Revisa el archivo y vuelve a subirlo."}
-
+    planes = []
+    for i, ruta in enumerate(rutas):
+        archivo = nombres_archivo[i] if i < len(nombres_archivo) else None
+        try:
+            planes.append(_plan_desde_pdf(ruta, asesor_id, None if varios else codigo_plan,
+                                          None if varios else nombre_plan, archivo))
+        except _ErrorPlan as e:
+            motivo = (f"{archivo or f'PDF {i + 1}'}: " if varios else "") + str(e)
+            if planes:
+                motivo += (" Los PDF anteriores ya quedaron leídos (no se asignó nada): al reintentar no se vuelven "
+                           "a leer.")
+            return {"ok": False, "motivo": motivo}
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            if datos:
-                texto, paginas, tokens, anexo_id, huella = datos
-                plan_id = _guardar_plan(cur, codigo_plan, nombre, ruta, texto, paginas, tokens, asesor_id, anexo_id,
-                                        huella, archivo_nombre)
-            elif plan_id is None:
-                cur.execute("""SELECT id, nombre, inicio_cobertura,
-                                      CASE WHEN inicio_cobertura IS NULL THEN left(texto, 20000) END
-                               FROM planes_salud WHERE lower(codigo_plan) = lower(%s)""", (codigo_plan,))
-                fila = cur.fetchone()
-                if not fila:
-                    conn.rollback()
-                    return {"ok": False, "motivo": f"No hay un plan cargado con el código {codigo_plan}. Sube el PDF."}
-                inicio_cob = _inicio_de_plan(cur, fila[0], fila[2], fila[3])
-                if plan_vencido(inicio_cob):
+            if not rutas:
+                try:
+                    plan_id, nombre = _plan_por_codigo(cur, codigo_plan)
+                except _ErrorPlan as e:
                     conn.commit()
-                    return {"ok": False, "motivo": _texto_vencido(inicio_cob, codigo_plan)}
-                plan_id, nombre = fila[0], fila[1] or nombre
-            elif codigo_plan:
-                # PDF ya cargado sin código: se le pone el código escrito (si nadie más lo usa).
-                cur.execute("""UPDATE planes_salud SET codigo_plan = %s WHERE id = %s AND codigo_plan IS NULL
-                               AND NOT EXISTS (SELECT 1 FROM planes_salud WHERE lower(codigo_plan) = lower(%s))""",
-                            (codigo_plan, plan_id, codigo_plan))
-            avisar = _asignar_dnis(cur, plan_id, dnis, asesor_id)
+                    return {"ok": False, "motivo": str(e)}
+                planes.append({"id": plan_id, "nombre": nombre, "reutilizado": False, "por_codigo": True})
+            avisar = _asignar_dnis(cur, [p["id"] for p in planes], dnis, asesor_id, reemplazar) if dnis else []
         conn.commit()
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         conn.rollback()
-        logger.exception("planes: no se pudo guardar la carga directa de %s", archivo_nombre or ruta)
-        return {"ok": False, "motivo": "No se pudo guardar el plan. Vuelve a intentarlo."}
+        logger.exception("planes: no se pudo guardar la carga directa")
+        return {"ok": False, "motivo": _motivo_de_error(e) if _falta_migracion(e) else
+                "No se pudo guardar el plan. Vuelve a intentarlo."}
     finally:
         release_connection(conn)
-    logger.info("planes: carga directa de %s -> plan %s (%s, %s DNI, %.0f s)", archivo_nombre or codigo_plan, plan_id,
-                "reutilizado" if reutilizado else ("digitalizado" if datos else "por código"), len(dnis),
-                time.monotonic() - inicio)
-    return {"ok": True, "plan_id": plan_id, "nombre": nombre or "", "reutilizado": reutilizado,
-            "digitalizado": bool(datos), "dnis": len(dnis), "avisar": avisar}
+    logger.info("planes: carga directa -> planes %s (%s DNI%s, %.0f s)", [p["id"] for p in planes], len(dnis),
+                ", reemplazando" if reemplazar else "", time.monotonic() - inicio)
+    return {"ok": True, "plan_id": planes[0]["id"], "nombre": _nombres(planes), "planes": len(planes),
+            "reutilizado": all(p["reutilizado"] for p in planes) and bool(rutas),
+            "digitalizado": any(not p["reutilizado"] and not p.get("por_codigo") for p in planes),
+            "dnis": len(dnis), "reemplazar": bool(reemplazar and dnis), "avisar": avisar}
 
 
 _TEXTO_SATURADO = ("La IA de Google está saturada en este momento (no es un problema del PDF). "
@@ -697,7 +817,10 @@ def rechazar(solicitud_id: int, asesor_id: int, motivo: str) -> dict:
                 conn.rollback()
                 return {"ok": False, "motivo": "Esta tarea ya no está pendiente."}
             cur.execute("""UPDATE solicitudes_plan SET estado = 'rechazada', motivo = %s, atendido_en = now()
-                           WHERE id = %s""", (motivo, solicitud_id))
+                           WHERE id = %s RETURNING COALESCE(tipo, 'nuevo')""", (motivo, solicitud_id))
+            if cur.fetchone()[0] == "renovacion":
+                # No hay versión nueva de su plan vencido: se quita, para no volver a pedirla en cada consulta.
+                _quitar_vencidos(cur, fila[1])
         conn.commit()
         return {"ok": True}
     finally:
@@ -730,7 +853,7 @@ def datos_para_aviso(solicitud_id: int) -> dict | None:
 # Gemini
 # ---------------------------------------------------------------------------
 TIEMPO_MAX_IA_SEG = 600          # una llamada a Gemini no puede pasar de 10 minutos (un plan largo tarda 3 a 6)
-PROCESANDO_MAX_MIN = 15          # una tarea en "procesando" más de esto se cortó (reinicio del servidor): se libera
+PROCESANDO_MAX_MIN = 30          # una tarea en "procesando" más de esto se cortó (reinicio del servidor): se libera
 
 
 def _gemini():
@@ -813,6 +936,9 @@ def _generar(contents, paciencia: float = 90, **config):
                     logger.warning("planes: el modelo %s no está disponible en Vertex AI (%s)", modelo, REGION)
                     break               # siguiente modelo
                 if es_saturacion(e):
+                    with contextlib.suppress(Exception):
+                        import monitoreo
+                        monitoreo.contar_saturacion_ia()
                     if espera_total + pausa <= paciencia:
                         dormir = pausa * random.uniform(0.7, 1.3)
                         logger.warning("planes: Google saturado con %s (%s); reintento en %.0f s", modelo,
@@ -1178,8 +1304,9 @@ def _es_pasajero(e: Exception) -> bool:
                                 "timeout", "timed out", "internal", "connection", "overloaded"))
 
 
-def responder(conversacion_id: int, dni: str, pregunta: str) -> str:
-    """Respuesta de la IA a una pregunta del afiliado, basada solo en su plan. Guarda la pregunta y el costo."""
+def responder(conversacion_id: int, dni: str, pregunta: str, plan_id: int | None = None) -> str:
+    """Respuesta de la IA a una pregunta del afiliado, basada solo en su plan (el que eligió, si tiene varios).
+    Guarda la pregunta y el costo."""
     from google.genai import types
     dni = normalizar_dni(dni)
     pregunta = (pregunta or "").strip()[:MAX_PREGUNTA]
@@ -1191,7 +1318,8 @@ def responder(conversacion_id: int, dni: str, pregunta: str) -> str:
             cur.execute("""SELECT p.id, p.texto, a.texto, p.inicio_cobertura FROM planes_dni d
                            JOIN planes_salud p ON p.id = d.plan_id
                            LEFT JOIN anexos_ipress a ON a.id = p.anexo_id
-                           WHERE d.dni = %s""", (dni,))
+                           WHERE d.dni = %s AND (%s::int IS NULL OR p.id = %s::int)
+                           ORDER BY d.asignado_en, p.id LIMIT 1""", (dni, plan_id, plan_id))
             plan = cur.fetchone()
             historial = []
             if plan:
@@ -1354,15 +1482,16 @@ def estadisticas(desde, hasta) -> dict | None:
     }
 
 
-def ruta_pdf(cur, dni: str) -> str | None:
-    """Ruta en el bucket del PDF del plan de ese DNI (para mandárselo al cliente en el chat)."""
+def ruta_pdf(cur, dni: str, plan_id: int | None = None) -> str | None:
+    """Ruta en el bucket del PDF del plan de ese DNI (el elegido, si tiene varios) para mandárselo en el chat."""
     dni = normalizar_dni(dni)
     if not dni:
         return None
 
     def _q(c):
         c.execute("""SELECT p.ruta_pdf FROM planes_dni d JOIN planes_salud p ON p.id = d.plan_id
-                     WHERE d.dni = %s""", (dni,))
+                     WHERE d.dni = %s AND (%s::int IS NULL OR p.id = %s::int)
+                     ORDER BY d.asignado_en, p.id LIMIT 1""", (dni, plan_id, plan_id))
         fila = c.fetchone()
         return fila[0] if fila and fila[0] else None
     return _con_savepoint(cur, "sp_plan_pdf", _q)

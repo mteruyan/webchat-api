@@ -4519,5 +4519,78 @@ window.sofi2fa = function (data, urlBase) {
   }
 })();
 </script>
+<!-- ===== Ventanas: botón ✕ fijo arriba a la derecha, en todas (compartido asesor / supervisor) =====
+     Cada ventana es un fondo con id "...Overlay" y un recuadro adentro. El recuadro se desplaza por dentro (nunca
+     más alto que la pantalla) y el ✕ queda siempre visible arriba, sin tener que bajar hasta "Cerrar". El ✕ hace lo
+     mismo que el botón "Cerrar"/"Cancelar" de esa ventana (así se limpia lo que esa ventana tenga que limpiar).
+     Esc también cierra la ventana de más arriba. -->
+<style>
+  [id$="Overlay"]:not(#lightboxOverlay) > div {
+    position: relative; max-height: calc(100vh - 24px) !important; max-height: calc(100dvh - 24px) !important; overflow-y: auto !important;
+  }
+  .ventana-barra { position: sticky; top: 0; height: 0; z-index: 20; flex: none; }
+  .x-ventana {
+    position: absolute; top: 0; right: -6px; width: 34px; height: 34px; border: none; border-radius: 50%;
+    background: #EEF2F8; color: #1A2B3C; font-size: 17px; line-height: 1; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(16,35,58,.12);
+  }
+  .x-ventana:hover { background: #DDE5F1; }
+  .x-ventana:focus-visible { outline: 3px solid rgba(0,61,165,.45); outline-offset: 2px; }
+  .ventana-barra + h3, .ventana-barra + h2 { padding-right: 42px !important; min-height: 34px; margin-top: 0 !important; display: flex; align-items: center; }
+  .ventana-barra + :not(h3):not(h2) { margin-top: 34px !important; }
+  /* Recuadros sin margen interno (p. ej. el chat de «Ayudar en el bot»): el ✕ va dentro de la cabecera, a la derecha. */
+  .x-sin-relleno > .ventana-barra .x-ventana { top: 12px; right: 12px; }
+  .x-sin-relleno > .ventana-barra + * { margin-top: 0 !important; padding-right: 58px !important; }
+</style>
+<script>
+(function () {
+  function botonCerrar(caja) {
+    // El último botón "Cerrar" o "Cancelar" de la ventana (nunca uno de acción como "Cerrar conversación").
+    const botones = [...caja.querySelectorAll('button')].filter(b => !b.classList.contains('x-ventana'));
+    return botones.reverse().find(b => /^(cerrar|cancelar)$/i.test(b.textContent.trim()));
+  }
+  function cerrar(overlay) {
+    const caja = overlay.firstElementChild;
+    const b = caja && botonCerrar(caja);
+    if (b) { b.click(); return; }
+    overlay.classList.remove('activa', 'activo', 'abierto', 'visible');
+    overlay.style.display = 'none';
+  }
+  function preparar() {
+    document.querySelectorAll('[id$="Overlay"]').forEach(overlay => {
+      if (overlay.id === 'lightboxOverlay') return;           // el visor de imágenes ya tiene su ✕
+      const caja = overlay.firstElementChild;
+      if (!caja || caja.querySelector(':scope > .ventana-barra')) return;
+      const barra = document.createElement('div');
+      barra.className = 'ventana-barra';
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'x-ventana';
+      x.setAttribute('aria-label', 'Cerrar');
+      x.title = 'Cerrar';
+      x.textContent = '✕';
+      x.addEventListener('click', (e) => { e.stopPropagation(); cerrar(overlay); });
+      barra.appendChild(x);
+      caja.insertBefore(barra, caja.firstChild);
+      if ((parseFloat(getComputedStyle(caja).paddingLeft) || 0) < 10) caja.classList.add('x-sin-relleno');
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    // Escribiendo en un campo, Esc es para cancelar esa edición (p. ej. renombrar), no para cerrar la ventana.
+    const t = e.target;
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+    const abiertas = [...document.querySelectorAll('[id$="Overlay"]')].filter(o => getComputedStyle(o).display !== 'none');
+    if (!abiertas.length) return;
+    // La de más arriba: mayor z-index; a igual z-index, la última en la página.
+    abiertas.sort((a, b) => (parseInt(getComputedStyle(a).zIndex) || 0) - (parseInt(getComputedStyle(b).zIndex) || 0));
+    const arriba = abiertas[abiertas.length - 1];
+    if (arriba.id === 'lightboxOverlay') return;              // el visor maneja su propio Esc
+    e.preventDefault();
+    cerrar(arriba);
+  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', preparar); else preparar();
+})();
+</script>
 </body>
 </html>

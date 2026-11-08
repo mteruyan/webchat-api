@@ -53,6 +53,7 @@ import recordatorios
 import push
 import temas_consulta
 import verificacion_whatsapp
+import monitoreo
 import encuesta
 import archivos_cliente
 import seguimiento
@@ -79,6 +80,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Cuenta peticiones, errores 5xx y demoras para la vista «Rendimiento» del dashboard (monitoreo.py).
+app.add_middleware(monitoreo.MedidorPeticiones)
 
 
 @app.get("/health")
@@ -234,6 +237,12 @@ class PushVisita(BaseModel):
     modo: str = "navegador"
     permiso: str | None = None
     url_abrir: str | None = None
+    origen: str | None = None      # promoción del teaser por la que llegó (teaser_qr / teaser_boton)
+
+
+class PromoApp(BaseModel):
+    evento: str
+    origen: str
 
 
 class PushSuscripcion(BaseModel):
@@ -272,11 +281,62 @@ def push_visita(datos: PushVisita, request: Request):
     _validar_disp(datos.dispositivo_id)
     try:
         push.registrar_visita(datos.dispositivo_id, datos.sesion_token, datos.modo, datos.permiso,
-                              request.headers.get("user-agent", ""), _url_abrir_segura(datos.url_abrir))
+                              request.headers.get("user-agent", ""), _url_abrir_segura(datos.url_abrir),
+                              datos.origen)
     except Exception as e:  # noqa: BLE001
         if "app_dispositivos" in str(e):
             raise _push_no_disponible()
         raise
+    return {"ok": True}
+
+
+_QR_APP: dict = {}   # base -> SVG (se genera una vez por dirección)
+
+
+def _svg_qr(texto: str) -> str:
+    """QR en SVG compacto (azul Sanitas sobre blanco), con el codificador de reportlab (ya instalado)."""
+    from reportlab.graphics.barcode import qrencoder
+    qr = qrencoder.QRCode(None, qrencoder.QRErrorCorrectLevel.M)
+    qr.addData(texto)
+    qr.make()
+    n, b = qr.getModuleCount(), 2
+    t = n + 2 * b
+    d = "".join(f"M{c + b} {f + b}h1v1h-1z" for f in range(n) for c in range(n) if qr.isDark(f, c))
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {t} {t}" width="148" height="148" '
+            f'shape-rendering="crispEdges"><rect width="{t}" height="{t}" fill="#fff"/>'
+            f'<path fill="#0B2A8A" d="{d}"/></svg>')
+
+
+@app.get("/widget/qr-app.svg")
+def widget_qr_app(request: Request):
+    """QR del pie del teaser (computadora): lleva a instalar el app en el celular. Apunta a la MISMA dirección del
+    servidor que usa el widget (data-api-base), con origen=teaser_qr para medir cuántos llegaron por el QR."""
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").split(",")[0].strip().lower()
+    nombre = host.split(":")[0]
+    if nombre == "sanitasperu.com" or nombre.endswith((".sanitasperu.com", ".run.app")):
+        base = f"https://{host}"
+    elif nombre in ("localhost", "127.0.0.1"):
+        base = f"{request.url.scheme}://{host}"
+    else:
+        base = "https://api.sanitasperu.com"   # dirección desconocida: no se arma un QR hacia ella
+    if base not in _QR_APP:
+        _QR_APP[base] = _svg_qr(f"{base}/app?instalar=1&origen=teaser_qr")
+    return Response(_QR_APP[base], media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.post("/widget/promo-app")
+def widget_promo_app(datos: PromoApp, request: Request):
+    """Contador de la promoción del app en el teaser (vieron / tocaron / llegaron). Público y sin datos personales;
+    si falta migracion_promo_app.sql responde ok igual (el widget no debe mostrar errores por esto)."""
+    _limitar_push(request, "promo_app", maximo=20)
+    try:
+        if not push.contar_promo(datos.evento, datos.origen):
+            raise HTTPException(status_code=400, detail="Evento u origen no válido")
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        if "app_promo_eventos" not in str(e):
+            logger.warning("Promoción del app: no se pudo contar %s/%s: %s", datos.evento, datos.origen, str(e)[:200])
     return {"ok": True}
 
 
@@ -1771,6 +1831,79 @@ _SQL_TEL_CONV = r"right(regexp_replace(COALESCE(NULLIF(u.telefono, ''), c.variab
 _SQL_DNI_CONV = r"regexp_replace(COALESCE(NULLIF(u.dni, ''), c.variables_sesion->>'DNI', ''), '\D', '', 'g')"
 
 
+# Conversación SALIENTE = la abrió un SMS que le mandamos (invitación, enlace directo, enlace de sesión o archivo);
+# las demás son ENTRANTES (el cliente nos buscó: burbuja, teaser, menú del portal, WhatsApp, etc.).
+_ORIGENES_SALIENTES = {"invitacion_sms", "enlace_directo", "enlace_sms"}
+_TIPOS_CONTACTO = {"invitacion": "SMS de invitación", "enlace_directo": "SMS con enlace directo",
+                   "archivo": "SMS con archivo"}
+
+
+def _historial_cliente(conversacion_id_actual: int) -> dict:
+    """Historial para el botón 🕘 de la consola: {"conversaciones": [...], "contactos": [...]}.
+    - conversaciones: las anteriores del mismo cliente (ver _obtener_historial_usuario), cada una con
+      `direccion` (entrante/saliente) y, si fue saliente, `via` (qué SMS la abrió y quién lo mandó).
+    - contactos: cada SMS con el que lo contactamos (aunque nunca lo haya abierto), con quién lo envió y si lo
+      abrió. None si falta migracion_contactos_salientes.sql."""
+    conversaciones = _obtener_historial_usuario(conversacion_id_actual)
+    contactos = None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT {_SQL_TEL_CONV}, c.iniciado_en, c.origen FROM conversaciones c
+                            JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""", (conversacion_id_actual,))
+            tel, inicio_actual, origen_actual = cur.fetchone() or (None, None, None)
+            if tel and re.fullmatch(r"9\d{8}", tel):
+                cur.execute("SAVEPOINT sp_contactos")
+                try:
+                    cur.execute("""
+                        SELECT cs.enviado_en, cs.tipo, COALESCE(a.nombre_display, a.nombre), cs.rol_emisor, cs.detalle,
+                               COALESCE(ed.canjeado_en, ea.canjeado_en), COALESCE(ed.conversacion_id, ea.conversacion_id)
+                        FROM contactos_salientes cs
+                        LEFT JOIN asesores a ON a.id = cs.enviado_por
+                        LEFT JOIN enlaces_directos ed ON ed.id = cs.enlace_id
+                        LEFT JOIN envios_archivo ea ON ea.id = cs.envio_archivo_id
+                        WHERE right(cs.celular, 9) = %s ORDER BY cs.enviado_en DESC LIMIT 100""", (tel,))
+                    filas = cur.fetchall()
+                    cur.execute("RELEASE SAVEPOINT sp_contactos")
+                except Exception:  # noqa: BLE001
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_contactos")
+                    filas = None
+                if filas is not None:
+                    # Conversaciones de este cliente que abrió un SMS de invitación (el enlace simple no lleva
+                    # token: se asocia por celular y fecha, dentro de los 3 días siguientes al envío).
+                    por_invitacion = [(datetime.fromisoformat(c["iniciado_en"]), c["conversacion_id"])
+                                      for c in conversaciones if c.get("origen") == "invitacion_sms" and c["iniciado_en"]]
+                    if origen_actual == "invitacion_sms" and inicio_actual:
+                        por_invitacion.append((inicio_actual, conversacion_id_actual))
+                    contactos = []
+                    for enviado, tipo, remitente, rol, detalle, abierto_en, conv in filas:
+                        if tipo == "invitacion" and abierto_en is None:
+                            despues = sorted(x for x in por_invitacion if enviado <= x[0] <= enviado + timedelta(days=3))
+                            if despues:
+                                abierto_en, conv = despues[0]
+                        contactos.append({
+                            "enviado_en": enviado.isoformat(), "tipo": tipo, "tipo_texto": _TIPOS_CONTACTO.get(tipo, tipo),
+                            "enviado_por": remitente or "", "rol": rol or "", "detalle": detalle or "",
+                            "abierto_en": abierto_en.isoformat() if abierto_en else None, "conversacion_id": conv,
+                            "es_actual": conv == conversacion_id_actual})
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    # Qué SMS abrió cada conversación saliente: el contacto que la generó o, si no se sabe, el último enviado a ese
+    # celular en los 7 días anteriores.
+    for c in conversaciones:
+        c["direccion"] = "saliente" if c.get("origen") in _ORIGENES_SALIENTES else "entrante"
+        if c["direccion"] != "saliente" or not contactos or not c["iniciado_en"]:
+            continue
+        inicio = datetime.fromisoformat(c["iniciado_en"])
+        propio = next((k for k in contactos if k["conversacion_id"] == c["conversacion_id"]), None)
+        previo = propio or next((k for k in contactos if datetime.fromisoformat(k["enviado_en"]) <= inicio
+                                 <= datetime.fromisoformat(k["enviado_en"]) + timedelta(days=7)), None)
+        if previo:
+            c["via"] = previo["tipo_texto"] + (f" de {previo['enviado_por']}" if previo["enviado_por"] else "")
+    return {"conversaciones": conversaciones, "contactos": contactos}
+
+
 def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
     """Conversaciones anteriores del mismo cliente, sin incluir la actual — para el botón de historial en la
     consola de asesor. Antes se buscaba solo por usuario_id (el mismo navegador): si el cliente escribía desde
@@ -1786,7 +1919,7 @@ def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
                        FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
                        WHERE c.id = %s
                    ), x AS (
-                       SELECT c.id, c.iniciado_en, c.estado, c.campana_id, c.etiqueta_cierre_id, c.usuario_id,
+                       SELECT c.id, c.iniciado_en, c.estado, c.campana_id, c.etiqueta_cierre_id, c.usuario_id, c.origen,
                               {_SQL_TEL_CONV} AS tel, {_SQL_DNI_CONV} AS dni
                        FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
                        WHERE c.id <> %s
@@ -1799,14 +1932,14 @@ def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
                           OR (a.tel ~ '^9[0-9]{{8}}$' AND x.tel = a.tel)
                           OR (length(a.dni) >= 8 AND x.dni = a.dni)
                    ), todas AS (   -- y además las otras de esos mismos navegadores
-                       SELECT id, iniciado_en, estado, campana_id, etiqueta_cierre_id,
+                       SELECT id, iniciado_en, estado, campana_id, etiqueta_cierre_id, origen,
                               mismo_navegador, mismo_celular, mismo_dni FROM m
                        UNION ALL
-                       SELECT x.id, x.iniciado_en, x.estado, x.campana_id, x.etiqueta_cierre_id, TRUE, FALSE, FALSE
+                       SELECT x.id, x.iniciado_en, x.estado, x.campana_id, x.etiqueta_cierre_id, x.origen, TRUE, FALSE, FALSE
                        FROM x WHERE x.usuario_id IN (SELECT usuario_id FROM m) AND x.id NOT IN (SELECT id FROM m)
                    )
                    SELECT x.id, x.iniciado_en, x.estado, cam.nombre, et.nombre,
-                          x.mismo_navegador, x.mismo_celular, x.mismo_dni
+                          x.mismo_navegador, x.mismo_celular, x.mismo_dni, x.origen
                    FROM todas x
                    LEFT JOIN campanas cam ON cam.id = x.campana_id
                    LEFT JOIN etiquetas_cierre et ON et.id = x.etiqueta_cierre_id
@@ -1815,12 +1948,13 @@ def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
                 (conversacion_id_actual, conversacion_id_actual),
             )
             resultado = []
-            for cid, ts, estado, campana, etiqueta, mismo_nav, mismo_cel, mismo_dni in cur.fetchall():
+            for cid, ts, estado, campana, etiqueta, mismo_nav, mismo_cel, mismo_dni, origen in cur.fetchall():
                 coincide = [t for t, ok in (("celular", mismo_cel), ("dni", mismo_dni)) if ok]
                 if mismo_nav and not coincide:
                     coincide = ["navegador"]
                 resultado.append({"conversacion_id": cid, "iniciado_en": ts.isoformat() if ts else None,
-                                  "estado": estado, "campana": campana, "etiqueta": etiqueta, "coincide": coincide})
+                                  "estado": estado, "campana": campana, "etiqueta": etiqueta, "coincide": coincide,
+                                  "origen": origen})
             return resultado
     finally:
         release_connection(conn)
@@ -3811,6 +3945,8 @@ async def _iniciar_watcher_inactividad():
         ThreadPoolExecutor(max_workers=_HILOS_TRABAJO, thread_name_prefix="trabajo"))
     asyncio.create_task(_loop_inactividad())
     _iniciar_vigia()
+    # Cada arranque queda registrado: el primero de una revisión es un deploy; otro de la misma, un reinicio.
+    _lanzar_tarea(asyncio.to_thread(monitoreo.registrar_evento, "arranque"))
 
 
 # ---------------------------------------------------------------------------
@@ -3822,7 +3958,8 @@ async def _iniciar_watcher_inactividad():
 #   3) si el bloqueo dura más de _VIGIA_REINICIO_SEG (hilo principal) o _VIGIA_HILOS_REINICIO_SEG (hilos),
 #      termina el proceso para que Cloud Run levante una instancia nueva en segundos (los widgets y las
 #      consolas se reconectan solos), en vez de quedar colgado hasta que alguien lo note;
-#   4) cada 5 minutos deja un resumen (demora máxima, conexiones de BD y WebSockets abiertos).
+#   4) cada 5 minutos deja un resumen (demora máxima, conexiones de BD y WebSockets abiertos) y lo guarda en la
+#      base (monitoreo.py) junto con la memoria, la CPU y las peticiones: es la vista «Rendimiento» del dashboard.
 # Corre en un hilo propio (no en el event loop), así que funciona aunque el loop esté bloqueado.
 # Busca en Cloud Logging: "Vigía".
 # ---------------------------------------------------------------------------
@@ -3884,16 +4021,38 @@ def _hilos_ocupados() -> str:
     return ", ".join(f"{k} {v}" for k, v in sorted(nombres.items()))
 
 
+def _bd_en_uso() -> int:
+    try:
+        import db
+        return len(getattr(db._pool, "_used", {}) or {}) if db._pool else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _ws_abiertos() -> tuple:
+    try:
+        return (len(manager.widget_connections), len(manager.asesor_connections),
+                len(manager.supervisor_connections))
+    except Exception:  # noqa: BLE001
+        return 0, 0, 0
+
+
 def _vigia():
     episodio_inicio = None
     episodio_hilos = None
     max_loop = 0.0
     episodios = 0
+    episodios_hilos = 0
     ultimo_resumen = time.monotonic()
+    ultima_muestra = 0.0
     while True:
         time.sleep(0.25)
         ahora = time.monotonic()
         atraso = ahora - _latido["loop"]
+        if ahora - ultima_muestra >= 5:
+            ultima_muestra = ahora
+            with contextlib.suppress(Exception):
+                monitoreo.muestrear(_bd_en_uso())
 
         # 1) Hilo principal
         if atraso > _VIGIA_AVISO_SEG and episodio_inicio is None:
@@ -3914,6 +4073,7 @@ def _vigia():
         atraso_hilos = (ahora - pedido) if (pedido and episodio_inicio is None) else 0.0
         if atraso_hilos > _VIGIA_HILOS_AVISO_SEG and episodio_hilos is None:
             episodio_hilos = pedido
+            episodios_hilos += 1
             logger.warning("Vigía: no hay hilos de trabajo libres hace %.0f s. %s. Hilos: %s",
                            atraso_hilos, _resumen_conexiones(), _hilos_ocupados())
         elif episodio_hilos is not None and not atraso_hilos:
@@ -3928,13 +4088,19 @@ def _vigia():
             for h in logging.getLogger().handlers:
                 with contextlib.suppress(Exception):
                     h.flush()
+            monitoreo.registrar_evento_rapido(
+                "reinicio_vigia", f"hilo principal {atraso:.0f} s, hilos de trabajo {atraso_hilos:.0f} s")
             os._exit(1)
 
         # 4) Resumen periódico
         if ahora - ultimo_resumen >= _VIGIA_RESUMEN_SEG:
             logger.info("Vigía resumen 5 min: bloqueos del hilo principal %d (máx %.1f s). %s",
                         episodios, max_loop, _resumen_conexiones())
-            ultimo_resumen, max_loop, episodios = ahora, 0.0, 0
+            # Se guarda en otro hilo: si la base tarda, el vigía no deja de vigilar.
+            threading.Thread(target=monitoreo.guardar_resumen,
+                             args=(episodios, max_loop, episodios_hilos, *_ws_abiertos()),
+                             name="vigia-guardar", daemon=True).start()
+            ultimo_resumen, max_loop, episodios, episodios_hilos = ahora, 0.0, 0, 0
 
 
 def _iniciar_vigia():
@@ -4125,6 +4291,35 @@ def _texto_sms_invitacion() -> str:
     return plantilla.replace("{{LINK}}", SMS_INVITACION_LINK)
 
 
+def _registrar_contacto_saliente(celular: str, tipo: str, remitente_id: int, rol: str | None = None,
+                                 campana_id=None, asesor_destino_id=None, detalle: str | None = None,
+                                 token_enlace: str | None = None, envio_archivo_id: int | None = None):
+    """Deja constancia de cada SMS con el que contactamos a un cliente (invitación, enlace directo o archivo), para
+    verlo en su historial aunque nunca lo abra. Si falla (p. ej. falta migracion_contactos_salientes.sql), el SMS
+    ya salió igual: solo se avisa en el log."""
+    def _entero(v):
+        try:
+            return int(v) if v not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO contactos_salientes (celular, tipo, enviado_por, rol_emisor, campana_id, asesor_destino_id,
+                                                   detalle, enlace_id, envio_archivo_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s,
+                           (SELECT id FROM enlaces_directos WHERE token = %s), %s)""",
+                (celular, tipo, remitente_id, rol or _obtener_rol(remitente_id), _entero(campana_id),
+                 _entero(asesor_destino_id), (detalle or "")[:200] or None, token_enlace, envio_archivo_id))
+        conn.commit()
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        logger.warning("No se pudo registrar el contacto saliente (%s): %s", tipo, str(e)[:200])
+    finally:
+        release_connection(conn)
+
+
 def _campanas_permitidas_para_sms(usuario_id: int):
     """Campañas que puede elegir al mandar un enlace directo: un asesor, las suyas; un supervisor, las de su
     alcance (None = todas)."""
@@ -4184,6 +4379,10 @@ def _enviar_sms_invitacion(celular_crudo, remitente_id: int, texto=None, campana
 
     _sms_invitacion_por_numero[celular] = ahora
     _sms_invitacion_por_remitente[remitente_id] = recientes + [ahora]
+    _registrar_contacto_saliente(celular, "enlace_directo" if token_directo else "invitacion", remitente_id,
+                                 campana_id=campana_id if token_directo else None,
+                                 asesor_destino_id=asesor_id if token_directo else None,
+                                 detalle=destino_nombre, token_enlace=token_directo)
     # Auditoría en el log (la tabla de intervenciones exige una conversación).
     logger.info("SMS de invitación enviado por usuario %s a ***%s%s", remitente_id, celular[-3:],
                 f" (enlace directo a {destino_nombre})" if token_directo else "")
@@ -4260,8 +4459,36 @@ def _enviar_archivo_sms(celular_crudo, remitente_id: int, rol: str, ruta, nombre
 
     _archivo_sms_por_numero[celular] = ahora
     _archivo_sms_por_remitente[remitente_id] = recientes + [ahora]
+    _registrar_contacto_saliente(celular, "archivo", remitente_id, rol=rol, detalle=nombre_archivo or "archivo",
+                                 envio_archivo_id=envio_id)
     logger.info("Archivo por SMS enviado por usuario %s a ***%s (envío %s)", remitente_id, celular[-3:], envio_id)
     return {"ok": True, "motivo": None}
+
+
+def _sesion_de_celular(cur, celular: str, sesion_navegador: str | None) -> tuple:
+    """(usuario_id, sesion_token) para quien abre un enlace que le enviamos por SMS a `celular` (enlace directo o
+    archivo). Abrirlo prueba que tiene ese celular, así que:
+      1) si este navegador ya tiene una sesión de ese mismo celular (o sin celular), se usa esa;
+      2) si no, la sesión MÁS RECIENTE de ese celular (la conversación llega con su nombre, DNI e historial,
+         aunque antes haya escrito desde otro dispositivo);
+      3) si ese celular nunca nos escribió, una sesión nueva."""
+    if sesion_navegador:
+        cur.execute("SELECT id, telefono, sesion_token FROM usuarios_webchat WHERE sesion_token = %s",
+                    (sesion_navegador[:100],))
+        u = cur.fetchone()
+        if u and (not u[1] or _normalizar_celular_pe(u[1]) == celular):
+            return u[0], u[2]
+    cur.execute(
+        r"""SELECT id, sesion_token FROM usuarios_webchat
+            WHERE right(regexp_replace(COALESCE(telefono, ''), '\D', '', 'g'), 9) = %s AND sesion_token IS NOT NULL
+            ORDER BY ultima_actividad DESC NULLS LAST, id DESC LIMIT 1""", (celular[-9:],))
+    u = cur.fetchone()
+    if u:
+        return u[0], u[1]
+    sesion = str(uuid.uuid4())
+    cur.execute("INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
+                (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)))
+    return cur.fetchone()[0], sesion
 
 
 class CanjearArchivoSms(BaseModel):
@@ -4288,23 +4515,7 @@ def canjear_archivo_sms(datos: CanjearArchivoSms):
                 raise HTTPException(status_code=410, detail="El enlace venció o ya se usó")
             envio_id, celular = fila
 
-            usuario_id, sesion = None, None
-            if datos.sesion_token:
-                cur.execute("SELECT id, telefono, sesion_token FROM usuarios_webchat WHERE sesion_token = %s",
-                            (datos.sesion_token[:100],))
-                u = cur.fetchone()
-                if u:
-                    tel = _normalizar_celular_pe(u[1])
-                    if not u[1] or tel == celular:
-                        usuario_id, sesion = u[0], u[2]
-            if usuario_id is None:
-                # Sin sesión, o la sesión de este navegador es de OTRA persona: sesión nueva de este celular.
-                sesion = str(uuid.uuid4())
-                cur.execute(
-                    "INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
-                    (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)),
-                )
-                usuario_id = cur.fetchone()[0]
+            usuario_id, sesion = _sesion_de_celular(cur, celular, datos.sesion_token)
             # Recibió el SMS en este celular = celular comprobado.
             cur.execute("UPDATE usuarios_webchat SET telefono = %s WHERE id = %s AND COALESCE(telefono, '') = ''",
                         (celular, usuario_id))
@@ -4351,22 +4562,7 @@ def canjear_enlace_directo(datos: CanjearEnlaceDirecto):
                 raise HTTPException(status_code=410, detail="El enlace venció o ya se usó")
             envio_id, celular = fila
 
-            usuario_id, sesion = None, None
-            if datos.sesion_token:
-                cur.execute("SELECT id, telefono, sesion_token FROM usuarios_webchat WHERE sesion_token = %s",
-                            (datos.sesion_token[:100],))
-                u = cur.fetchone()
-                if u:
-                    tel = _normalizar_celular_pe(u[1])
-                    if not u[1] or tel == celular:
-                        usuario_id, sesion = u[0], u[2]
-            if usuario_id is None:
-                sesion = str(uuid.uuid4())
-                cur.execute(
-                    "INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
-                    (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)),
-                )
-                usuario_id = cur.fetchone()[0]
+            usuario_id, sesion = _sesion_de_celular(cur, celular, datos.sesion_token)
             cur.execute("UPDATE usuarios_webchat SET telefono = %s WHERE id = %s AND COALESCE(telefono, '') = ''",
                         (celular, usuario_id))
             try:
@@ -5345,6 +5541,10 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "Teaser de Sofi: escribe si para mostrarlo también en celulares o no para mostrarlo solo en computadoras",
         "default": "si",
     },
+    "teaser_promo_app": {
+        "etiqueta": "Teaser de Sofi: escribe si para invitar a instalar el app al pie del mensaje (QR en computadora, botón en celular) o no para quitarlo",
+        "default": "si",
+    },
 }
 
 
@@ -5419,6 +5619,7 @@ def _config_teaser() -> dict:
         "rutas_excluidas": rutas[:50],
         "en_celular": si("teaser_en_celular"),
         "no_tapar": no_tapar[:20],
+        "promo_app": si("teaser_promo_app"),
     }
 
 
@@ -6114,6 +6315,23 @@ def encuesta_sms_omitir(codigo: str, request: Request):
     return encuesta.omitir_por_sms(codigo)
 
 
+@app.get("/dashboard/rendimiento")
+def rendimiento_dashboard(desde: str, hasta: str, authorization: str | None = Header(None)):
+    """Vista «Rendimiento» del dashboard (solo supervisor máximo): memoria, CPU, peticiones, bloqueos, reinicios,
+    base de datos e IA del plan de salud. Ver monitoreo.py."""
+    _verificar_supervisor_maximo(authorization)
+    _, _, f_desde, f_hasta = _rango_dashboard(desde, hasta)
+    widget, asesores, supervisores = _ws_abiertos()
+    return monitoreo.datos(f_desde, f_hasta, {
+        "ws_widget": widget, "ws_asesores": asesores, "ws_supervisores": supervisores,
+        "bd_en_uso": _bd_en_uso(), "bd_max": _db_max_conexiones(), "hilos": threading.active_count()})
+
+
+def _db_max_conexiones() -> int:
+    import db
+    return getattr(db, "_MAX_WEBCHAT", 20)
+
+
 @app.get("/dashboard/encuesta")
 def encuesta_dashboard(desde: str, hasta: str, campana_id: int | None = None, authorization: str | None = Header(None)):
     """Resultados de la encuesta de satisfacción (encuestas ENVIADAS en el período). Ver encuesta.py."""
@@ -6511,10 +6729,18 @@ async def _plan_asignar_y_avisar():
         logger.exception("Plan de salud: no se pudieron asignar las solicitudes")
 
 
-async def _procesar_plan(sid: int, asesor_id: int, ruta: str, codigo, nombre, archivo_nombre=None):
-    """Gemini digitaliza el PDF (1 a 2 minutos, en un hilo aparte) y luego se avisa al asesor y al cliente."""
+def _lista_plan(valor) -> list:
+    """Lista de textos (rutas o nombres de archivo) desde el mensaje de la consola: acepta un valor o una lista."""
+    if not valor:
+        return []
+    valores = valor if isinstance(valor, list) else [valor]
+    return [str(v).strip()[:300] for v in valores[:planes.MAX_PDFS + 1] if v and str(v).strip()]
+
+
+async def _procesar_plan(sid: int, asesor_id: int, rutas: list, codigo, nombre, archivos=None):
+    """Gemini digitaliza los PDF (1 a 3 minutos cada uno, en un hilo aparte) y luego se avisa al asesor y al cliente."""
     try:
-        r = await asyncio.to_thread(planes.digitalizar_y_cerrar, sid, asesor_id, ruta, codigo, nombre, archivo_nombre)
+        r = await asyncio.to_thread(planes.digitalizar_y_cerrar, sid, asesor_id, rutas, codigo, nombre, archivos)
     except Exception:  # noqa: BLE001
         logger.exception("Plan de salud: falló la digitalización de la solicitud %s", sid)
         r = {"ok": False, "motivo": "No se pudo digitalizar el plan."}
@@ -6529,8 +6755,11 @@ async def _cargar_plan_directo(asesor_id: int, ref: str, payload: dict):
     """Carga directa desde la consola: digitaliza (o reutiliza) el plan, lo asigna a los DNI escritos y avisa a los
     clientes que ya lo habían pedido."""
     try:
-        r = await asyncio.to_thread(planes.cargar_directo, asesor_id, payload.get("ruta"), payload.get("codigo_plan"),
-                                    payload.get("nombre_plan"), payload.get("archivo_nombre"), payload.get("dnis"))
+        rutas = _lista_plan(payload.get("rutas")) or _lista_plan(payload.get("ruta"))
+        archivos = _lista_plan(payload.get("archivo_nombres")) or _lista_plan(payload.get("archivo_nombre"))
+        r = await asyncio.to_thread(planes.cargar_directo, asesor_id, rutas, payload.get("codigo_plan"),
+                                    payload.get("nombre_plan"), archivos, payload.get("dnis"),
+                                    bool(payload.get("reemplazar")))
     except Exception:  # noqa: BLE001
         logger.exception("Plan de salud: falló la carga directa")
         r = {"ok": False, "motivo": "No se pudo cargar el plan."}
@@ -6798,13 +7027,14 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                     sid = int(payload.get("solicitud_id"))
                 except (TypeError, ValueError):
                     sid = 0
-                ruta = (payload.get("ruta") or "").strip() or None
+                # Uno o varios PDF (un DNI puede tener varios planes). "ruta" suelta: consola de antes del cambio.
+                rutas = _lista_plan(payload.get("rutas")) or _lista_plan(payload.get("ruta"))
+                archivos = _lista_plan(payload.get("archivo_nombres")) or _lista_plan(payload.get("archivo_nombre"))
                 codigo = (payload.get("codigo_plan") or "").strip() or None
-                archivo_nombre = str(payload.get("archivo_nombre") or "").strip()[:200] or None
-                r = await asyncio.to_thread(planes.preparar_atencion, sid, asesor_id, ruta, codigo, archivo_nombre)
+                r = await asyncio.to_thread(planes.preparar_atencion, sid, asesor_id, rutas, codigo, archivos)
                 await manager.enviar_a_asesor(asesor_id, {"type": "plan_resultado", "payload": {"solicitud_id": sid, **r}})
                 if r.get("procesar"):
-                    _lanzar_tarea(_procesar_plan(sid, asesor_id, ruta, codigo, payload.get("nombre_plan"), archivo_nombre))
+                    _lanzar_tarea(_procesar_plan(sid, asesor_id, rutas, codigo, payload.get("nombre_plan"), archivos))
                 elif r.get("listo"):
                     await _avisar_cliente_plan(sid)
                 await _enviar_tareas(asesor_id)
@@ -6815,7 +7045,8 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 if not await asyncio.to_thread(planes.es_backoffice, asesor_id):
                     r = {"ok": False, "motivo": "Solo el equipo de backoffice puede cargar planes."}
                 else:
-                    r = planes.validar_carga(payload.get("ruta"), payload.get("codigo_plan"), payload.get("dnis"))
+                    r = planes.validar_carga(_lista_plan(payload.get("rutas")) or _lista_plan(payload.get("ruta")),
+                                             payload.get("codigo_plan"), payload.get("dnis"))
                 if r:
                     await manager.enviar_a_asesor(asesor_id, {"type": "plan_carga_resultado", "payload": {"ref": ref, **r}})
                 else:
@@ -6863,11 +7094,10 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
 
             elif tipo == "obtener_historial_usuario":
                 conversacion_id_actual = payload.get("conversacion_id")
+                historial = await asyncio.to_thread(_historial_cliente, conversacion_id_actual)
                 await manager.enviar_a_asesor(asesor_id, {
                     "type": "historial_usuario",
-                    "payload": {"conversacion_id": conversacion_id_actual,
-                                "conversaciones": await asyncio.to_thread(_obtener_historial_usuario,
-                                                                          conversacion_id_actual)},
+                    "payload": {"conversacion_id": conversacion_id_actual, **historial},
                 })
 
             elif tipo == "obtener_mensajes_conversacion_pasada":

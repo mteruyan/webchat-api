@@ -52,6 +52,20 @@
   .panel { background: white; border: 1px solid var(--borde); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
   .panel h2 { font-size: 14px; margin: 0 0 14px; color: var(--texto); }
   .panel h2 .sub { font-weight: 400; color: var(--texto-suave); font-size: 12px; }
+  /* Vistas: General / Encuesta / Rendimiento */
+  .enc-cab .ver-detalle { font-size: 13px; font-weight: 600; color: var(--azul); text-decoration: none; white-space: nowrap; }
+  .enc-cab .ver-detalle:hover { text-decoration: underline; }
+  .rend-kpi .rend-det { font-size: 12px; color: var(--texto-suave); margin-top: 4px; }
+  .rend-diag { list-style: none; padding: 0; margin: 4px 0 14px; display: grid; gap: 6px; font-size: 13.5px; }
+  .rend-diag li { padding: 8px 12px; border-radius: 8px; background: #F2F8F5; }
+  .rend-diag li.ojo { background: #FFF6E5; }
+  .rh-chart { display: flex; align-items: flex-end; gap: 1px; height: 120px; padding-top: 4px; border-bottom: 1px solid var(--borde); }
+  .rh-col { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; position: relative; }
+  .rh-col i { display: block; border-radius: 2px 2px 0 0; }
+  .rh-col:hover i { filter: brightness(1.15); }
+  .rh-dia { position: absolute; bottom: -18px; left: 0; font-size: 10.5px; color: var(--texto-suave); white-space: nowrap; }
+  .rh-col:has(.rh-dia) { border-left: 1px dashed var(--borde); }
+  .rh-escala { font-size: 12px; color: var(--texto-suave); margin-top: 22px; }
   .panel .vacio-panel { color: var(--texto-suave); font-size: 13px; padding: 10px 0; }
 
   /* Barras horizontales (asesor / etiqueta / campaña) */
@@ -464,7 +478,7 @@ body.sofi .conv-item .badge { background: var(--coral); }
   </div>
   <nav class="sofi-nav" aria-label="Menú principal">
     <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b></div>
-    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
+    <div class="nav-links" id="navVistas"><a href="#general" data-vista-nav="general" class="actual"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>General</span></a><a href="#encuesta" data-vista-nav="encuesta"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 2 3.5 2 3.5-2 3.5-2"/><path d="M9 9.5h.01"/><path d="M15 9.5h.01"/></svg><span>Encuesta</span></a><a href="#rendimiento" data-vista-nav="rendimiento" id="navRendimiento" style="display:none"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Rendimiento</span></a></div>
     <div class="nav-seccion">Ir a</div>
     <div class="nav-links"><a href="/asesor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><span>Asesor</span></a><a href="/supervisor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Supervisor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a></div>
     <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Dashboard</small></div></div>
@@ -493,6 +507,11 @@ body.sofi .conv-item .badge { background: var(--coral); }
     <div id="vacio">Conéctate para ver las estadísticas de conversaciones.</div>
     <div id="cargando">Cargando estadísticas…</div>
     <div id="panelesWrap" style="display:none;"></div>
+    <div id="vistaEncuesta" style="display:none;">
+      <div class="panel" id="panelEncuesta"><h2>Encuesta de satisfacción</h2><div class="vacio-panel">Cargando…</div></div>
+      <div class="panel" id="panelSeguimiento" style="display:none"></div>
+    </div>
+    <div id="vistaRendimiento" style="display:none;"></div>
   </div>
 
 </div>
@@ -679,7 +698,197 @@ async function cargarEstadisticas() {
   cargarConsultas(desde, hasta);
   cargarApp();
   document.getElementById('cargando').classList.remove('activo');
-  document.getElementById('panelesWrap').style.display = 'block';
+  datosCargados = true;
+  aplicarVista();
+}
+
+// ---- Vistas del dashboard: General (números gruesos), Encuesta (detalle) y Rendimiento (solo supervisor máximo) ----
+// Se eligen desde el menú lateral; la vista queda en la dirección (#encuesta, #rendimiento) para volver directo.
+var vistaActual = 'general';
+var datosCargados = false;
+var puedeRendimiento = false;
+function vistaPedida() {
+  const v = (location.hash || '').slice(1);
+  return ['general', 'encuesta', 'rendimiento'].includes(v) ? v : 'general';
+}
+function permitirRendimiento(si) {
+  puedeRendimiento = si;
+  const a = document.getElementById('navRendimiento');
+  if (a) a.style.display = si ? '' : 'none';
+  if (si && vistaPedida() === 'rendimiento' && vistaActual !== 'rendimiento') aplicarVista();
+}
+function aplicarVista() {
+  const pedida = vistaPedida();
+  const anterior = vistaActual;
+  vistaActual = pedida === 'rendimiento' && !puedeRendimiento ? 'general' : pedida;
+  document.querySelectorAll('[data-vista-nav]').forEach(a => a.classList.toggle('actual', a.dataset.vistaNav === vistaActual));
+  const ver = (id, si) => { const e = document.getElementById(id); if (e) e.style.display = datosCargados && si ? 'block' : 'none'; };
+  ver('panelesWrap', vistaActual === 'general');
+  ver('vistaEncuesta', vistaActual === 'encuesta');
+  ver('vistaRendimiento', vistaActual === 'rendimiento');
+  // El filtro de campaña no aplica al rendimiento del servidor.
+  const campana = vistaActual === 'rendimiento' ? 'none' : '';
+  document.getElementById('filtroCampana').style.display = campana;
+  const etq = document.querySelector('label[for="filtroCampana"]');
+  if (etq) etq.style.display = campana;
+  if (datosCargados && vistaActual === 'rendimiento') cargarRendimiento();
+  if (anterior !== vistaActual) window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', aplicarVista);
+
+// ---- Vista Rendimiento ----
+function fmtMb(v) { return v == null ? '–' : (v >= 1024 ? String(+(v / 1024).toFixed(2)) + ' GB' : Math.round(v) + ' MB'); }
+function fmtMs(v) { return v == null ? '–' : (v >= 1000 ? (v / 1000).toFixed(1) + ' s' : Math.round(v) + ' ms'); }
+function fmtCpu(v) { return v == null ? '–' : Math.round(v) + '%'; }
+function fmtDuracion(min) {
+  if (min == null) return '–';
+  if (min < 60) return min + ' min';
+  if (min < 1440) return Math.floor(min / 60) + ' h ' + (min % 60) + ' min';
+  return Math.floor(min / 1440) + ' d ' + Math.floor((min % 1440) / 60) + ' h';
+}
+const COLOR_OK = 'var(--verde)', COLOR_OJO = 'var(--naranja)', COLOR_MAL = 'var(--rojo)';
+function semaforo(v, ojo, mal) { return v == null ? 'var(--gris)' : v >= mal ? COLOR_MAL : v >= ojo ? COLOR_OJO : COLOR_OK; }
+function kpiRend(num, etiqueta, detalle, color) {
+  return `<div class="kpi rend-kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${num}</div>
+    <div class="etiqueta">${etiqueta}</div>${detalle ? `<div class="rend-det">${detalle}</div>` : ''}</div>`;
+}
+// Barras por hora (memoria, clientes…): una barra por hora; debajo, el día cuando cambia.
+function barrasHora(items, campo, fmt, colorFn) {
+  if (!items || !items.length) return '<div class="vacio-panel">Sin mediciones en este período.</div>';
+  const max = Math.max(...items.map(x => x[campo] || 0), 1);
+  let diaAnt = '';
+  const barras = items.map(x => {
+    const v = x[campo];
+    const [fecha, hora] = x.hora.split('T');
+    const [, mes, dia] = fecha.split('-');
+    const marca = fecha !== diaAnt ? `<span class="rh-dia">${dia}/${mes}</span>` : '';
+    diaAnt = fecha;
+    return `<div class="rh-col" title="${dia}/${mes} ${hora}:00 → ${fmt(v)}">${marca}<i style="height:${Math.max(v ? v / max * 100 : 0, v ? 2 : 0)}%;background:${colorFn ? colorFn(v) : 'var(--azul)'}"></i></div>`;
+  }).join('');
+  return `<div class="rh-chart">${barras}</div><div class="rh-escala">máximo: <b>${fmt(max)}</b></div>`;
+}
+function diagnosticoRend(p, limiteMb, bdMax) {
+  const lineas = [];
+  const ok = (t) => lineas.push(`<li class="ok">✅ ${t}</li>`);
+  const ojo = (t) => lineas.push(`<li class="ojo">⚠️ ${t}</li>`);
+  const memPct = p.memoria_max_mb != null && limiteMb ? p.memoria_max_mb / limiteMb * 100 : null;
+  if (memPct == null) ok('Memoria: sin datos suficientes todavía.');
+  else if (memPct >= 85) ojo(`Memoria: llegó al ${Math.round(memPct)}% del límite (${fmtMb(p.memoria_max_mb)} de ${fmtMb(limiteMb)}). Si se repite, conviene subir la memoria en deploy.sh.`);
+  else ok(`Memoria: el pico fue ${fmtMb(p.memoria_max_mb)} (${Math.round(memPct)}% del límite).`);
+  if (p.cpu_prom != null && p.cpu_prom >= 60) ojo(`CPU: promedio de ${fmtCpu(p.cpu_prom)}; el servidor está trabajando cerca de su capacidad.`);
+  else ok(`CPU: promedio ${fmtCpu(p.cpu_prom)}, picos de ${fmtCpu(p.cpu_max)} (los picos cortos son normales al leer PDF).`);
+  // Un reinicio del vigía termina el proceso y Cloud Run lo vuelve a arrancar: ese arranque ya está en p.reinicios.
+  const otros = Math.max((p.reinicios || 0) - (p.reinicios_vigia || 0), 0);
+  if (p.reinicios_vigia) ojo(`El vigía reinició el servidor ${p.reinicios_vigia} ${p.reinicios_vigia === 1 ? 'vez' : 'veces'} por un cuelgue (ver «Arranques y reinicios»).`);
+  if (otros) ojo(`Cloud Run reinició el servidor ${otros} ${otros === 1 ? 'vez' : 'veces'} sin deploy (posible falta de memoria o mantenimiento de Google).`);
+  if (!p.reinicios && !p.reinicios_vigia) ok('Sin reinicios inesperados: solo los deploys.');
+  if (p.bloqueos) (p.bloqueo_max_s >= 5 ? ojo : ok)(`El servidor se demoró más de 1 s en responder ${p.bloqueos} ${p.bloqueos === 1 ? 'vez' : 'veces'} (la más larga: ${p.bloqueo_max_s} s).`);
+  else ok('El servidor nunca se trabó.');
+  if (p.sin_hilos) ojo(`Se quedó sin hilos de trabajo ${p.sin_hilos} ${p.sin_hilos === 1 ? 'vez' : 'veces'} (operaciones lentas acumuladas).`);
+  const errPct = p.peticiones ? p.errores_5xx / p.peticiones * 100 : 0;
+  if (errPct >= 1) ojo(`Errores del servidor: ${p.errores_5xx} de ${p.peticiones.toLocaleString('es-PE')} peticiones (${errPct.toFixed(1)}%).`);
+  else ok(`Errores del servidor: ${p.errores_5xx} de ${(p.peticiones || 0).toLocaleString('es-PE')} peticiones.`);
+  if (p.bd_max != null && p.bd_max >= bdMax * 0.8) ojo(`Base de datos: llegó a ${p.bd_max} de ${bdMax} conexiones a la vez.`);
+  else if (p.bd_max != null) ok(`Base de datos: como máximo ${p.bd_max} de ${bdMax} conexiones a la vez.`);
+  if (p.lat_p95_max_ms != null && p.lat_p95_max_ms >= 3000) ojo(`Lentitud: en la peor ventana de 5 min, 1 de cada 20 peticiones tardó más de ${fmtMs(p.lat_p95_max_ms)}.`);
+  else if (p.lat_p95_max_ms != null) ok(`Rapidez: la mitad de las peticiones responde en ${fmtMs(p.lat_p50_ms)}.`);
+  if (p.ia_saturado) ojo(`IA del plan de salud: Google estuvo saturado ${p.ia_saturado} ${p.ia_saturado === 1 ? 'vez' : 'veces'} (se reintenta solo).`);
+  return `<ul class="rend-diag">${lineas.join('')}</ul>`;
+}
+function tablaRend(filas, cols) {
+  if (!filas || !filas.length) return '<div class="vacio-panel">Sin datos.</div>';
+  return `<div style="overflow-x:auto"><table class="tabla-tiempos"><thead><tr>${cols.map(c => `<th class="${c[2] || ''}">${c[0]}</th>`).join('')}</tr></thead>
+    <tbody>${filas.map(r => `<tr>${cols.map(c => `<td class="${c[2] || ''}">${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function renderRendimiento(d, desde, hasta) {
+  const a = d.ahora || {};
+  const limite = a.memoria_limite_mb || 1024;   // deploy.sh: --memory=1Gi
+  const memPct = a.memoria_mb != null ? a.memoria_mb / limite * 100 : null;
+  let html = `<div class="panel"><h2>Ahora <span class="sub">en vivo · revisión ${escapaHtml(a.revision || '')} · encendido hace ${fmtDuracion(a.minutos_encendido)}</span></h2>
+    <div class="kpis">
+      ${kpiRend(fmtMb(a.memoria_mb), 'Memoria en uso', `${memPct == null ? '' : Math.round(memPct) + '% '}de ${fmtMb(limite)}${a.fuente_memoria === 'contenedor' ? '' : ' · medida del proceso'}`, semaforo(memPct, 70, 85))}
+      ${kpiRend(fmtCpu(a.cpu_pct), 'CPU', 'últimos 5 segundos', semaforo(a.cpu_pct, 60, 85))}
+      ${kpiRend(`${a.bd_en_uso ?? '–'} / ${a.bd_max ?? 20}`, 'Conexiones a la base', 'del webchat, en uso ahora', semaforo((a.bd_en_uso || 0) / (a.bd_max || 20) * 100, 60, 80))}
+      ${kpiRend(a.ws_widget ?? '–', 'Clientes con el chat abierto', `${a.ws_asesores ?? 0} asesores · ${a.ws_supervisores ?? 0} supervisores`)}
+    </div></div>`;
+  if (!d.disponible) {
+    return html + '<div class="panel"><div class="vacio-panel">Aún no hay historial: falta ejecutar <b>migracion_monitoreo.sql</b> en la base de datos. Desde que se ejecute, el servidor guarda una medición cada 5 minutos.</div></div>';
+  }
+  const p = d.periodo || {};
+  if (!p.muestras) {
+    html += `<div class="panel"><div class="vacio-panel">Todavía no hay mediciones guardadas entre ${desde} y ${hasta}. El servidor guarda una cada 5 minutos desde que se ejecutó la migración.</div></div>`;
+  } else {
+    html += `<div class="panel"><h2>Estabilidad del período <span class="sub">${desde} a ${hasta} · ${p.muestras} mediciones de 5 minutos (~${fmtDuracion(p.muestras * 5)})</span></h2>
+      ${diagnosticoRend(p, limite, a.bd_max || 20)}
+      <div class="kpis">
+        ${kpiRend(p.reinicios, 'Reinicios inesperados', `${p.reinicios_vigia} por el vigía · ${p.deploys} deploys`, p.reinicios || p.reinicios_vigia ? COLOR_OJO : COLOR_OK)}
+        ${kpiRend(p.bloqueos, 'Veces que se trabó (>1 s)', `la más larga: ${p.bloqueo_max_s ?? 0} s · sin hilos: ${p.sin_hilos}`, p.bloqueos ? (p.bloqueo_max_s >= 5 ? COLOR_OJO : 'var(--azul)') : COLOR_OK)}
+        ${kpiRend(p.errores_5xx, 'Errores del servidor (5xx)', `de ${(p.peticiones || 0).toLocaleString('es-PE')} peticiones`, p.peticiones && p.errores_5xx / p.peticiones >= 0.01 ? COLOR_OJO : COLOR_OK)}
+        ${kpiRend(fmtMs(p.lat_p50_ms), 'Tiempo de respuesta típico', `peor ventana (p95): ${fmtMs(p.lat_p95_max_ms)}`, semaforo(p.lat_p95_max_ms, 2000, 5000))}
+        ${kpiRend(fmtMb(p.memoria_max_mb), 'Pico de memoria', `promedio ${fmtMb(p.memoria_prom_mb)}`, semaforo(p.memoria_max_mb / limite * 100, 70, 85))}
+        ${kpiRend(fmtCpu(p.cpu_max), 'Pico de CPU', `promedio ${fmtCpu(p.cpu_prom)}`, semaforo(p.cpu_prom, 50, 70))}
+        ${kpiRend(p.ws_widget_max ?? '–', 'Pico de clientes con el chat abierto', `pico de asesores: ${p.ws_asesores_max ?? '–'}`)}
+        ${kpiRend(`${p.bd_max ?? '–'} / ${a.bd_max || 20}`, 'Pico de conexiones a la base', 'del webchat')}
+      </div></div>
+      <div class="panel"><h2>Memoria por hora <span class="sub">máximo de cada hora · línea de alerta: 85% de ${fmtMb(limite)}</span></h2>
+        ${barrasHora(d.por_hora, 'memoria_max_mb', fmtMb, v => semaforo(v / limite * 100, 70, 85))}</div>
+      <div class="panel"><h2>Clientes con el chat abierto por hora <span class="sub">máximo de cada hora</span></h2>
+        ${barrasHora(d.por_hora, 'ws_widget', v => (v ?? 0) + ' clientes')}</div>
+      <div class="panel"><h2>CPU por hora <span class="sub">pico de cada hora (% de 1 CPU)</span></h2>
+        ${barrasHora(d.por_hora, 'cpu_max', fmtCpu, v => semaforo(v, 70, 90))}</div>
+      <div class="panel"><h2>Por día</h2>${tablaRend(d.por_dia, [
+        ['Día', r => r.dia.split('-').reverse().slice(0, 2).join('/')],
+        ['Memoria máx.', r => fmtMb(r.memoria_max_mb), 'num'], ['CPU prom.', r => fmtCpu(r.cpu_prom), 'num'], ['CPU máx.', r => fmtCpu(r.cpu_max), 'num'],
+        ['Peticiones', r => r.peticiones.toLocaleString('es-PE'), 'num'], ['5xx', r => r.errores_5xx, 'num'],
+        ['Resp. típica', r => fmtMs(r.lat_p50_ms), 'num'], ['Peor p95', r => fmtMs(r.lat_p95_max_ms), 'num'],
+        ['Trabado', r => r.bloqueos ? `${r.bloqueos} (máx ${r.bloqueo_max_s} s)` : '0', 'num'], ['Sin hilos', r => r.sin_hilos, 'num'],
+        ['BD máx.', r => r.bd_max ?? '–', 'num'], ['Clientes máx.', r => r.ws_widget_max ?? '–', 'num'], ['Asesores máx.', r => r.ws_asesores_max ?? '–', 'num'],
+        ['IA saturada', r => r.ia_saturado, 'num']])}</div>`;
+  }
+  const tipos = { deploy: '🚀 Deploy', reinicio: '🔄 Reinicio de Cloud Run', reinicio_vigia: '🛑 Reinicio del vigía (cuelgue)' };
+  html += `<div class="panel"><h2>Arranques y reinicios <span class="sub">el primero de cada revisión es un deploy; otro arranque de la misma revisión es un reinicio</span></h2>
+    ${tablaRend((d.eventos || []).slice().reverse(), [
+      ['Cuándo', r => escapaHtml(r.cuando)], ['Qué pasó', r => tipos[r.tipo] || escapaHtml(r.tipo)],
+      ['Revisión', r => escapaHtml(r.revision || '')], ['Detalle', r => escapaHtml(r.detalle || '')]])}</div>`;
+  const b = d.bd || {};
+  html += `<div class="panel"><h2>Base de datos <span class="sub">en vivo · instancia compartida con otros sistemas (sofi-apis, etc.)</span></h2>
+    <div class="kpis">
+      ${kpiRend(`${b.conexiones ?? '–'} / ${b.max_conexiones ?? '–'}`, 'Conexiones a la instancia', 'de todos los sistemas', semaforo(b.max_conexiones ? b.conexiones / b.max_conexiones * 100 : null, 60, 80))}
+      ${kpiRend(b.cache_hit_pct == null ? '–' : b.cache_hit_pct + '%', 'Lecturas desde memoria', 'ideal: más de 99%', b.cache_hit_pct == null ? null : b.cache_hit_pct >= 99 ? COLOR_OK : b.cache_hit_pct >= 95 ? COLOR_OJO : COLOR_MAL)}
+      ${kpiRend(b.consultas_lentas ?? '–', 'Consultas de más de 5 s ahora', `transacciones abiertas sin uso: ${b.transacciones_abiertas ?? '–'}`, b.consultas_lentas ? COLOR_OJO : COLOR_OK)}
+      ${kpiRend(fmtMb(b.tamano_mb), 'Tamaño de la base del webchat', '')}
+    </div>
+    <div class="enc-grid" style="margin-top:14px">
+      <div><h3>Conexiones por sistema</h3>${tablaRend(b.conexiones_por_sistema, [
+        ['Sistema', r => escapaHtml(r.sistema)], ['Base', r => escapaHtml(r.base)], ['Total', r => r.total, 'num'], ['Activas', r => r.activas, 'num']])}</div>
+      <div><h3>Tablas más grandes</h3>${tablaRend(b.tablas, [
+        ['Tabla', r => escapaHtml(r.tabla)], ['Tamaño', r => fmtMb(r.mb), 'num'], ['Filas', r => (r.filas || 0).toLocaleString('es-PE'), 'num'],
+        ['Muertas', r => (r.muertas || 0).toLocaleString('es-PE'), 'num'], ['Último vacuum', r => escapaHtml(r.ultimo_vacuum || '–')]])}</div>
+    </div>
+    <p class="nota-panel">La CPU y la memoria de la instancia de Cloud SQL (compartida) se ven en la consola de Google Cloud o con <b>medir_semana.sh</b>.</p></div>`;
+  if (d.ia && d.ia.length) {
+    html += `<div class="panel"><h2>IA del plan de salud <span class="sub">preguntas de los clientes y cuánto tardó la respuesta</span></h2>${tablaRend(d.ia, [
+      ['Día', r => r.dia.split('-').reverse().slice(0, 2).join('/')], ['Preguntas', r => r.preguntas, 'num'],
+      ['Tiempo prom.', r => r.seg_prom == null ? '–' : r.seg_prom.toFixed(1) + ' s', 'num'], ['Tiempo máx.', r => r.seg_max == null ? '–' : r.seg_max.toFixed(1) + ' s', 'num'],
+      ['Sin respuesta', r => r.sin_respuesta, 'num']])}</div>`;
+  }
+  return html;
+}
+async function cargarRendimiento() {
+  const el = document.getElementById('vistaRendimiento');
+  const desde = document.getElementById('fechaDesde').value;
+  const hasta = document.getElementById('fechaHasta').value;
+  if (!el || !desde || !hasta) return;
+  if (!el.innerHTML.trim()) el.innerHTML = '<div class="panel"><div class="vacio-panel">Cargando rendimiento…</div></div>';
+  try {
+    const r = await fetch(`${urlBaseGuardada}/dashboard/rendimiento?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`,
+      { headers: { 'Authorization': `Bearer ${tokenGuardado}` } });
+    if (r.status === 403) { el.innerHTML = '<div class="panel"><div class="vacio-panel">Esta vista es solo para el supervisor máximo.</div></div>'; return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    el.innerHTML = renderRendimiento(await r.json(), desde, hasta);
+  } catch (e) {
+    el.innerHTML = `<div class="panel"><div class="vacio-panel">No se pudo cargar el rendimiento (${escapaHtml(e.message)}).</div></div>`;
+  }
 }
 
 function escapaHtml(t) {
@@ -1071,18 +1280,23 @@ function renderTextosEncuesta() {
       <div class="extra" style="color:var(--texto-suave)">Facilidad: ${escapaHtml(t.facilidad || '–')} · Dificultad: ${escapaHtml(t.dificultad || '–')}${t.mejoras && t.mejoras.length ? ' · Pidió: ' + escapaHtml(t.mejoras.join(', ')) : ''}</div>
     </div>`).join('');
 }
-function renderEncuesta(d) {
+// Números gruesos de la encuesta: es lo único que se muestra en la vista General (el detalle está en la vista Encuesta).
+function encuestaKpis(d) {
   if (!d || d.disponible === false) return '<div class="vacio-panel">Aún no hay datos: falta ejecutar <b>migracion_encuesta_satisfaccion.sql</b> en la base de datos.</div>';
   if (!d.enviadas) return '<div class="vacio-panel">No se enviaron encuestas en este período. Se envían al cerrar una conversación atendida por un asesor en las campañas que tienen la encuesta activada (Supervisor › Campañas › 📝 Encuesta).</div>';
   const s = d.satisfaccion, f = d.facilidad;
   const kpi = (num, et, det, color) => `<div class="enc-kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${num}</div><div class="etiqueta">${et}</div>${det ? `<div class="detalle">${det}</div>` : ''}</div>`;
-  let html = `<div class="enc-kpis">
+  return `<div class="enc-kpis">
     ${kpi(d.respondidas, 'Respuestas', `de ${d.enviadas} enviadas · ${fmtPct(d.tasa_respuesta)} responde${d.omitidas ? ' · ' + d.omitidas + ' «Ahora no»' : ''}${d.sms && d.sms.enviados ? ' · por SMS: ' + d.sms.respondidas + ' de ' + d.sms.enviados + ' (' + fmtPct(d.sms.tasa_respuesta) + ')' : ''}`)}
     ${kpi(fmtNum(s.promedio, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> / 5</small>', 'Satisfacción promedio', 'pregunta 1', s.promedio == null ? null : colorSatisf(Math.round(s.promedio)))}
     ${kpi(fmtPct(s.csat), 'Satisfechos (4 y 5)', `${fmtPct(s.insatisfechos_pct)} insatisfechos (1 y 2)`, 'var(--verde)')}
     ${kpi(fmtPct(f.ces), 'Le resultó fácil', `fácil o muy fácil · ${fmtPct(f.dificil_pct)} difícil`, 'var(--azul)')}
-  </div>`;
-  if (!d.respondidas) return html + '<div class="vacio-panel">Todavía nadie respondió en este período.</div>';
+  </div>${d.respondidas ? '' : '<div class="vacio-panel">Todavía nadie respondió en este período.</div>'}`;
+}
+function renderEncuesta(d) {
+  let html = encuestaKpis(d);
+  if (!d || d.disponible === false || !d.enviadas || !d.respondidas) return html;
+  const s = d.satisfaccion, f = d.facilidad;
   if (d.hallazgos && d.hallazgos.length) {
     html += `<div class="enc-hallazgos"><b>💡 Qué nos dicen los datos</b><ul>${d.hallazgos.map(h => `<li>${escapaHtml(h)}</li>`).join('')}</ul></div>`;
   }
@@ -1122,6 +1336,15 @@ function renderEncuesta(d) {
     <p class="nota-panel">Base: encuestas enviadas entre las fechas elegidas. «Satisfechos» = quienes marcaron 4 o 5 en la pregunta 1. El Excel trae cada respuesta completa para analizarla o cruzarla con la conversación.</p>`;
   return html;
 }
+function pintarResumenEncuesta(cuerpo) {
+  const r = document.getElementById('panelEncuestaResumen');
+  if (!r) return;
+  const d = encuestaDatos;
+  const bajas = d && d.satisfaccion && d.satisfaccion.distribucion
+    ? d.satisfaccion.distribucion.filter(x => x.valor <= 2).reduce((a, x) => a + x.cantidad, 0) : 0;
+  r.innerHTML = `<div class="enc-cab"><h2>Encuesta de satisfacción <span class="sub">encuestas enviadas en el período${campanaSeleccionadaTexto()}</span></h2>
+      <a href="#encuesta" class="ver-detalle">Ver detalle${bajas ? ` · ${bajas} insatisfecho${bajas === 1 ? '' : 's'}` : ''} →</a></div>${cuerpo}`;
+}
 async function cargarEncuesta(desde, hasta) {
   const el = document.getElementById('panelEncuesta');
   if (!el) return;
@@ -1133,9 +1356,11 @@ async function cargarEncuesta(desde, hasta) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     encuestaDatos = await resp.json();
     el.innerHTML = cab + renderEncuesta(encuestaDatos);
+    pintarResumenEncuesta(encuestaKpis(encuestaDatos));
   } catch (e) {
     encuestaDatos = null;
     el.innerHTML = cab + '<div class="vacio-panel">No se pudo cargar este panel.</div>';
+    pintarResumenEncuesta('<div class="vacio-panel">No se pudo cargar este panel.</div>');
   }
   el.querySelectorAll('.enc-filtros [data-f]').forEach(b => b.onclick = () => {
     encuestaFiltroTextos = b.dataset.f;
@@ -1181,8 +1406,10 @@ async function cargarSeguimiento() {
     segDatos = await segApi('/seguimiento/mejoras');
   } catch (e) {
     el.style.display = 'none';   // no es supervisor máximo (o el servidor aún no tiene esta función)
+    permitirRendimiento(false);
     return;
   }
+  permitirRendimiento(true);
   segCasos = await segApi(`/seguimiento/casos?vista=${segCasosVista}`).catch(() => null);
   el.style.display = '';
   segVista = 'lista';
@@ -1460,8 +1687,26 @@ function renderApp(d) {
     <div style="display:flex;align-items:flex-end;gap:3px;height:70px">${dias.map(x => `<div title="${escapaHtml(x.dia)}: ${x.instalaron} instalaron, ${x.avisos} con avisos" style="flex:1;max-width:30px;display:flex;align-items:flex-end;gap:1px;height:100%">
       <div style="flex:1;background:var(--azul);height:${Math.round(x.instalaron * 100 / max)}%;min-height:${x.instalaron ? 2 : 0}px;border-radius:2px 2px 0 0"></div>
       <div style="flex:1;background:#2FB88B;height:${Math.round(x.avisos * 100 / max)}%;min-height:${x.avisos ? 2 : 0}px;border-radius:2px 2px 0 0"></div></div>`).join('')}</div>` : '';
+  const promo = renderPromoApp(d.promo, pct);
   const nota = `<div style="font-size:11.5px;color:var(--texto-suave);margin-top:12px">Avisos enviados en total: <b>${d.avisos_enviados}</b>. «Instalaron» cuenta dispositivos que abrieron el app desde la pantalla de inicio. Una persona con dos dispositivos cuenta dos veces. El navegador no avisa cuando se desinstala el app: quien la borró deja de usarla y sale de «últimos 30 días».</div>`;
-  return kpis + tabla + barras + nota;
+  return kpis + tabla + barras + promo + nota;
+}
+
+// Embudo de la invitación a instalar el app al pie del teaser de Sofi (últimos 30 días).
+function renderPromoApp(p, pct) {
+  if (p === undefined) return '';
+  if (p === null) return '<div class="vacio-panel" style="margin-top:14px">Promoción del app en el teaser: falta ejecutar <b>migracion_promo_app.sql</b>.</div>';
+  const q = p.teaser_qr || {}, b = p.teaser_boton || {};
+  const celda = (n, base) => `${n}${base != null ? ` <span style="color:var(--texto-suave)">(${pct(n, base)})</span>` : ''}`;
+  return `<h2 style="margin:18px 0 8px;font-size:13px">Invitación a instalar en el teaser <span class="sub">últimos 30 días · % sobre el paso anterior</span></h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:right;color:var(--texto-suave);font-size:12px">
+      <th style="text-align:left;font-weight:600">Dónde</th><th>Vieron el teaser</th><th>Tocaron</th><th>Llegaron a instalar</th><th>Instalaron</th></tr></thead><tbody>
+      <tr><td>💻 Computadora (QR)</td><td style="text-align:right">${q.visto || 0}</td><td style="text-align:right;color:var(--texto-suave)">–</td>
+        <td style="text-align:right">${celda(q.llegada || 0, q.visto || 0)}</td><td style="text-align:right">${celda(q.instalaron || 0, q.llegada || 0)}</td></tr>
+      <tr><td>📱 Celular (botón)</td><td style="text-align:right">${b.visto || 0}</td><td style="text-align:right">${celda(b.clic || 0, b.visto || 0)}</td>
+        <td style="text-align:right">${celda(b.llegada || 0, b.clic || 0)}</td><td style="text-align:right">${celda(b.instalaron || 0, b.llegada || 0)}</td></tr>
+    </tbody></table>
+    <div style="font-size:11.5px;color:var(--texto-suave);margin-top:6px">«Llegaron» = abrieron la página de instalación (en computadora, escaneando el QR con el celular). «Instalaron» se atribuye al primer origen del dispositivo; en iPhone el app instalada no comparte datos con Safari, así que esas instalaciones pueden no sumarse aquí (sí en el total de arriba).</div>`;
 }
 
 async function cargarApp() {
@@ -1504,12 +1749,10 @@ function renderDashboard(data, desde, hasta) {
       <div class="vacio-panel">Cargando…</div>
     </div>
 
-    <div class="panel" id="panelEncuesta">
+    <div class="panel" id="panelEncuestaResumen">
       <h2>Encuesta de satisfacción</h2>
       <div class="vacio-panel">Cargando…</div>
     </div>
-
-    <div class="panel" id="panelSeguimiento" style="display:none"></div>
 
     <div class="panel">
       <h2>Celulares únicos por día <span class="sub">personas distintas (por celular) que escribieron cada día · únicos en todo el período: <b>${data.celulares_unicos_total ?? 0}</b></span></h2>

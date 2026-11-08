@@ -55,6 +55,17 @@
   .msg .hora-hist { display: block; font-size: 10.5px; opacity: .65; margin-top: 3px; text-align: right; }
   .cab-hist { font-size: 12.5px; color: var(--texto-suave); margin: 8px 0 4px; }
   #historialVacio { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 20px; }
+  #historialFiltros { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  #historialFiltros button { border: 1px solid var(--borde); background: #fff; color: var(--texto); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  #historialFiltros button.activo { background: var(--azul); border-color: var(--azul); color: #fff; }
+  .historial-item .dir { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 1px 7px; margin-right: 6px; vertical-align: 1px; }
+  .historial-item .dir.entrante { background: #E8F1FB; color: #0A4C8C; }
+  .historial-item .dir.saliente { background: #FFF1E0; color: #8A4B00; }
+  .historial-item.contacto { cursor: default; background: #FBFAF7; border-style: dashed; }
+  .historial-item.contacto.abrible { cursor: pointer; }
+  .historial-item .estado-sms { font-weight: 600; }
+  .historial-item .estado-sms.no { color: #B04A00; }
+  .historial-item .estado-sms.si { color: #17663F; }
   #historialMensajesView { display: none; }
   #historialMensajesView.activa { display: block; }
   #historialMensajesView .volver { font-size: 12.5px; color: var(--azul); cursor: pointer; margin-bottom: 10px; display: inline-block; }
@@ -266,6 +277,8 @@
   #panel.en-carga > :not(#cargaPlan) { display: none !important; }
   #cargaPlan { display: none; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--fondo); }
   #panel.en-carga #cargaPlan { display: flex; }
+  .tarea-caja label.casilla { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-top: 12px; cursor: pointer; }
+  .tarea-caja label.casilla input { width: 16px; height: 16px; margin: 0; }
   .tarea-caja textarea { width: 100%; box-sizing: border-box; padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; font: inherit; font-size: 13.5px; min-height: 70px; resize: vertical; }
   .carga-item { font-size: 13px; padding: 8px 0; border-top: 1px solid var(--borde); }
   .carga-item:first-child { border-top: none; }
@@ -831,12 +844,13 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
           </div>
           <div class="tarea-caja">
             <h4>1. Busca el plan de este DNI en el sistema de Sanitas y descarga el PDF</h4>
-            <label for="tarPdf">2. Sube el PDF del plan</label>
-            <input type="file" id="tarPdf" accept="application/pdf,.pdf">
+            <label for="tarPdf">2. Sube el PDF del plan (si tiene varios planes, selecciónalos todos)</label>
+            <input type="file" id="tarPdf" accept="application/pdf,.pdf" multiple>
+            <div class="ayuda" id="tarPdfInfo"></div>
             <label for="tarCodigo">Código del plan (opcional)</label>
             <input type="text" id="tarCodigo" list="tarCodigos" maxlength="60" placeholder="Ej. el código del plan o del contrato">
             <datalist id="tarCodigos"></datalist>
-            <div class="ayuda">Con el código, el próximo afiliado con el mismo plan lo recibe sin volver a subirlo. Si el plan ya fue cargado antes, elige su código y no hace falta subir el PDF.</div>
+            <div class="ayuda">Con el código, el próximo afiliado con el mismo plan lo recibe sin volver a subirlo. Si el plan ya fue cargado antes, elige su código y no hace falta subir el PDF. Con varios PDF, el código y el nombre no se usan.</div>
             <label for="tarNombre">Nombre del plan (opcional)</label>
             <input type="text" id="tarNombre" maxlength="150" placeholder="Si lo dejas vacío, se toma del PDF">
             <div class="tarea-acciones">
@@ -870,12 +884,15 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         </div>
         <div class="tarea-cuerpo">
           <div class="tarea-caja">
-            <label for="cargaPdf">PDF del plan</label>
-            <input type="file" id="cargaPdf" accept="application/pdf,.pdf">
-            <div class="ayuda">Si ese PDF ya fue cargado antes, no se vuelve a leer: se usa el mismo plan al instante.</div>
+            <label for="cargaPdf">PDF del plan (puedes seleccionar varios)</label>
+            <input type="file" id="cargaPdf" accept="application/pdf,.pdf" multiple>
+            <div class="ayuda" id="cargaPdfInfo"></div>
+            <div class="ayuda">Si un PDF ya fue cargado antes, no se vuelve a leer: se usa el mismo plan al instante. Si el afiliado tiene varios planes, selecciona todos sus PDF.</div>
             <label for="cargaDnis">DNI de los afiliados (opcional)</label>
             <textarea id="cargaDnis" placeholder="Uno por línea, o separados por comas"></textarea>
-            <div class="ayuda">Quedan con este plan desde ya. Si lo dejas vacío, el plan queda cargado y, cuando un afiliado lo pida, lo atiendes subiendo el mismo PDF o eligiendo su código.</div>
+            <div class="ayuda">Los planes se SUMAN a los que ya tengan. Si lo dejas vacío, el plan queda cargado y, cuando un afiliado lo pida, lo atiendes subiendo el mismo PDF o eligiendo su código.</div>
+            <label class="casilla"><input type="checkbox" id="cargaReemplazar"> Reemplazar los planes que ya tienen estos DNI</label>
+            <div class="ayuda">Úsalo para corregir un error: estos DNI quedan SOLO con los planes de esta carga.</div>
             <label for="cargaCodigo">Código del plan (opcional)</label>
             <input type="text" id="cargaCodigo" list="tarCodigos" maxlength="60" placeholder="Ej. el código del plan o del contrato">
             <div class="ayuda">Sin PDF: elige el código de un plan ya cargado para asignarlo a los DNI.</div>
@@ -972,6 +989,11 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <div id="modalHistorial">
       <h3>Historial de conversaciones</h3>
       <div id="historialListaView">
+        <div id="historialFiltros" role="group" aria-label="Filtrar historial">
+          <button type="button" data-hf="todo" class="activo">Todo</button>
+          <button type="button" data-hf="entrante">📥 Entrantes</button>
+          <button type="button" data-hf="saliente">📤 Salientes</button>
+        </div>
         <div id="historialAgrupado"></div>
         <div id="historialVacio" style="display:none;">Este usuario no tiene conversaciones anteriores.</div>
       </div>
@@ -2465,7 +2487,8 @@ function conectarWs() {
         etiquetasDisponibles = p.etiquetas || [];
         break;
       case 'historial_usuario':
-        renderHistorialAgrupado(p.conversaciones || []);
+        historialDatos = { conversaciones: p.conversaciones || [], contactos: p.contactos || [] };
+        renderHistorialAgrupado(historialDatos.conversaciones, historialDatos.contactos);
         break;
       case 'mensajes_conversacion_pasada':
         if (lecturaId && String(p.conversacion_id) === lecturaId) pintarLectura(p.mensajes || []);
@@ -3011,6 +3034,11 @@ document.getElementById('btnHistorialUsuario').onclick = () => {
   if (activaId === null || !ws) return;
   document.getElementById('historialListaView').style.display = 'block';
   document.getElementById('historialMensajesView').classList.remove('activa');
+  // Cada vez que se abre: filtro en "Todo" y sin lo del cliente anterior mientras llega lo nuevo.
+  historialFiltro = 'todo';
+  document.querySelectorAll('#historialFiltros [data-hf]').forEach(x => x.classList.toggle('activo', x.dataset.hf === 'todo'));
+  document.getElementById('historialAgrupado').innerHTML = '<div style="color:var(--texto-suave);font-size:13px;padding:10px">Cargando…</div>';
+  document.getElementById('historialVacio').style.display = 'none';
   ws.send(JSON.stringify({ type: 'obtener_historial_usuario', payload: { conversacion_id: Number(activaId) } }));
   document.getElementById('modalHistorialOverlay').classList.add('activa');
 };
@@ -3156,20 +3184,42 @@ function formatearHoraCorta(iso) {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
-function renderHistorialAgrupado(conversacionesPasadas) {
+// Historial del cliente: sus conversaciones (📥 entrantes = nos buscó; 📤 salientes = las abrió un SMS que le
+// mandamos) y cada SMS con el que lo contactamos, aunque no lo haya abierto. Se filtra con los botones de arriba.
+var historialDatos = { conversaciones: [], contactos: [] };
+var historialFiltro = 'todo';
+document.querySelectorAll('#historialFiltros [data-hf]').forEach(b => b.onclick = () => {
+  historialFiltro = b.dataset.hf;
+  document.querySelectorAll('#historialFiltros [data-hf]').forEach(x => x.classList.toggle('activo', x === b));
+  renderHistorialAgrupado(historialDatos.conversaciones, historialDatos.contactos);
+});
+function abrirConversacionHistorial(id) {
+  document.getElementById('btnDescargarPdfHistorial').href =
+    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+  ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: id } }));
+}
+function renderHistorialAgrupado(conversacionesPasadas, contactos) {
   const cont = document.getElementById('historialAgrupado');
   const vacio = document.getElementById('historialVacio');
   cont.innerHTML = '';
+  const items = [
+    ...conversacionesPasadas.map(c => ({ tipo: 'conv', fecha: c.iniciado_en, dir: c.direccion || 'entrante', c })),
+    ...(contactos || []).map(k => ({ tipo: 'sms', fecha: k.enviado_en, dir: 'saliente', k })),
+  ].filter(x => x.fecha && (historialFiltro === 'todo' || x.dir === historialFiltro))
+   .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
-  if (conversacionesPasadas.length === 0) {
+  if (items.length === 0) {
+    vacio.textContent = historialFiltro === 'todo' ? 'Este usuario no tiene conversaciones anteriores.'
+      : historialFiltro === 'entrante' ? 'No hay conversaciones entrantes.' : 'No hay contactos salientes.';
     vacio.style.display = 'block';
     return;
   }
   vacio.style.display = 'none';
 
   let diaActual = null;
-  conversacionesPasadas.forEach(c => {
-    const dia = formatearFechaDia(c.iniciado_en);
+  const motivos = { celular: '📱 mismo celular', dni: '🪪 mismo DNI', navegador: '💻 mismo dispositivo' };
+  items.forEach(x => {
+    const dia = formatearFechaDia(x.fecha);
     if (dia !== diaActual) {
       diaActual = dia;
       const header = document.createElement('div');
@@ -3178,18 +3228,29 @@ function renderHistorialAgrupado(conversacionesPasadas) {
       cont.appendChild(header);
     }
     const item = document.createElement('div');
-    item.className = 'historial-item';
-    const motivos = { celular: '📱 mismo celular', dni: '🪪 mismo DNI', navegador: '💻 mismo dispositivo' };
-    const tags = (c.coincide || []).map(k => `<span class="coincide">${motivos[k] || escapeHtml(k)}</span>`).join('');
-    item.innerHTML = `
-      <div class="campana">${escapeHtml(c.campana || 'Sin campaña')} ${c.etiqueta ? '· ' + escapeHtml(c.etiqueta) : ''}</div>
-      <div class="meta">#${escapeHtml(String(c.conversacion_id))} · ${formatearHoraCorta(c.iniciado_en)} — ${escapeHtml(c.estado)}${tags}</div>
-    `;
-    item.onclick = () => {
-      document.getElementById('btnDescargarPdfHistorial').href =
-        `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(c.conversacion_id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
-      ws.send(JSON.stringify({ type: 'obtener_mensajes_conversacion_pasada', payload: { conversacion_id: c.conversacion_id } }));
-    };
+    if (x.tipo === 'conv') {
+      const c = x.c;
+      item.className = 'historial-item';
+      const tags = (c.coincide || []).map(k => `<span class="coincide">${motivos[k] || escapeHtml(k)}</span>`).join('');
+      const dir = x.dir === 'saliente'
+        ? `<span class="dir saliente" title="La abrió un SMS que le enviamos">📤 Saliente</span>`
+        : `<span class="dir entrante" title="El cliente nos escribió por su cuenta">📥 Entrante</span>`;
+      item.innerHTML = `
+        <div class="campana">${dir}${escapeHtml(c.campana || 'Sin campaña')} ${c.etiqueta ? '· ' + escapeHtml(c.etiqueta) : ''}</div>
+        <div class="meta">#${escapeHtml(String(c.conversacion_id))} · ${formatearHoraCorta(c.iniciado_en)} — ${escapeHtml(c.estado)}${c.via ? ' · ' + escapeHtml(c.via) : ''}${tags}</div>`;
+      item.onclick = () => abrirConversacionHistorial(c.conversacion_id);
+    } else {
+      const k = x.k;
+      const abrible = k.conversacion_id && !k.es_actual;
+      item.className = 'historial-item contacto' + (abrible ? ' abrible' : '');
+      const estado = k.abierto_en
+        ? `<span class="estado-sms si">✅ Lo abrió ${formatearHoraCorta(k.abierto_en)}${k.es_actual ? ' (es esta conversación)' : k.conversacion_id ? ` → conversación #${escapeHtml(String(k.conversacion_id))}` : ''}</span>`
+        : `<span class="estado-sms no">⏳ No lo abrió</span>`;
+      item.innerHTML = `
+        <div class="campana"><span class="dir saliente">📤 ${escapeHtml(k.tipo_texto)}</span>${k.detalle ? (k.tipo === 'enlace_directo' ? 'hacia ' : '') + escapeHtml(k.detalle) : ''}</div>
+        <div class="meta">${formatearHoraCorta(k.enviado_en)} · enviado por ${escapeHtml(k.enviado_por || '¿?')}${k.rol === 'supervisor' ? ' (supervisor)' : ''} — ${estado}</div>`;
+      if (abrible) item.onclick = () => abrirConversacionHistorial(k.conversacion_id);
+    }
     cont.appendChild(item);
   });
 }
@@ -3588,10 +3649,29 @@ function renderListaTareas(lista, vacio) {
     lista.appendChild(div);
   });
 }
+// Sube uno o varios PDF de planes al bucket (uno por uno) y devuelve sus rutas.
+async function subirPdfsPlan(archivos, est) {
+  const rutas = [];
+  for (let i = 0; i < archivos.length; i++) {
+    est.textContent = archivos.length > 1 ? `Subiendo PDF ${i + 1} de ${archivos.length}…` : 'Subiendo el PDF…';
+    const fd = new FormData();
+    fd.append('file', archivos[i], archivos[i].name);
+    const r = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${tokenGuardado}` } });
+    if (!r.ok) throw new Error(`${archivos[i].name}: ` + ((await r.json().catch(() => ({}))).detail || 'No se pudo subir el archivo'));
+    rutas.push((await r.json()).ruta);
+  }
+  return rutas;
+}
+function infoPdfs(input, destino) {
+  const n = input.files.length;
+  destino.textContent = n > 1 ? `${n} PDF seleccionados: ${[...input.files].map(a => a.name).join(' · ')}` : '';
+}
 function abrirTarea(id) {
   salirLectura();
+  salirCarga();   // si estaba abierto "Cargar un plan", su panel tapaba la tarea
   tareaActivaId = String(id);
   document.getElementById('tarPdf').value = '';
+  document.getElementById('tarPdfInfo').textContent = '';
   document.getElementById('tarCodigo').value = '';
   document.getElementById('tarNombre').value = '';
   document.getElementById('tarRechazo').style.display = 'none';
@@ -3633,28 +3713,21 @@ document.getElementById('tabTareas').onclick = () => {
 };
 document.getElementById('btnEnviarPlan').onclick = async () => {
   const id = Number(tareaActivaId);
-  const archivo = document.getElementById('tarPdf').files[0];
+  const archivos = [...document.getElementById('tarPdf').files];
   const codigo = document.getElementById('tarCodigo').value.trim();
   const nombre = document.getElementById('tarNombre').value.trim();
   const est = document.getElementById('tarEstado');
   est.className = 'tarea-estado';
-  if (!archivo && !codigo) { est.className = 'tarea-estado error'; est.textContent = 'Sube el PDF del plan o elige el código de un plan ya cargado.'; return; }
-  if (archivo && !/\.pdf$/i.test(archivo.name)) { est.className = 'tarea-estado error'; est.textContent = 'El archivo debe ser un PDF.'; return; }
+  if (!archivos.length && !codigo) { est.className = 'tarea-estado error'; est.textContent = 'Sube el PDF del plan o elige el código de un plan ya cargado.'; return; }
+  if (archivos.some(a => !/\.pdf$/i.test(a.name))) { est.className = 'tarea-estado error'; est.textContent = 'Los archivos deben ser PDF.'; return; }
+  if (archivos.length > 6) { est.className = 'tarea-estado error'; est.textContent = 'Máximo 6 PDF a la vez.'; return; }
   if (!ws || ws.readyState !== WebSocket.OPEN) { est.className = 'tarea-estado error'; est.textContent = 'Sin conexión. Intenta de nuevo en un momento.'; return; }
   const btn = document.getElementById('btnEnviarPlan');
   btn.disabled = true;
-  let ruta = null;
   try {
-    if (archivo) {
-      est.textContent = 'Subiendo el PDF…';
-      const fd = new FormData();
-      fd.append('file', archivo, archivo.name);
-      const r = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${tokenGuardado}` } });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'No se pudo subir el archivo');
-      ruta = (await r.json()).ruta;
-    }
+    const rutas = await subirPdfsPlan(archivos, est);
     est.textContent = 'Enviando…';
-    ws.send(JSON.stringify({ type: 'plan_atender', payload: { solicitud_id: id, ruta, codigo_plan: codigo, nombre_plan: nombre, archivo_nombre: archivo ? archivo.name : null } }));
+    ws.send(JSON.stringify({ type: 'plan_atender', payload: { solicitud_id: id, rutas, codigo_plan: codigo, nombre_plan: nombre, archivo_nombres: archivos.map(a => a.name) } }));
   } catch (e) {
     est.className = 'tarea-estado error'; est.textContent = '⚠️ ' + e.message; btn.disabled = false;
   }
@@ -3683,7 +3756,7 @@ function resultadoPlan(p) {
     return;
   }
   if (p.procesar) { if (esActiva) pintarTarea(); return; }   // queda digitalizando
-  const msg = p.reutilizado ? `✅ Ese PDF ya estaba cargado${p.nombre ? ' (' + p.nombre + ')' : ''}: se asignó el mismo plan al DNI de la tarea #${p.solicitud_id}, sin volver a digitalizarlo. Ya le avisamos al cliente.`
+  const msg = p.reutilizado ? `✅ Esos PDF ya estaban cargados${p.nombre ? ' (' + p.nombre + ')' : ''}: se asignaron al DNI de la tarea #${p.solicitud_id}, sin volver a digitalizarlos. Ya le avisamos al cliente.`
             : p.digitalizado ? `✅ Plan de la tarea #${p.solicitud_id} cargado${p.nombre ? ' (' + p.nombre + ')' : ''}. Ya le avisamos al cliente.`
             : `✅ Tarea #${p.solicitud_id} lista. Ya le avisamos al cliente.`;
   if (esActiva) salirTarea();
@@ -3749,6 +3822,8 @@ function salirCarga() {
   document.getElementById('panel').classList.remove('en-carga');
 }
 document.getElementById('btnCerrarCarga').onclick = () => { salirCarga(); renderLista(); };
+document.getElementById('cargaPdf').onchange = (e) => infoPdfs(e.target, document.getElementById('cargaPdfInfo'));
+document.getElementById('tarPdf').onchange = (e) => infoPdfs(e.target, document.getElementById('tarPdfInfo'));
 function pintarCargas() {
   const caja = document.getElementById('cargaHistorialCaja');
   caja.style.display = cargasPlan.length ? '' : 'none';
@@ -3757,31 +3832,28 @@ function pintarCargas() {
     + `<b>${escapeHtml(c.archivo)}</b>${c.dnis ? ' · ' + c.dnis + ' DNI' : ''}<br>${escapeHtml(c.texto)}</div>`).join('');
 }
 document.getElementById('btnCargarPlan').onclick = async () => {
-  const archivo = document.getElementById('cargaPdf').files[0];
+  const archivos = [...document.getElementById('cargaPdf').files];
+  const reemplazar = document.getElementById('cargaReemplazar').checked;
   const dnis = document.getElementById('cargaDnis').value.trim();
   const codigo = document.getElementById('cargaCodigo').value.trim();
   const nombre = document.getElementById('cargaNombre').value.trim();
   const est = document.getElementById('cargaEstado');
   const btn = document.getElementById('btnCargarPlan');
   est.className = 'tarea-estado';
-  if (!archivo && !(codigo && dnis)) { est.className = 'tarea-estado error'; est.textContent = 'Sube el PDF del plan, o elige el código de un plan ya cargado y escribe los DNI.'; return; }
-  if (archivo && !/\.pdf$/i.test(archivo.name)) { est.className = 'tarea-estado error'; est.textContent = 'El archivo debe ser un PDF.'; return; }
+  if (!archivos.length && !(codigo && dnis)) { est.className = 'tarea-estado error'; est.textContent = 'Sube el PDF del plan, o elige el código de un plan ya cargado y escribe los DNI.'; return; }
+  if (archivos.some(a => !/\.pdf$/i.test(a.name))) { est.className = 'tarea-estado error'; est.textContent = 'Los archivos deben ser PDF.'; return; }
+  if (archivos.length > 6) { est.className = 'tarea-estado error'; est.textContent = 'Máximo 6 PDF a la vez.'; return; }
+  if (reemplazar && !dnis) { est.className = 'tarea-estado error'; est.textContent = 'Para reemplazar, escribe los DNI.'; return; }
   if (!ws || ws.readyState !== WebSocket.OPEN) { est.className = 'tarea-estado error'; est.textContent = 'Sin conexión. Intenta de nuevo en un momento.'; return; }
   btn.disabled = true;
   const ref = 'c' + Date.now();
   const cantidad = dnis ? dnis.split(/[\s,;]+/).filter(Boolean).length : 0;
   try {
-    let ruta = null;
-    if (archivo) {
-      est.textContent = 'Subiendo el PDF…';
-      const fd = new FormData();
-      fd.append('file', archivo, archivo.name);
-      const r = await fetch(`${urlBaseGuardada}/upload`, { method: 'POST', body: fd, headers: { Authorization: `Bearer ${tokenGuardado}` } });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'No se pudo subir el archivo');
-      ruta = (await r.json()).ruta;
-    }
-    cargasPlan.push({ ref, archivo: archivo ? archivo.name : 'Código ' + codigo, dnis: cantidad, estado: 'procesando', texto: 'Enviando…' });
-    ws.send(JSON.stringify({ type: 'plan_cargar', payload: { ref, ruta, dnis, codigo_plan: codigo, nombre_plan: nombre, archivo_nombre: archivo ? archivo.name : null } }));
+    const rutas = await subirPdfsPlan(archivos, est);
+    const titulo = archivos.length > 1 ? `${archivos.length} PDF (${archivos.map(a => a.name).join(', ')})`
+                 : archivos.length ? archivos[0].name : 'Código ' + codigo;
+    cargasPlan.push({ ref, archivo: titulo, dnis: cantidad, estado: 'procesando', texto: 'Enviando…' });
+    ws.send(JSON.stringify({ type: 'plan_cargar', payload: { ref, rutas, dnis, reemplazar, codigo_plan: codigo, nombre_plan: nombre, archivo_nombres: archivos.map(a => a.name) } }));
     est.textContent = '';
     pintarCargas();
   } catch (e) {
@@ -3796,14 +3868,19 @@ function resultadoCarga(p) {
     c.texto = 'Leyendo el plan con IA (1 a 3 minutos). Puedes seguir con otra cosa: te avisamos al terminar.';
     // Formulario listo para el siguiente plan
     ['cargaPdf', 'cargaDnis', 'cargaCodigo', 'cargaNombre'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('cargaReemplazar').checked = false;
+    document.getElementById('cargaPdfInfo').textContent = '';
   } else if (!p.ok) {
     c.estado = 'error'; c.texto = p.motivo || 'No se pudo cargar el plan.';
     if (!cargaAbierta) alert(`Carga de ${c.archivo}: ${c.texto}`);
   } else {
     c.estado = 'ok';
-    const como = p.reutilizado ? 'Ese PDF ya estaba cargado: se usó el mismo plan' : p.digitalizado ? 'Plan digitalizado' : 'Plan asignado';
+    const varios = (p.planes || 1) > 1;
+    const como = p.reutilizado ? (varios ? 'Esos PDF ya estaban cargados: se usaron los mismos planes' : 'Ese PDF ya estaba cargado: se usó el mismo plan')
+               : p.digitalizado ? (varios ? `${p.planes} planes listos` : 'Plan digitalizado') : 'Plan asignado';
     c.texto = `${como}${p.nombre ? ' (' + p.nombre + ')' : ''}.`
-      + (p.dnis ? ` ${p.dnis} DNI con este plan.` : ' Quedó cargado, sin DNI asignados.')
+      + (p.dnis ? ` ${p.dnis} DNI ${p.reemplazar ? 'quedaron SOLO con ' + (varios ? 'estos planes' : 'este plan') : 'con ' + (varios ? 'estos planes' : 'este plan')}.`
+                : ' Quedó cargado, sin DNI asignados.')
       + (p.avisados ? ` Avisamos a ${p.avisados} cliente(s) que ya lo habían pedido.` : '');
     mostrarAvisoTarea('✅ ' + c.archivo + ': ' + c.texto);
   }
@@ -4322,6 +4399,79 @@ window.sofi2fa = function (data, urlBase) {
         .observe(ch, { attributes: true, attributeFilter: ['class'] });
     }
   }
+})();
+</script>
+<!-- ===== Ventanas: botón ✕ fijo arriba a la derecha, en todas (compartido asesor / supervisor) =====
+     Cada ventana es un fondo con id "...Overlay" y un recuadro adentro. El recuadro se desplaza por dentro (nunca
+     más alto que la pantalla) y el ✕ queda siempre visible arriba, sin tener que bajar hasta "Cerrar". El ✕ hace lo
+     mismo que el botón "Cerrar"/"Cancelar" de esa ventana (así se limpia lo que esa ventana tenga que limpiar).
+     Esc también cierra la ventana de más arriba. -->
+<style>
+  [id$="Overlay"]:not(#lightboxOverlay) > div {
+    position: relative; max-height: calc(100vh - 24px) !important; max-height: calc(100dvh - 24px) !important; overflow-y: auto !important;
+  }
+  .ventana-barra { position: sticky; top: 0; height: 0; z-index: 20; flex: none; }
+  .x-ventana {
+    position: absolute; top: 0; right: -6px; width: 34px; height: 34px; border: none; border-radius: 50%;
+    background: #EEF2F8; color: #1A2B3C; font-size: 17px; line-height: 1; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(16,35,58,.12);
+  }
+  .x-ventana:hover { background: #DDE5F1; }
+  .x-ventana:focus-visible { outline: 3px solid rgba(0,61,165,.45); outline-offset: 2px; }
+  .ventana-barra + h3, .ventana-barra + h2 { padding-right: 42px !important; min-height: 34px; margin-top: 0 !important; display: flex; align-items: center; }
+  .ventana-barra + :not(h3):not(h2) { margin-top: 34px !important; }
+  /* Recuadros sin margen interno (p. ej. el chat de «Ayudar en el bot»): el ✕ va dentro de la cabecera, a la derecha. */
+  .x-sin-relleno > .ventana-barra .x-ventana { top: 12px; right: 12px; }
+  .x-sin-relleno > .ventana-barra + * { margin-top: 0 !important; padding-right: 58px !important; }
+</style>
+<script>
+(function () {
+  function botonCerrar(caja) {
+    // El último botón "Cerrar" o "Cancelar" de la ventana (nunca uno de acción como "Cerrar conversación").
+    const botones = [...caja.querySelectorAll('button')].filter(b => !b.classList.contains('x-ventana'));
+    return botones.reverse().find(b => /^(cerrar|cancelar)$/i.test(b.textContent.trim()));
+  }
+  function cerrar(overlay) {
+    const caja = overlay.firstElementChild;
+    const b = caja && botonCerrar(caja);
+    if (b) { b.click(); return; }
+    overlay.classList.remove('activa', 'activo', 'abierto', 'visible');
+    overlay.style.display = 'none';
+  }
+  function preparar() {
+    document.querySelectorAll('[id$="Overlay"]').forEach(overlay => {
+      if (overlay.id === 'lightboxOverlay') return;           // el visor de imágenes ya tiene su ✕
+      const caja = overlay.firstElementChild;
+      if (!caja || caja.querySelector(':scope > .ventana-barra')) return;
+      const barra = document.createElement('div');
+      barra.className = 'ventana-barra';
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'x-ventana';
+      x.setAttribute('aria-label', 'Cerrar');
+      x.title = 'Cerrar';
+      x.textContent = '✕';
+      x.addEventListener('click', (e) => { e.stopPropagation(); cerrar(overlay); });
+      barra.appendChild(x);
+      caja.insertBefore(barra, caja.firstChild);
+      if ((parseFloat(getComputedStyle(caja).paddingLeft) || 0) < 10) caja.classList.add('x-sin-relleno');
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    // Escribiendo en un campo, Esc es para cancelar esa edición (p. ej. renombrar), no para cerrar la ventana.
+    const t = e.target;
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+    const abiertas = [...document.querySelectorAll('[id$="Overlay"]')].filter(o => getComputedStyle(o).display !== 'none');
+    if (!abiertas.length) return;
+    // La de más arriba: mayor z-index; a igual z-index, la última en la página.
+    abiertas.sort((a, b) => (parseInt(getComputedStyle(a).zIndex) || 0) - (parseInt(getComputedStyle(b).zIndex) || 0));
+    const arriba = abiertas[abiertas.length - 1];
+    if (arriba.id === 'lightboxOverlay') return;              // el visor maneja su propio Esc
+    e.preventDefault();
+    cerrar(arriba);
+  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', preparar); else preparar();
 })();
 </script>
 </body>

@@ -157,6 +157,19 @@
   // Llegó desde la tarjeta "Para volver a escribirnos" del chat (?instalar=1): la instalación va arriba, a la vista.
   (function () {
     const params = new URLSearchParams(location.search);
+    // Llegó por la promoción del teaser (QR en computadora o botón en celular): se cuenta la llegada una vez y se
+    // recuerda el origen para atribuirle la instalación (se envía con cada visita; el servidor guarda el primero).
+    const origen = params.get("origen");
+    if (/^teaser_(qr|boton)$/.test(origen || "")) {
+      try { if (!localStorage.getItem("sofi_app_origen")) localStorage.setItem("sofi_app_origen", origen); } catch (e) { /* nada */ }
+      fetch("/widget/promo-app", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evento: "llegada", origen }), keepalive: true }).catch(() => {});
+    }
+    if (params.has("origen")) {
+      params.delete("origen");
+      const sinOrigen = params.toString();
+      history.replaceState({}, "", location.pathname + (sinOrigen ? "?" + sinOrigen : "") + location.hash);
+    }
     if (params.get("instalar") !== "1") return;
     params.delete("instalar");
     const resto = params.toString();
@@ -208,7 +221,7 @@
     const caja = document.getElementById("avisos"), tit = document.getElementById("avisosTitulo"),
           txt = document.getElementById("avisosTexto"), acc = document.getElementById("avisosAcciones"), msg = document.getElementById("avisosMsg");
 
-    const visita = (keepalive) => post("/push/visita", { dispositivo_id: dispId, sesion_token: token(), modo, permiso: permisoActual(), url_abrir: urlAbrir }, keepalive)
+    const visita = (keepalive) => post("/push/visita", { dispositivo_id: dispId, sesion_token: token(), modo, permiso: permisoActual(), url_abrir: urlAbrir, origen: LS("sofi_app_origen") }, keepalive)
       .then((r) => r.ok).catch(() => false);
 
     function b64aU8(b64) {

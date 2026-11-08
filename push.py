@@ -223,14 +223,72 @@ def usuario_id_de_sesion(cur, sesion_token: str | None):
     return fila[0] if fila else None
 
 
+# ---------------------------------------------------------------------------
+# Promoción del app en el teaser de Sofi (sanitasperu.com). Contadores por día, sin datos personales:
+#   origen teaser_qr    -> computadora: el QR del pie del teaser (se escanea con el celular)
+#   origen teaser_boton -> celular: el botón "Agregar Sofi a mi pantalla de inicio" del pie del teaser
+#   eventos: visto (el teaser se mostró con la promoción), clic (tocó el botón), llegada (abrió /app desde ahí).
+# Las instalaciones salen de app_dispositivos.origen (el primer origen con el que llegó ese dispositivo).
+# ---------------------------------------------------------------------------
+ORIGENES_PROMO = {"teaser_qr", "teaser_boton"}
+EVENTOS_PROMO = {"visto", "clic", "llegada"}
+
+
+def origen_valido(origen) -> str | None:
+    return origen if origen in ORIGENES_PROMO else None
+
+
+def contar_promo(evento: str, origen: str) -> bool:
+    """Suma 1 al contador del día. False si el evento u origen no son válidos."""
+    if evento not in EVENTOS_PROMO or origen not in ORIGENES_PROMO:
+        return False
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO app_promo_eventos (dia, origen, evento, cantidad)
+                           VALUES ((NOW() AT TIME ZONE 'America/Lima')::date, %s, %s, 1)
+                           ON CONFLICT (dia, origen, evento) DO UPDATE SET cantidad = app_promo_eventos.cantidad + 1""",
+                        (origen, evento))
+        conn.commit()
+        return True
+    finally:
+        release_connection(conn)
+
+
+def _estadisticas_promo(cur) -> dict | None:
+    """Embudo de los últimos 30 días por origen: vieron, tocaron, llegaron, instalaron."""
+    cur.execute("SAVEPOINT sp_promo")
+    try:
+        cur.execute("""SELECT origen, evento, COALESCE(SUM(cantidad), 0) FROM app_promo_eventos
+                       WHERE dia >= (NOW() AT TIME ZONE 'America/Lima')::date - 29 GROUP BY 1, 2""")
+        filas = cur.fetchall()
+        cur.execute("""SELECT origen, COUNT(*) FILTER (WHERE instalada),
+                              COUNT(*) FILTER (WHERE instalada AND instalada_en >= NOW() - INTERVAL '7 days')
+                       FROM app_dispositivos WHERE origen IS NOT NULL
+                         AND creado_en >= NOW() - INTERVAL '30 days' GROUP BY 1""")
+        instal = {o: (int(i), int(i7)) for o, i, i7 in cur.fetchall()}
+        cur.execute("RELEASE SAVEPOINT sp_promo")
+    except Exception:  # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT sp_promo")   # falta migracion_promo_app.sql
+        return None
+    promo = {o: {"visto": 0, "clic": 0, "llegada": 0, "instalaron": instal.get(o, (0, 0))[0],
+                 "instalaron_7d": instal.get(o, (0, 0))[1]} for o in sorted(ORIGENES_PROMO)}
+    for o, e, n in filas:
+        if o in promo and e in EVENTOS_PROMO:
+            promo[o][e] = int(n)
+    return promo
+
+
 def registrar_visita(dispositivo_id: str, sesion_token: str | None, modo: str, permiso: str | None,
-                     user_agent: str, url_abrir: str | None = None) -> None:
+                     user_agent: str, url_abrir: str | None = None, origen: str | None = None) -> None:
     """Se llama cada vez que se abre el app (o el widget con avisos habilitados).
-    `modo`: 'app' (instalada, abierta como app), 'navegador' (pestaña) o 'widget' (sitio web)."""
+    `modo`: 'app' (instalada, abierta como app), 'navegador' (pestaña) o 'widget' (sitio web).
+    `origen`: de dónde llegó por primera vez (promoción del teaser); se guarda solo el primero."""
     if modo not in ("app", "navegador", "widget"):
         modo = "navegador"
     if permiso not in ("granted", "denied", "default", "no_soportado"):
         permiso = None
+    origen = origen_valido(origen)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -250,6 +308,15 @@ def registrar_visita(dispositivo_id: str, sesion_token: str | None, modo: str, p
                      visitas = app_dispositivos.visitas + 1""",
                 (dispositivo_id, usuario_id, _plataforma(user_agent), modo, modo == "app", permiso,
                  (url_abrir or None) and url_abrir[:500]))
+            if origen:
+                # Columna nueva (migracion_promo_app.sql): si aún no existe, la visita se registra igual sin origen.
+                cur.execute("SAVEPOINT sp_origen")
+                try:
+                    cur.execute("""UPDATE app_dispositivos SET origen = %s
+                                   WHERE dispositivo_id = %s AND origen IS NULL""", (origen, dispositivo_id))
+                    cur.execute("RELEASE SAVEPOINT sp_origen")
+                except Exception:  # noqa: BLE001
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_origen")
             # Si el navegador ya no tiene permiso, la suscripción guardada no sirve.
             if permiso in ("denied", "default"):
                 cur.execute("""UPDATE app_dispositivos SET push_activo = FALSE,
@@ -456,6 +523,7 @@ def estadisticas() -> dict:
                    FROM app_dispositivos WHERE creado_en >= NOW() - INTERVAL '30 days'
                    GROUP BY 1 ORDER BY 1""")
             r["por_dia"] = [{"dia": d.isoformat(), "instalaron": int(i), "avisos": int(a)} for d, i, a in cur.fetchall()]
+            r["promo"] = _estadisticas_promo(cur)
         for k, v in list(r.items()):
             if isinstance(v, (int,)) or hasattr(v, "__int__") and not isinstance(v, (list, dict, str, bool)):
                 r[k] = int(v)
