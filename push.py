@@ -227,10 +227,11 @@ def usuario_id_de_sesion(cur, sesion_token: str | None):
 # Promoción del app en el teaser de Sofi (sanitasperu.com). Contadores por día, sin datos personales:
 #   origen teaser_qr    -> computadora: el QR del pie del teaser (se escanea con el celular)
 #   origen teaser_boton -> celular: el botón "Agregar Sofi a mi pantalla de inicio" del pie del teaser
+#   origen teaser_pc    -> computadora: el botón "Instalar en esta computadora" (al lado del QR)
 #   eventos: visto (el teaser se mostró con la promoción), clic (tocó el botón), llegada (abrió /app desde ahí).
 # Las instalaciones salen de app_dispositivos.origen (el primer origen con el que llegó ese dispositivo).
 # ---------------------------------------------------------------------------
-ORIGENES_PROMO = {"teaser_qr", "teaser_boton"}
+ORIGENES_PROMO = {"teaser_qr", "teaser_boton", "teaser_pc"}
 EVENTOS_PROMO = {"visto", "clic", "llegada"}
 
 

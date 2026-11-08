@@ -24,6 +24,7 @@ p.ej. [{"type": "mensaje_bot", "payload": {...}}, {"type": "en_cola", "payload":
 import os
 import re
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 from db import get_connection, release_connection
@@ -447,6 +448,32 @@ def _opciones_visibles(cur, conversacion_id: int, opciones, variables: dict = No
     return visibles
 
 
+logger = logging.getLogger(__name__)
+
+# A dónde vuelve quien termina un flujo cuando la campaña de destino ya cerró (un nodo derivar_asesor puede
+# indicar otro en accion_config.fuera_horario_codigo).
+NODO_MENU_FUERA_HORARIO = "webchat_menu_principal"
+
+
+def _fuera_de_horario_campana(cur, campana_id) -> str | None:
+    """Mensaje de fuera de horario si la campaña está cerrada ahora; None si está abierta o no se pudo saber
+    (ante la duda se deriva como siempre)."""
+    if not campana_id:
+        return None
+    try:
+        cur.execute("SELECT codigo FROM campanas WHERE id = %s", (campana_id,))
+        fila = cur.fetchone()
+        if not fila or not fila[0]:
+            return None
+        r = validar_horario_consultas({"campana_codigo": fila[0]}, {}) or {}
+        resp = r.get("response") or {}
+        if r.get("status") == 200 and resp.get("outOfTime"):
+            return resp.get("messageOutOfTime") or "En este momento estamos fuera de horario de atención."
+    except Exception:
+        logger.exception("No se pudo validar el horario de la campaña %s al derivar", campana_id)
+    return None
+
+
 def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> list:
     """Ejecuta nodos en cadena hasta toparse con uno que requiera input del usuario
     (captura_dato, menu) o uno terminal (cierre, derivar_asesor). Devuelve la lista
@@ -651,6 +678,18 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             nodo_actual = nodo["subflujo_codigo"]
 
         elif tipo == "derivar_asesor":
+            # El horario se revisa al inicio de cada flujo, pero el cliente puede terminarlo horas después (p. ej.
+            # empezó la receta a las 5 pm y la subió a las 10 pm). Si la campaña ya cerró, NO se deja en cola:
+            # recibe el mensaje de fuera de horario de la campaña y vuelve al menú principal.
+            texto_fuera = _fuera_de_horario_campana(cur, nodo["destino_campana_id"])
+            if texto_fuera:
+                eventos.append({"type": "mensaje_bot", "payload": {"texto": texto_fuera}})
+                _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto_fuera)
+                logger.info("Conversación %s: campaña %s fuera de horario al derivar; vuelve al menú",
+                            conversacion_id, nodo["destino_campana_id"])
+                nodo_actual = ((nodo["accion_config"] or {}).get("fuera_horario_codigo")
+                               or NODO_MENU_FUERA_HORARIO)
+                continue
             texto = sustituir_variables(nodo["texto"], variables)
             eventos.append({"type": "mensaje_bot", "payload": {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables)}})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)

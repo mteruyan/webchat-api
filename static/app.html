@@ -160,7 +160,7 @@
     // Llegó por la promoción del teaser (QR en computadora o botón en celular): se cuenta la llegada una vez y se
     // recuerda el origen para atribuirle la instalación (se envía con cada visita; el servidor guarda el primero).
     const origen = params.get("origen");
-    if (/^teaser_(qr|boton)$/.test(origen || "")) {
+    if (/^teaser_(qr|boton|pc)$/.test(origen || "")) {
       try { if (!localStorage.getItem("sofi_app_origen")) localStorage.setItem("sofi_app_origen", origen); } catch (e) { /* nada */ }
       fetch("/widget/promo-app", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ evento: "llegada", origen }), keepalive: true }).catch(() => {});

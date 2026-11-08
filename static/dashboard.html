@@ -807,7 +807,7 @@ function renderRendimiento(d, desde, hasta) {
   let html = `<div class="panel"><h2>Ahora <span class="sub">en vivo · revisión ${escapaHtml(a.revision || '')} · encendido hace ${fmtDuracion(a.minutos_encendido)}</span></h2>
     <div class="kpis">
       ${kpiRend(fmtMb(a.memoria_mb), 'Memoria en uso', `${memPct == null ? '' : Math.round(memPct) + '% '}de ${fmtMb(limite)}${a.fuente_memoria === 'contenedor' ? '' : ' · medida del proceso'}`, semaforo(memPct, 70, 85))}
-      ${kpiRend(fmtCpu(a.cpu_pct), 'CPU', 'últimos 5 segundos', semaforo(a.cpu_pct, 60, 85))}
+      ${kpiRend(fmtCpu(a.cpu_pct), 'CPU', `últimos 5 segundos${a.fuente_cpu === 'proceso' ? ' · medida del proceso' : ''}`, semaforo(a.cpu_pct, 60, 85))}
       ${kpiRend(`${a.bd_en_uso ?? '–'} / ${a.bd_max ?? 20}`, 'Conexiones a la base', 'del webchat, en uso ahora', semaforo((a.bd_en_uso || 0) / (a.bd_max || 20) * 100, 60, 80))}
       ${kpiRend(a.ws_widget ?? '–', 'Clientes con el chat abierto', `${a.ws_asesores ?? 0} asesores · ${a.ws_supervisores ?? 0} supervisores`)}
     </div></div>`;
@@ -1696,13 +1696,15 @@ function renderApp(d) {
 function renderPromoApp(p, pct) {
   if (p === undefined) return '';
   if (p === null) return '<div class="vacio-panel" style="margin-top:14px">Promoción del app en el teaser: falta ejecutar <b>migracion_promo_app.sql</b>.</div>';
-  const q = p.teaser_qr || {}, b = p.teaser_boton || {};
+  const q = p.teaser_qr || {}, b = p.teaser_boton || {}, c = p.teaser_pc || {};
   const celda = (n, base) => `${n}${base != null ? ` <span style="color:var(--texto-suave)">(${pct(n, base)})</span>` : ''}`;
   return `<h2 style="margin:18px 0 8px;font-size:13px">Invitación a instalar en el teaser <span class="sub">últimos 30 días · % sobre el paso anterior</span></h2>
     <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:right;color:var(--texto-suave);font-size:12px">
       <th style="text-align:left;font-weight:600">Dónde</th><th>Vieron el teaser</th><th>Tocaron</th><th>Llegaron a instalar</th><th>Instalaron</th></tr></thead><tbody>
-      <tr><td>💻 Computadora (QR)</td><td style="text-align:right">${q.visto || 0}</td><td style="text-align:right;color:var(--texto-suave)">–</td>
+      <tr><td>💻→📱 Computadora (QR al celular)</td><td style="text-align:right">${q.visto || 0}</td><td style="text-align:right;color:var(--texto-suave)">–</td>
         <td style="text-align:right">${celda(q.llegada || 0, q.visto || 0)}</td><td style="text-align:right">${celda(q.instalaron || 0, q.llegada || 0)}</td></tr>
+      <tr><td>💻 Esa computadora (botón)</td><td style="text-align:right;color:var(--texto-suave)">${q.visto || 0}</td><td style="text-align:right">${celda(c.clic || 0, q.visto || 0)}</td>
+        <td style="text-align:right">${celda(c.llegada || 0, c.clic || 0)}</td><td style="text-align:right">${celda(c.instalaron || 0, c.llegada || 0)}</td></tr>
       <tr><td>📱 Celular (botón)</td><td style="text-align:right">${b.visto || 0}</td><td style="text-align:right">${celda(b.clic || 0, b.visto || 0)}</td>
         <td style="text-align:right">${celda(b.llegada || 0, b.clic || 0)}</td><td style="text-align:right">${celda(b.instalaron || 0, b.llegada || 0)}</td></tr>
     </tbody></table>

@@ -237,7 +237,7 @@ class PushVisita(BaseModel):
     modo: str = "navegador"
     permiso: str | None = None
     url_abrir: str | None = None
-    origen: str | None = None      # promoción del teaser por la que llegó (teaser_qr / teaser_boton)
+    origen: str | None = None      # promoción del teaser por la que llegó (teaser_qr / teaser_boton / teaser_pc)
 
 
 class PromoApp(BaseModel):
@@ -1406,6 +1406,133 @@ def _archivo_existe(ruta: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Búsqueda en las conversaciones del cliente (lupa del widget). Mismas reglas que _historial_previo: con el celular
+# verificado, en todas sus conversaciones de los últimos HISTORIAL_PREVIO_DIAS días (respetando 'historial_desde');
+# sin verificar, solo en la conversación actual. Sin distinguir tildes ni mayúsculas.
+# ---------------------------------------------------------------------------
+BUSQUEDA_MAX_RESULTADOS = 40
+_SIN_TILDES_SQL = "translate(lower({}), 'áéíóúüñàèìòù', 'aeiouunaeiou')"
+
+
+def _sin_tildes(texto: str) -> str:
+    return (texto or "").lower().translate(str.maketrans("áéíóúüñàèìòù", "aeiouunaeiou"))
+
+
+def _alcance_busqueda(cur, sesion_token: str, conversacion_actual: int):
+    """(usuario_id, verificado, desde) del dueño de la sesión, o None."""
+    cur.execute("SELECT id, verificado_en IS NOT NULL AND telefono IS NOT NULL, historial_desde "
+                "FROM usuarios_webchat WHERE sesion_token = %s", (sesion_token,))
+    fila = cur.fetchone()
+    if not fila:
+        return None
+    desde = datetime.now(LIMA_TZ) - timedelta(days=HISTORIAL_PREVIO_DIAS)
+    if fila[2]:
+        desde = max(desde, fila[2])
+    return fila[0], bool(fila[1]), desde
+
+
+def _buscar_en_historial(sesion_token: str, conversacion_actual: int, consulta) -> dict:
+    """Mensajes de texto del cliente que contienen la palabra buscada, del más reciente al más antiguo."""
+    q = " ".join(str(consulta or "").split())[:60]
+    r = {"q": q, "resultados": [], "alcance": "actual"}
+    if len(q) < 2:
+        return r
+    patron = "%" + _sin_tildes(q).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            alcance = _alcance_busqueda(cur, sesion_token, conversacion_actual)
+            if not alcance:
+                conn.rollback()
+                return r
+            usuario_id, verificado, desde = alcance
+            r["alcance"] = "todo" if verificado else "actual"
+            cur.execute(
+                f"""SELECT m.id, m.conversacion_id, m.emisor_tipo, m.contenido, m.metadata, m.enviado_en, cam.nombre
+                    FROM mensajes m
+                    JOIN conversaciones c ON c.id = m.conversacion_id
+                    LEFT JOIN campanas cam ON cam.id = c.campana_id
+                    WHERE c.usuario_id = %s
+                      AND (c.id = %s OR (%s AND m.enviado_en >= %s))
+                      AND m.tipo_contenido = 'texto' AND m.emisor_tipo IN ('usuario', 'asesor', 'bot')
+                      AND {_SIN_TILDES_SQL.format('m.contenido')} LIKE %s ESCAPE '\\'
+                    ORDER BY m.id DESC LIMIT %s""",
+                (usuario_id, conversacion_actual, verificado, desde, patron, BUSQUEDA_MAX_RESULTADOS + 10))
+            filas = cur.fetchall()
+        conn.rollback()
+    except Exception:
+        conn.rollback()
+        logger.exception("No se pudo buscar en el historial del widget")
+        return r
+    finally:
+        release_connection(conn)
+    clave = _sin_tildes(q)
+    for mid, conv, emisor, contenido, meta, ts, campana in filas:
+        if _parsear_metadata(meta).get("eliminado_en") or not contenido:
+            continue
+        # Fragmento alrededor de la coincidencia (la misma posición sirve: quitar tildes no cambia el largo).
+        pos = max(_sin_tildes(contenido).find(clave), 0)
+        ini, fin = max(pos - 50, 0), min(pos + len(q) + 70, len(contenido))
+        fragmento = ("…" if ini else "") + contenido[ini:fin].replace("\n", " ") + ("…" if fin < len(contenido) else "")
+        r["resultados"].append({"id": mid, "conversacion_id": conv, "emisor_tipo": emisor, "fragmento": fragmento,
+                                "enviado_en": ts.isoformat(), "campana": campana,
+                                "es_actual": conv == conversacion_actual})
+        if len(r["resultados"]) >= BUSQUEDA_MAX_RESULTADOS:
+            break
+    return r
+
+
+def _contexto_de_mensaje(sesion_token: str, conversacion_actual: int, mensaje_id) -> dict:
+    """La conversación de un resultado de búsqueda, alrededor del mensaje encontrado (para leerlo en contexto)."""
+    try:
+        mid = int(mensaje_id)
+    except (TypeError, ValueError):
+        return {"ok": False}
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            alcance = _alcance_busqueda(cur, sesion_token, conversacion_actual)
+            if not alcance:
+                conn.rollback()
+                return {"ok": False}
+            usuario_id, verificado, desde = alcance
+            cur.execute("""SELECT c.id, c.iniciado_en, cam.nombre FROM mensajes m
+                           JOIN conversaciones c ON c.id = m.conversacion_id
+                           LEFT JOIN campanas cam ON cam.id = c.campana_id
+                           WHERE m.id = %s AND c.usuario_id = %s AND (c.id = %s OR (%s AND m.enviado_en >= %s))""",
+                        (mid, usuario_id, conversacion_actual, verificado, desde))
+            conv = cur.fetchone()
+            if not conv:
+                conn.rollback()
+                return {"ok": False}
+            cur.execute("""(SELECT id, emisor_tipo, tipo_contenido, contenido, metadata, enviado_en FROM mensajes
+                            WHERE conversacion_id = %s AND id <= %s AND tipo_contenido IN ('texto', 'archivo', 'boton_click')
+                            ORDER BY id DESC LIMIT 16)
+                           UNION ALL
+                           (SELECT id, emisor_tipo, tipo_contenido, contenido, metadata, enviado_en FROM mensajes
+                            WHERE conversacion_id = %s AND id > %s AND tipo_contenido IN ('texto', 'archivo', 'boton_click')
+                            ORDER BY id LIMIT 15)""", (conv[0], mid, conv[0], mid))
+            filas = sorted(cur.fetchall(), key=lambda f: f[0])
+        conn.rollback()
+    except Exception:
+        conn.rollback()
+        logger.exception("No se pudo leer el contexto del mensaje %s", mensaje_id)
+        return {"ok": False}
+    finally:
+        release_connection(conn)
+    mensajes = []
+    for i, emisor, tipo, contenido, meta, ts in filas:
+        if _parsear_metadata(meta).get("eliminado_en"):
+            contenido = ""
+        if tipo == "archivo":
+            contenido = "📎 " + (str(contenido or "").rsplit("/", 1)[-1] or "Archivo")
+        mensajes.append({"id": i, "emisor_tipo": emisor, "tipo_contenido": tipo, "contenido": contenido or "",
+                         "enviado_en": ts.isoformat()})
+    return {"ok": True, "objetivo": mid, "conversacion_id": conv[0], "es_actual": conv[0] == conversacion_actual,
+            "iniciado_en": conv[1].isoformat() if conv[1] else None, "campana": conv[2], "mensajes": mensajes}
+
+
 def _historial_previo(sesion_token: str, conversacion_actual: int, antes_de_id) -> dict:
     """Mensajes de conversaciones ANTERIORES de este mismo navegador (hasta 90 días, en bloques),
     del más reciente hacia atrás. Solo si el celular está verificado; respeta la fecha de corte
@@ -1920,6 +2047,7 @@ def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
                        WHERE c.id = %s
                    ), x AS (
                        SELECT c.id, c.iniciado_en, c.estado, c.campana_id, c.etiqueta_cierre_id, c.usuario_id, c.origen,
+                              {_SQL_ASESORES_CONV} AS atendieron,
                               {_SQL_TEL_CONV} AS tel, {_SQL_DNI_CONV} AS dni
                        FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
                        WHERE c.id <> %s
@@ -1932,14 +2060,15 @@ def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
                           OR (a.tel ~ '^9[0-9]{{8}}$' AND x.tel = a.tel)
                           OR (length(a.dni) >= 8 AND x.dni = a.dni)
                    ), todas AS (   -- y además las otras de esos mismos navegadores
-                       SELECT id, iniciado_en, estado, campana_id, etiqueta_cierre_id, origen,
+                       SELECT id, iniciado_en, estado, campana_id, etiqueta_cierre_id, origen, atendieron,
                               mismo_navegador, mismo_celular, mismo_dni FROM m
                        UNION ALL
-                       SELECT x.id, x.iniciado_en, x.estado, x.campana_id, x.etiqueta_cierre_id, x.origen, TRUE, FALSE, FALSE
+                       SELECT x.id, x.iniciado_en, x.estado, x.campana_id, x.etiqueta_cierre_id, x.origen, x.atendieron,
+                              TRUE, FALSE, FALSE
                        FROM x WHERE x.usuario_id IN (SELECT usuario_id FROM m) AND x.id NOT IN (SELECT id FROM m)
                    )
                    SELECT x.id, x.iniciado_en, x.estado, cam.nombre, et.nombre,
-                          x.mismo_navegador, x.mismo_celular, x.mismo_dni, x.origen
+                          x.mismo_navegador, x.mismo_celular, x.mismo_dni, x.origen, x.atendieron
                    FROM todas x
                    LEFT JOIN campanas cam ON cam.id = x.campana_id
                    LEFT JOIN etiquetas_cierre et ON et.id = x.etiqueta_cierre_id
@@ -1948,13 +2077,13 @@ def _obtener_historial_usuario(conversacion_id_actual: int) -> list:
                 (conversacion_id_actual, conversacion_id_actual),
             )
             resultado = []
-            for cid, ts, estado, campana, etiqueta, mismo_nav, mismo_cel, mismo_dni, origen in cur.fetchall():
+            for cid, ts, estado, campana, etiqueta, mismo_nav, mismo_cel, mismo_dni, origen, atendieron in cur.fetchall():
                 coincide = [t for t, ok in (("celular", mismo_cel), ("dni", mismo_dni)) if ok]
                 if mismo_nav and not coincide:
                     coincide = ["navegador"]
                 resultado.append({"conversacion_id": cid, "iniciado_en": ts.isoformat() if ts else None,
                                   "estado": estado, "campana": campana, "etiqueta": etiqueta, "coincide": coincide,
-                                  "origen": origen})
+                                  "origen": origen, "atendieron": atendieron})
             return resultado
     finally:
         release_connection(conn)
@@ -2978,6 +3107,18 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                                                        "payload": {"motivo": resultado.get("motivo")}})
                         continue
 
+                    if tipo == "buscar_historial":
+                        resultado = await asyncio.to_thread(_buscar_en_historial, nuevo_token, conversacion_id,
+                                                            payload.get("q"))
+                        await websocket.send_json({"type": "resultado_busqueda", "payload": resultado})
+                        continue
+
+                    if tipo == "contexto_mensaje":
+                        resultado = await asyncio.to_thread(_contexto_de_mensaje, nuevo_token, conversacion_id,
+                                                            payload.get("id"))
+                        await websocket.send_json({"type": "contexto_mensaje", "payload": resultado})
+                        continue
+
                     if tipo == "cargar_historial_previo":
                         resultado = await asyncio.to_thread(
                             _historial_previo, nuevo_token, conversacion_id, payload.get("antes_de"))
@@ -3532,8 +3673,9 @@ def _revisar_inactividad_sync():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT c.id
+                SELECT c.id, c.estado, cam.codigo
                 FROM conversaciones c
+                LEFT JOIN campanas cam ON cam.id = c.campana_id
                 LEFT JOIN LATERAL (
                     SELECT MAX(enviado_en) AS ultimo FROM mensajes m
                     WHERE m.conversacion_id = c.id AND m.emisor_tipo IN ('usuario', 'asesor')
@@ -3552,7 +3694,21 @@ def _revisar_inactividad_sync():
                 """,
                 (limite, limite),
             )
-            conversacion_ids = [row[0] for row in cur.fetchall()]
+            # En cola con la campaña cerrada no se insiste (antes le llegaba el aviso toda la noche): se reanuda
+            # sola cuando la campaña vuelve a abrir.
+            abierta = {}
+            conversacion_ids = []
+            for conv_id, estado, codigo in cur.fetchall():
+                if estado == "en_cola" and codigo:
+                    if codigo not in abierta:
+                        try:
+                            r = (validar_horario_consultas({"campana_codigo": codigo}, {}) or {})
+                            abierta[codigo] = not (r.get("status") == 200 and (r.get("response") or {}).get("outOfTime"))
+                        except Exception:
+                            abierta[codigo] = True
+                    if not abierta[codigo]:
+                        continue
+                conversacion_ids.append(conv_id)
             for conversacion_id in conversacion_ids:
                 cur.execute(
                     """INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
@@ -4465,30 +4621,63 @@ def _enviar_archivo_sms(celular_crudo, remitente_id: int, rol: str, ruta, nombre
     return {"ok": True, "motivo": None}
 
 
+_SQL_TEL_9 = r"right(regexp_replace(COALESCE({}, ''), '\D', '', 'g'), 9)"
+
+
 def _sesion_de_celular(cur, celular: str, sesion_navegador: str | None) -> tuple:
     """(usuario_id, sesion_token) para quien abre un enlace que le enviamos por SMS a `celular` (enlace directo o
     archivo). Abrirlo prueba que tiene ese celular, así que:
-      1) si este navegador ya tiene una sesión de ese mismo celular (o sin celular), se usa esa;
-      2) si no, la sesión MÁS RECIENTE de ese celular (la conversación llega con su nombre, DNI e historial,
-         aunque antes haya escrito desde otro dispositivo);
-      3) si ese celular nunca nos escribió, una sesión nueva."""
+      1) si este navegador ya tiene la sesión de ESE celular, se usa esa;
+      2) si no, la sesión más reciente de ese celular: la de un cliente con ese número en su ficha o que lo dio en
+         alguna conversación (aunque antes haya escrito desde otro dispositivo). Una sesión del navegador SIN
+         celular (cualquiera que abrió la web tiene una, aunque nunca escribió) no gana a la de su número;
+      3) si ese celular nunca nos escribió: la sesión sin celular del navegador, o una nueva.
+    Después se completan en la ficha el nombre y el DNI de la última vez que escribió con ese celular, para que la
+    asesora lo vea con sus datos y no como "Usuario N"."""
+    nueve = celular[-9:]
+    del_navegador = None
     if sesion_navegador:
         cur.execute("SELECT id, telefono, sesion_token FROM usuarios_webchat WHERE sesion_token = %s",
                     (sesion_navegador[:100],))
         u = cur.fetchone()
-        if u and (not u[1] or _normalizar_celular_pe(u[1]) == celular):
+        if u and u[1] and _normalizar_celular_pe(u[1]) == celular:
+            _completar_datos_de_celular(cur, u[0], nueve)
             return u[0], u[2]
+        if u and not u[1]:
+            del_navegador = (u[0], u[2])
     cur.execute(
-        r"""SELECT id, sesion_token FROM usuarios_webchat
-            WHERE right(regexp_replace(COALESCE(telefono, ''), '\D', '', 'g'), 9) = %s AND sesion_token IS NOT NULL
-            ORDER BY ultima_actividad DESC NULLS LAST, id DESC LIMIT 1""", (celular[-9:],))
-    u = cur.fetchone()
-    if u:
-        return u[0], u[1]
-    sesion = str(uuid.uuid4())
-    cur.execute("INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
-                (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)))
-    return cur.fetchone()[0], sesion
+        f"""SELECT u.id, u.sesion_token FROM usuarios_webchat u
+            WHERE u.sesion_token IS NOT NULL
+              AND ({_SQL_TEL_9.format('u.telefono')} = %s
+                   OR u.id IN (SELECT c.usuario_id FROM conversaciones c
+                               WHERE {_SQL_TEL_9.format("c.variables_sesion->>'CELULAR'")} = %s))
+            ORDER BY u.ultima_actividad DESC NULLS LAST, u.id DESC LIMIT 1""", (nueve, nueve))
+    elegido = cur.fetchone() or del_navegador
+    if elegido is None:
+        sesion = str(uuid.uuid4())
+        cur.execute("INSERT INTO usuarios_webchat (sesion_token, creado_en, ultima_actividad) VALUES (%s, %s, %s) RETURNING id",
+                    (sesion, datetime.now(LIMA_TZ), datetime.now(LIMA_TZ)))
+        elegido = (cur.fetchone()[0], sesion)
+    _completar_datos_de_celular(cur, elegido[0], nueve)
+    return elegido[0], elegido[1]
+
+
+def _completar_datos_de_celular(cur, usuario_id: int, nueve: str):
+    """Si la ficha no tiene nombre o DNI, los toma de la última conversación con ese celular (de la ficha o de lo que
+    capturó el bot en la conversación). No pisa datos que ya tenga."""
+    tel = _SQL_TEL_9.format("COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR')")
+    nombre = "COALESCE(NULLIF(u.nombre, ''), c.variables_sesion->>'NOMBRE_USUARIO', '')"
+    dni = r"regexp_replace(COALESCE(NULLIF(u.dni, ''), c.variables_sesion->>'DNI', ''), '\D', '', 'g')"
+    cur.execute(
+        f"""SELECT NULLIF({nombre}, ''), NULLIF({dni}, '')
+            FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+            WHERE {tel} = %s AND ({nombre} <> '' OR {dni} <> '')
+            ORDER BY c.iniciado_en DESC NULLS LAST LIMIT 1""", (nueve,))
+    fila = cur.fetchone()
+    if fila:
+        cur.execute("""UPDATE usuarios_webchat SET nombre = COALESCE(NULLIF(nombre, ''), %s),
+                                                   dni = COALESCE(NULLIF(dni, ''), %s)
+                       WHERE id = %s""", (fila[0], fila[1], usuario_id))
 
 
 class CanjearArchivoSms(BaseModel):
@@ -7335,6 +7524,17 @@ def _registrar_escucha_db(conversacion_id: int, supervisor_id: int, tipo: str):
         release_connection(conn)
 
 
+# Asesores que atendieron una conversación (los que escribieron, en orden; si nadie escribió aún, el asignado).
+# Para mostrarlo en la lista de resultados / historial sin abrir el detalle. Usa el alias `c` de conversaciones.
+_SQL_ASESORES_CONV = """COALESCE(
+    (SELECT string_agg(a2.nombre_display, ', ' ORDER BY mm.primero)
+     FROM (SELECT emisor_id, min(id) AS primero FROM mensajes
+           WHERE conversacion_id = c.id AND emisor_tipo = 'asesor' AND emisor_id IS NOT NULL
+           GROUP BY emisor_id) mm
+     JOIN asesores a2 ON a2.id = mm.emisor_id),
+    (SELECT a3.nombre_display FROM asesores a3 WHERE a3.id = c.asesor_id))"""
+
+
 def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
     """Busca conversaciones (de cualquier estado: bot, en_cola, asignada o
     cerrada) por celular, DNI o nombre del cliente — usa ILIKE (contiene, sin
@@ -7352,7 +7552,7 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
                 """
                 SELECT c.id, u.nombre, u.telefono, u.dni, c.estado, cam.nombre,
                        c.iniciado_en, c.cerrado_en, c.entrada_cola, c.asignado_en,
-                       a.nombre_display, et.nombre
+                       a.nombre_display, et.nombre, """ + _SQL_ASESORES_CONV + """
                 FROM conversaciones c
                 JOIN usuarios_webchat u ON u.id = c.usuario_id
                 LEFT JOIN campanas cam ON cam.id = c.campana_id
@@ -7367,7 +7567,7 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
             )
             resultado = []
             for (conv_id, nombre, telefono, dni, estado, campana, iniciado_en, cerrado_en,
-                 entrada_cola, asignado_en, asesor_nombre, etiqueta) in cur.fetchall():
+                 entrada_cola, asignado_en, asesor_nombre, etiqueta, atendieron) in cur.fetchall():
                 resultado.append({
                     "conversacion_id": conv_id,
                     "usuario_nombre": nombre or f"Usuario {conv_id}",
@@ -7380,6 +7580,7 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
                     "entrada_cola": entrada_cola.isoformat() if entrada_cola else None,
                     "asignado_en": asignado_en.isoformat() if asignado_en else None,
                     "asesor_nombre": asesor_nombre,
+                    "atendieron": atendieron,
                     "etiqueta": etiqueta,
                 })
             return resultado

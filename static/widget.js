@@ -160,6 +160,12 @@
     .sofi-teaser .st-app[hidden] { display: none; }
     .sofi-teaser .st-app img { width: 72px; height: 72px; flex-shrink: 0; display: block; }
     .sofi-teaser .st-app b { display: block; color: #0B2A8A; font-size: 13px; margin-bottom: 2px; }
+    .sofi-teaser .st-app-pc {
+      margin-top: 7px; padding: 5px 10px; border: 1.5px solid #0B2A8A; border-radius: 999px; background: #fff; color: #0B2A8A;
+      font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+    }
+    .sofi-teaser .st-app-pc:hover { background: #F3F6FD; }
+    .sofi-teaser .st-app-pc:focus-visible { outline: 3px solid rgba(11, 42, 138, .4); outline-offset: 2px; }
     .sofi-teaser .st-app-btn {
       width: 100%; min-height: 40px; padding: 6px 10px; border: none; border-radius: 12px; background: #E7F5EE; color: #17663F;
       font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center;
@@ -281,6 +287,39 @@
     :host(:not(.movil)) .panel.maximizado .maximizar .ico-maximizar { display: none; }
     :host(:not(.movil)) .panel.maximizado .maximizar .ico-restaurar { display: block; }
     :host(:not(.movil)) .panel.maximizado .msg { max-width: 70%; }
+    /* Lupa: buscar una palabra en las conversaciones del cliente (reemplaza al chat mientras está abierta). */
+    .cabecera .buscar {
+      display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+      width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; cursor: pointer;
+      background: none; color: white; opacity: .85;
+    }
+    .cabecera .buscar svg { width: 17px; height: 17px; display: block; }
+    .cabecera .buscar:hover, .cabecera .buscar[aria-expanded="true"] { opacity: 1; background: rgba(255,255,255,.2); }
+    .busqueda { display: none; flex: 1; min-height: 0; flex-direction: column; background: ${TOKENS.fondo}; }
+    .panel.buscando .busqueda { display: flex; }
+    .panel.buscando .cuerpo, .panel.buscando .pie, .panel.buscando .responder-banner,
+    .panel.buscando .nuevo-mensaje, .panel.buscando .guardada { display: none !important; }
+    .bq-barra { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: white; border-bottom: 1px solid ${TOKENS.borde}; }
+    .bq-lupa { width: 18px; height: 18px; color: ${TOKENS.textoSuave}; flex-shrink: 0; }
+    .bq-input { flex: 1; min-width: 0; border: none; outline: none; font: inherit; font-size: 15px; color: ${TOKENS.texto}; background: none; padding: 6px 0; }
+    .bq-input::-webkit-search-cancel-button { display: none; }
+    .bq-cerrar { border: none; background: #EEF2F8; color: ${TOKENS.texto}; width: 30px; height: 30px; border-radius: 50%; font-size: 15px; cursor: pointer; flex-shrink: 0; }
+    .bq-estado { font-size: 12.5px; color: ${TOKENS.textoSuave}; padding: 8px 14px 4px; }
+    .bq-lista { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
+    .bq-item { display: block; width: 100%; text-align: left; background: white; border: 1px solid ${TOKENS.borde}; border-radius: 12px; padding: 9px 11px; margin-bottom: 7px; cursor: pointer; font: inherit; color: ${TOKENS.texto}; }
+    .bq-item:hover, .bq-item:focus-visible { border-color: ${TOKENS.azul}; outline: none; }
+    .bq-meta { font-size: 11.5px; color: ${TOKENS.textoSuave}; margin-bottom: 3px; }
+    .bq-frag { font-size: 13.5px; line-height: 1.4; word-break: break-word; }
+    .bq-frag mark, .bq-msg mark { background: #FFE58A; color: inherit; border-radius: 3px; padding: 0 1px; }
+    .bq-contexto { flex: 1; overflow-y: auto; padding: 0 12px 14px; }
+    .bq-contexto[hidden] { display: none; }
+    .bq-ctx-cab { position: sticky; top: 0; background: ${TOKENS.fondo}; padding: 8px 0; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: ${TOKENS.textoSuave}; z-index: 1; }
+    .bq-volver { border: none; background: none; color: ${TOKENS.azul}; font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; padding: 4px 0; }
+    .bq-msg { max-width: 82%; padding: 8px 11px; border-radius: 14px; margin: 5px 0; font-size: 13.5px; line-height: 1.4; background: white; border: 1px solid ${TOKENS.borde}; word-break: break-word; }
+    .bq-msg.usuario { margin-left: auto; background: ${TOKENS.azul}; color: white; border-color: transparent; }
+    .bq-msg.usuario mark { color: #1A2B3C; }
+    .bq-msg.objetivo { box-shadow: 0 0 0 3px rgba(255, 196, 0, .7); }
+    .bq-msg .bq-hora { display: block; font-size: 10.5px; opacity: .7; margin-top: 3px; }
     .tam-panel {
       display: none; position: absolute; top: 62px; right: 12px; z-index: 25; background: white;
       border-radius: 14px; padding: 10px 12px 12px; box-shadow: 0 10px 28px rgba(10,30,50,.22);
@@ -778,6 +817,9 @@
           <svg class="ico-maximizar" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2H14v4.5M6.5 14H2V9.5M14 2L9 7M2 14l5-5"/></svg>
           <svg class="ico-restaurar" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6.5H9.5V2M2 9.5h4.5V14M9.5 6.5L14 2M6.5 9.5L2 14"/></svg>
         </button>
+        <button class="buscar" type="button" aria-label="Buscar en mis conversaciones" title="Buscar en mis conversaciones" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        </button>
         <button class="tam-fuente" type="button" aria-label="Tamaño del texto" title="Tamaño del texto" aria-haspopup="true" aria-expanded="false">Aa</button>
         <button class="info-guardada" type="button" aria-label="¿Se pierde mi conversación?" title="¿Se pierde mi conversación?">i</button>
         <button class="cerrar" aria-label="Cerrar chat">✕</button>
@@ -805,6 +847,16 @@
         </div>
       </div>
       <div class="cuerpo"></div>
+      <div class="busqueda" role="search">
+        <div class="bq-barra">
+          <svg class="bq-lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input class="bq-input" type="search" maxlength="60" placeholder="Buscar una palabra en tus conversaciones" aria-label="Palabra a buscar" autocomplete="off" />
+          <button class="bq-cerrar" type="button" aria-label="Cerrar búsqueda" title="Volver al chat">✕</button>
+        </div>
+        <div class="bq-estado" aria-live="polite"></div>
+        <div class="bq-lista"></div>
+        <div class="bq-contexto" hidden></div>
+      </div>
       <div class="qr-panel">
         <h3>📱 Continúa en tu celular</h3>
         <p class="qr-texto">Abre la cámara de tu celular y escanea este código. Tu conversación seguirá allí.</p>
@@ -924,6 +976,111 @@
     if ($tamPanel.classList.contains("visible") && !e.target.closest(".tam-panel")) cerrarTamPanel();
   });
   aplicarFuente();
+
+  // ---------------------------------------------------------------------
+  // Lupa: buscar una palabra en las conversaciones del cliente. Con el celular verificado busca en todas sus
+  // conversaciones de los últimos 3 meses; sin verificar, solo en la actual (el servidor decide). Al tocar un
+  // resultado se ve esa conversación alrededor del mensaje encontrado (solo lectura).
+  // ---------------------------------------------------------------------
+  const $panelChat = root.querySelector(".panel");
+  const $buscarBtn = root.querySelector(".cabecera .buscar");
+  const $busq = root.querySelector(".busqueda");
+  const $bqInput = $busq.querySelector(".bq-input");
+  const $bqEstado = $busq.querySelector(".bq-estado");
+  const $bqLista = $busq.querySelector(".bq-lista");
+  const $bqCtx = $busq.querySelector(".bq-contexto");
+  let bqTimer = null, bqUltima = "", bqUsada = false;
+  const BQ_QUIEN = { usuario: "Tú", bot: "Sofi", asesor: "Asesor" };
+  const BQ_TILDES = { "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u", "ñ": "n", "à": "a", "è": "e", "ì": "i", "ò": "o", "ù": "u" };
+  function bqNormal(t) { return String(t || "").toLowerCase().replace(/[áéíóúüñàèìòù]/g, (c) => BQ_TILDES[c]); }
+  function bqEsc(t) { return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  // Resalta la palabra sin importar tildes ni mayúsculas (quitar tildes no cambia el largo del texto).
+  function bqResaltar(texto, q) {
+    const t = String(texto || ""), n = bqNormal(t), k = bqNormal(q);
+    if (!k) return bqEsc(t);
+    let html = "", i = 0, pos;
+    while ((pos = n.indexOf(k, i)) !== -1) {
+      html += bqEsc(t.slice(i, pos)) + "<mark>" + bqEsc(t.slice(pos, pos + k.length)) + "</mark>";
+      i = pos + k.length;
+    }
+    return html + bqEsc(t.slice(i));
+  }
+  function bqFecha(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" }) + " " +
+      d.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+  }
+  function abrirBusqueda() {
+    $panelChat.classList.add("buscando");
+    $buscarBtn.setAttribute("aria-expanded", "true");
+    verResultados();
+    if (!$bqInput.value) $bqEstado.textContent = "Escribe una palabra, por ejemplo «receta» o «copago».";
+    setTimeout(() => $bqInput.focus(), 60);
+    if (!bqUsada) { bqUsada = true; medir("sofi_busqueda_abierta", {}); }
+  }
+  function cerrarBusqueda() {
+    $panelChat.classList.remove("buscando");
+    $buscarBtn.setAttribute("aria-expanded", "false");
+  }
+  function verResultados() { $bqCtx.hidden = true; $bqLista.hidden = false; $bqEstado.hidden = false; }
+  function bqBuscar() {
+    const q = $bqInput.value.trim();
+    if (q.length < 2) { bqUltima = ""; $bqLista.innerHTML = ""; $bqEstado.textContent = q ? "Escribe al menos 2 letras." : ""; return; }
+    if (!ws || ws.readyState !== WebSocket.OPEN) { $bqEstado.textContent = "Sin conexión en este momento. Intenta en unos segundos."; return; }
+    bqUltima = q;
+    $bqEstado.textContent = "Buscando…";
+    enviar({ type: "buscar_historial", payload: { q } });
+  }
+  function mostrarResultadosBusqueda(p) {
+    if (!p || p.q !== bqUltima) return;   // llegó tarde: ya se escribió otra cosa
+    verResultados();
+    const lista = p.resultados || [];
+    const soloActual = p.alcance === "actual" ? " Solo busqué en esta conversación: verifica tu celular para buscar también en las anteriores." : "";
+    $bqEstado.textContent = lista.length
+      ? `${lista.length}${lista.length >= 40 ? "+" : ""} ${lista.length === 1 ? "mensaje" : "mensajes"} con «${p.q}».${soloActual}`
+      : `No encontré «${p.q}» en tus conversaciones.${soloActual}`;
+    $bqLista.innerHTML = "";
+    lista.forEach((r) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "bq-item";
+      b.innerHTML = `<div class="bq-meta">${bqEsc(bqFecha(r.enviado_en))} · ${BQ_QUIEN[r.emisor_tipo] || ""}${r.es_actual ? " · esta conversación" : r.campana ? " · " + bqEsc(r.campana) : ""}</div>
+        <div class="bq-frag">${bqResaltar(r.fragmento, p.q)}</div>`;
+      b.addEventListener("click", () => {
+        $bqLista.hidden = true; $bqEstado.hidden = true; $bqCtx.hidden = false;
+        $bqCtx.innerHTML = '<div class="bq-ctx-cab">Cargando la conversación…</div>';
+        enviar({ type: "contexto_mensaje", payload: { id: r.id } });
+      });
+      $bqLista.appendChild(b);
+    });
+  }
+  function mostrarContextoBusqueda(p) {
+    if ($bqCtx.hidden) return;
+    if (!p || !p.ok) { $bqCtx.innerHTML = '<div class="bq-ctx-cab"><button type="button" class="bq-volver">← Resultados</button> No se pudo abrir ese mensaje.</div>'; }
+    else {
+      const titulo = p.es_actual ? "Esta conversación" : `Conversación del ${bqEsc(bqFecha(p.iniciado_en || p.mensajes[0]?.enviado_en || new Date()).split(" ")[0])}${p.campana ? " · " + bqEsc(p.campana) : ""}`;
+      $bqCtx.innerHTML = `<div class="bq-ctx-cab"><button type="button" class="bq-volver">← Resultados</button><span>${titulo}</span></div>` +
+        p.mensajes.map((m) => `<div class="bq-msg ${m.emisor_tipo === "usuario" ? "usuario" : ""}${m.id === p.objetivo ? " objetivo" : ""}" data-id="${m.id}">${
+          m.contenido ? bqResaltar(m.contenido, bqUltima) : "<i>Mensaje eliminado</i>"}<span class="bq-hora">${BQ_QUIEN[m.emisor_tipo] || ""} · ${bqEsc(bqFecha(m.enviado_en))}</span></div>`).join("");
+      const obj = $bqCtx.querySelector(".bq-msg.objetivo");
+      if (obj) setTimeout(() => obj.scrollIntoView({ block: "center" }), 30);
+    }
+    const volver = $bqCtx.querySelector(".bq-volver");
+    if (volver) volver.addEventListener("click", () => { verResultados(); $bqInput.focus(); });
+  }
+  $buscarBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if ($panelChat.classList.contains("buscando")) cerrarBusqueda(); else abrirBusqueda();
+  });
+  $busq.querySelector(".bq-cerrar").addEventListener("click", cerrarBusqueda);
+  $bqInput.addEventListener("input", () => { clearTimeout(bqTimer); bqTimer = setTimeout(bqBuscar, 350); });
+  $bqInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { clearTimeout(bqTimer); bqBuscar(); } });
+  $busq.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    if (!$bqCtx.hidden) { verResultados(); $bqInput.focus(); } else cerrarBusqueda();
+  });
+
   const $infoGuardada = root.querySelector(".info-guardada");
   const GUARDADA_SEGUNDOS = 30;
   let temporizadorGuardada = null;
@@ -2909,17 +3066,18 @@
     armarPromoApp();
   }
 
-  // Pie del teaser: invitación a instalar el app. En la computadora, un QR para escanear con el celular (donde se
-  // instala); en el celular, un botón que abre la instalación (/app, en otra pestaña: el navegador solo deja
-  // instalarla desde su propio dominio). No sale si ya está dentro del app. Se apaga desde el Editor
+  // Pie del teaser: invitación a instalar el app. En la computadora, un QR para instalarla en el celular y un botón
+  // para instalarla en ESA computadora (Chrome / Edge / Safari en Mac); en el celular, un botón que abre la
+  // instalación (/app, en otra pestaña: el navegador solo deja instalarla desde su propio dominio). No sale si ya está dentro del app. Se apaga desde el Editor
   // (teaser_promo_app). Se cuenta en el dashboard (panel «App»): vieron, tocaron, llegaron e instalaron.
   let promoOrigen = null;
-  function contarPromo(evento) {
-    if (!promoOrigen) return;
-    medir("sofi_teaser_app_" + evento, { origen: promoOrigen });
+  function contarPromo(evento, origen) {
+    origen = origen || promoOrigen;
+    if (!origen) return;
+    medir("sofi_teaser_app_" + evento, { origen });
     try {
       fetch(`${API_BASE}/widget/promo-app`, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ evento, origen: promoOrigen }), keepalive: true }).catch(() => {});
+        body: JSON.stringify({ evento, origen }), keepalive: true }).catch(() => {});
     } catch (e) { /* nada */ }
   }
   function armarPromoApp() {
@@ -2951,7 +3109,16 @@
       const texto = document.createElement("div");
       const titulo = document.createElement("b");
       titulo.textContent = "📲 Tenme en tu celular";
-      texto.append(titulo, "Escanea con la cámara y agrégame a tu pantalla de inicio.");
+      // También en esta computadora: así el cliente nos escribe desde la PC con un clic, sin buscar la web.
+      const pc = document.createElement("button");
+      pc.type = "button";
+      pc.className = "st-app-pc";
+      pc.textContent = "💻 O instálame en esta PC";
+      pc.addEventListener("click", () => {
+        contarPromo("clic", "teaser_pc");
+        window.open(`${urlApp}&origen=teaser_pc`, "_blank", "noopener");
+      });
+      texto.append(titulo, "Escanea con la cámara y agrégame a tu pantalla de inicio.", document.createElement("br"), pc);
       $app.append(img, texto);
     }
     $app.hidden = false;
@@ -3805,6 +3972,12 @@
           break;
         case "historial_previo":
           mostrarHistorialPrevio(p);
+          break;
+        case "resultado_busqueda":
+          mostrarResultadosBusqueda(p);
+          break;
+        case "contexto_mensaje":
+          mostrarContextoBusqueda(p);
           break;
         case "mensaje_bot":
           agregarMensaje(p.texto, "bot", p.imagen_url);

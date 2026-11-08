@@ -97,6 +97,8 @@
   .resultado-item:hover { background: var(--fondo); }
   .resultado-item .nombre { font-weight: 700; font-size: 14px; }
   .resultado-item .datos { font-size: 12px; color: var(--texto-suave); margin-top: 2px; }
+  .atendio { font-size: 12px; color: var(--texto); margin-top: 3px; }
+  .atendio b { font-weight: 600; }
   .resultado-item .fila-estado { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   .estado-pill { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .02em; }
   .estado-pill.bot { background: #EAF1F9; color: var(--azul); }
@@ -3237,7 +3239,8 @@ function renderHistorialAgrupado(conversacionesPasadas, contactos) {
         : `<span class="dir entrante" title="El cliente nos escribió por su cuenta">📥 Entrante</span>`;
       item.innerHTML = `
         <div class="campana">${dir}${escapeHtml(c.campana || 'Sin campaña')} ${c.etiqueta ? '· ' + escapeHtml(c.etiqueta) : ''}</div>
-        <div class="meta">#${escapeHtml(String(c.conversacion_id))} · ${formatearHoraCorta(c.iniciado_en)} — ${escapeHtml(c.estado)}${c.via ? ' · ' + escapeHtml(c.via) : ''}${tags}</div>`;
+        <div class="meta">#${escapeHtml(String(c.conversacion_id))} · ${formatearHoraCorta(c.iniciado_en)} — ${escapeHtml(c.estado)}${c.via ? ' · ' + escapeHtml(c.via) : ''}${tags}</div>
+        ${c.atendieron ? `<div class="atendio">👤 Atendió: <b>${escapeHtml(c.atendieron)}</b></div>` : ''}`;
       item.onclick = () => abrirConversacionHistorial(c.conversacion_id);
     } else {
       const k = x.k;
@@ -3564,11 +3567,12 @@ function renderResultadosBusqueda(resultados) {
   resultados.forEach(r => {
     const div = document.createElement('div');
     div.className = 'resultado-item';
-    const detalleEstado = r.estado === 'asignada' && r.asesor_nombre ? ` · ${escapeHtml(r.asesor_nombre)}`
+    const detalleEstado = r.estado === 'asignada' && r.asesor_nombre && !r.atendieron ? ` · ${escapeHtml(r.asesor_nombre)}`
                          : r.estado === 'cerrada' && r.etiqueta ? ` · ${escapeHtml(r.etiqueta)}` : '';
     div.innerHTML = `
       <div class="nombre">${escapeHtml(r.usuario_nombre)}</div>
       <div class="datos">${escapeHtml(['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      ${r.atendieron ? `<div class="atendio">👤 Atendió: <b>${escapeHtml(r.atendieron)}</b></div>` : ''}
       <div class="fila-estado">
         <span class="estado-pill ${escapeHtml(r.estado)}">${escapeHtml(ETIQUETAS_ESTADO[r.estado] || r.estado)}${detalleEstado}</span>
         <span style="font-size:11.5px;color:var(--texto-suave);">${formatearFechaHoraCompleta(r.cerrado_en || r.asignado_en || r.iniciado_en)}</span>
@@ -3790,7 +3794,7 @@ function abrirLectura(r) {
     ['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · ');
   document.getElementById('lecFecha').textContent = 'Inició: ' + formatearFechaHoraCompleta(r.iniciado_en)
     + (r.cerrado_en ? ' · Cerró: ' + formatearFechaHoraCompleta(r.cerrado_en) : '');
-  const detalle = r.estado === 'cerrada' ? r.etiqueta : (r.estado === 'asignada' ? r.asesor_nombre : null);
+  const detalle = [r.estado === 'cerrada' ? r.etiqueta : null, r.atendieron ? 'Atendió: ' + r.atendieron : (r.estado === 'asignada' ? r.asesor_nombre : null)].filter(Boolean).join(' · ');
   document.getElementById('lecEstado').textContent =
     (ETIQUETAS_ESTADO[r.estado] || r.estado) + (detalle ? ' · ' + detalle : '') + (r.campana ? ' · ' + r.campana : '');
   document.getElementById('lecPdf').href =

@@ -109,10 +109,45 @@ def memoria_limite_mb():
     return None
 
 
-def _cpu_segundos() -> float:
+def _cpu_contenedor():
+    """Segundos de CPU usados por TODO el contenedor (cgroup), contados en tiempo real: incluye los procesos que leen
+    PDF mientras corren. None si el contenedor no expone el contador."""
+    try:
+        with open("/sys/fs/cgroup/cpu.stat") as f:          # cgroup v2: usage_usec en microsegundos
+            for linea in f:
+                if linea.startswith("usage_usec "):
+                    return int(linea.split()[1]) / 1e6
+    except (OSError, ValueError, IndexError):
+        pass
+    for ruta in ("/sys/fs/cgroup/cpuacct/cpuacct.usage", "/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage"):
+        valor = _leer_numero(ruta)                          # cgroup v1: nanosegundos
+        if valor:
+            return valor / 1e9
+    return None
+
+
+def _cpu_procesos() -> float:
+    """Respaldo: CPU del proceso principal + la de los procesos hijos ya terminados (estos se suman recién al
+    terminar, por eso esta medida puede dar picos falsos sobre 100 %)."""
     yo = resource.getrusage(resource.RUSAGE_SELF)
     hijos = resource.getrusage(resource.RUSAGE_CHILDREN)   # procesos que leen PDF (pypdf)
     return yo.ru_utime + yo.ru_stime + hijos.ru_utime + hijos.ru_stime
+
+
+_FUENTE_CPU = None   # se decide en la primera lectura y no cambia (mezclar contadores daría saltos falsos)
+
+
+def _cpu_segundos() -> float:
+    global _FUENTE_CPU
+    if _FUENTE_CPU is None:
+        _FUENTE_CPU = "contenedor" if _cpu_contenedor() is not None else "proceso"
+    if _FUENTE_CPU == "contenedor":
+        valor = _cpu_contenedor()
+        if valor is not None:
+            return valor
+        _FUENTE_CPU = "proceso"
+        _ultimo["cpu_t"] = None    # cambio de contador: se descarta la muestra que comparaba ambos
+    return _cpu_procesos()
 
 
 def muestrear(bd_en_uso: int):
@@ -240,7 +275,8 @@ def datos(desde, hasta, ahora: dict) -> dict:
     resultado = {
         "ahora": {**ahora, "instancia": INSTANCIA, "revision": REVISION, "minutos_encendido": int((time.time() - _INICIO) / 60),
                   "memoria_mb": round(mem, 1), "memoria_limite_mb": memoria_limite_mb(), "fuente_memoria": fuente,
-                  "cpu_pct": round(_ultimo["cpu_pct"], 1) if _ultimo["cpu_pct"] is not None else None},
+                  "cpu_pct": round(_ultimo["cpu_pct"], 1) if _ultimo["cpu_pct"] is not None else None,
+                  "fuente_cpu": _FUENTE_CPU},
         "disponible": True,
     }
     conn = get_connection()
