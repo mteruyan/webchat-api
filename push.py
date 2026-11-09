@@ -70,6 +70,10 @@ PLANTILLAS = {
         ("Última entrega de tu ciclo ({n} de {total})", "{hola}. Coordínala hoy con Sofi desde el chat."),
         ("Tu entrega final ya se puede coordinar", "Es la entrega {n} de {total}. Escríbenos cuando quieras programarla."),
     ],
+    "turno": [
+        ("Ya casi es tu turno", "{hola}. Vuelve al chat de Sanitas: un asesor te atenderá en un momento."),
+        ("Sanitas: te toca en un momento", "{hola}. Entra al chat para que el asesor te atienda."),
+    ],
     "prueba": [
         ("Avisos de Sanitas activados", "{hola}. Así te avisaremos cuando tengas una novedad."),
         ("Todo listo con tus avisos", "Te llegarán aquí cuando tu asesor te responda."),

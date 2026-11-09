@@ -15,9 +15,11 @@ import re
 import uuid
 import secrets
 import json
+import html as html_lib
 import asyncio
 import contextlib
 import time
+import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import logging
@@ -51,6 +53,8 @@ import usuarios_sofi
 import totp
 import recordatorios
 import push
+import espera_cola
+import promo_datos
 import temas_consulta
 import verificacion_whatsapp
 import monitoreo
@@ -386,7 +390,38 @@ _ARCHIVOS_APP = {
     "icon-192.png": "image/png", "icon-512.png": "image/png",
     "icon-maskable-512.png": "image/png", "apple-touch-icon.png": "image/png",
     "icon-notif-192.png": "image/png", "badge-96.png": "image/png",
+    "og-sanitas.jpg": "image/jpeg",
 }
+
+# Vista previa del enlace (Open Graph) en WhatsApp, Mensajes de Android/iPhone, Facebook, etc.: título, descripción e
+# imagen de Sanitas en vez de un enlace "desnudo". Se usa en /app/i (enlaces de los SMS) y en /app.
+_URL_PUBLICA = (os.environ.get("URL_APP_ENLACES", "https://api.sanitasperu.com/app/i").split("/app", 1)[0]
+                or "https://api.sanitasperu.com")
+OG_TITULO = "Sofi — Chat oficial de Sanitas Perú"
+OG_DESCRIPCION = ("Escríbenos por el chat oficial de Sanitas: tu plan de salud, medicamentos y más, "
+                  "con un asesor cuando lo necesites.")
+
+
+def _meta_og(url: str) -> str:
+    img = f"{_URL_PUBLICA}/app/og-sanitas.jpg"
+    e = html_lib.escape
+    return f"""<meta name="description" content="{e(OG_DESCRIPCION)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Sanitas Perú">
+<meta property="og:locale" content="es_PE">
+<meta property="og:title" content="{e(OG_TITULO)}">
+<meta property="og:description" content="{e(OG_DESCRIPCION)}">
+<meta property="og:url" content="{e(url)}">
+<meta property="og:image" content="{e(img)}">
+<meta property="og:image:secure_url" content="{e(img)}">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Sofi, la agente virtual de Sanitas Perú">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{e(OG_TITULO)}">
+<meta name="twitter:description" content="{e(OG_DESCRIPCION)}">
+<meta name="twitter:image" content="{e(img)}">"""
 
 
 @app.get("/app")
@@ -399,6 +434,38 @@ def pwa_pantalla():
 def pwa_service_worker():
     return FileResponse("static/app/sw.js", media_type="application/javascript",
                         headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/app"})
+
+
+@app.get("/app/i")
+def pwa_abrir_enlace():
+    """Puerta de los enlaces de los SMS. Si se abrió dentro del app (Android la abre sola cuando está instalada) o
+    el navegador sabe que el app está instalada, sigue al app (/app) con los mismos parámetros; si no, a la página
+    web del widget, como siempre. Los parámetros (wcs, ad, af, ac, es) los lee el widget en cualquiera de los dos."""
+    web = (supervisor.obtener_configuracion("widget_url") or "").strip() or SMS_INVITACION_LINK.split("?")[0]
+    html = """<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sofi — Chat oficial de Sanitas Perú</title>
+__OG__
+<link rel="manifest" href="/app/manifest.webmanifest"><meta name="theme-color" content="#0A4C8C">
+<link rel="icon" href="/app/icon-192.png"><link rel="apple-touch-icon" href="/app/apple-touch-icon.png">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0A4C8C;color:#fff;
+font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px}</style></head>
+<body><div>Abriendo el chat de Sanitas…</div><script>
+(async function () {
+  var WEB = __WEB__;
+  var q = location.search.replace(/^[?]/, "");
+  var enApp = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (!enApp && navigator.getInstalledRelatedApps) {
+    try {
+      var apps = await Promise.race([navigator.getInstalledRelatedApps(),
+        new Promise(function (ok) { setTimeout(function () { ok([]); }, 600); })]);
+      enApp = !!(apps && apps.length);
+    } catch (e) { /* sigue a la web */ }
+  }
+  location.replace(enApp ? "/app" + (q ? "?" + q : "") : WEB + (q ? (WEB.indexOf("?") >= 0 ? "&" : "?") + q : ""));
+})();
+</script></body></html>""".replace("__WEB__", json.dumps(web).replace("<", "\\u003c")).replace(
+        "__OG__", _meta_og(f"{_URL_PUBLICA}/app"))
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/app/{archivo}")
@@ -437,6 +504,37 @@ _HEADERS_CONSOLA = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "same-origin",
 }
+
+
+# ---------------------------------------------------------------------------
+# Versión: tras un deploy, las consolas siguen conectadas en vivo a la versión anterior (Cloud Run no corta esas
+# conexiones) y los clientes nuevos entran por la nueva, así que sus mensajes llegan tarde a la asesora. Cada
+# consola compara cada minuto esta versión con la de su conexión: si cambió, se reconecta sola; si además cambió
+# su pantalla (asesor.html / supervisor.html), muestra "Hay una versión nueva · Actualizar".
+# ---------------------------------------------------------------------------
+VERSION_SERVIDOR = os.environ.get("K_REVISION") or f"local-{int(time.time())}"
+_ARCHIVOS_PANTALLA = {"asesor": ("static/asesor.html",),
+                      "supervisor": ("static/supervisor.html", "static/supervisor_resumen.js")}
+_hash_pantallas: dict = {}
+
+
+def _version_consolas() -> dict:
+    if not _hash_pantallas:
+        for nombre, archivos in _ARCHIVOS_PANTALLA.items():
+            h = hashlib.sha1()
+            for a in archivos:
+                try:
+                    with open(a, "rb") as f:
+                        h.update(f.read())
+                except OSError:
+                    pass
+            _hash_pantallas[nombre] = h.hexdigest()[:12]
+    return {"servidor": VERSION_SERVIDOR, "pantallas": dict(_hash_pantallas)}
+
+
+@app.get("/consola/version")
+def consola_version():
+    return JSONResponse(_version_consolas(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/asesor")
@@ -802,8 +900,58 @@ async def upload(
 
     await asyncio.to_thread(_subir_a_bucket, os.environ["GCS_BUCKET"], nombre_archivo, contenido, tipo_subida)
 
+    await asyncio.to_thread(_guardar_nombre_archivo, nombre_archivo, nombre_original, conversacion_id)
     url = await asyncio.to_thread(_generar_url_firmada, nombre_archivo, 60)
     return {"url": url, "ruta": nombre_archivo}
+
+
+# Nombre original de cada archivo subido (en el bucket se guarda como webchat/<uuid>.<ext>): para mostrar
+# "receta_octubre.pdf" en vez de "Documento PDF". Tabla: migracion_nombres_archivos.sql. Si aún no existe, no se
+# guarda ni se muestra el nombre, sin errores.
+_NOMBRES_GENERICOS = {"blob", "image", "imagen", "file", "archivo", "audio", "recording", "grabacion"}
+
+
+def _limpiar_nombre_archivo(nombre) -> str | None:
+    base = re.split(r"[\\/]", str(nombre or ""))[-1]
+    base = "".join(c for c in base if c.isprintable()).strip()[:150]
+    if not base or base.rsplit(".", 1)[0].lower() in _NOMBRES_GENERICOS:
+        return None
+    return base
+
+
+def _guardar_nombre_archivo(ruta: str, nombre_original, conversacion_id=None):
+    nombre = _limpiar_nombre_archivo(nombre_original)
+    if not nombre:
+        return
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO archivos_nombres (ruta, nombre, conversacion_id, creado_en)
+                           VALUES (%s, %s, %s, %s) ON CONFLICT (ruta) DO NOTHING""",
+                        (ruta, nombre, int(conversacion_id) if str(conversacion_id or "").isdigit() else None,
+                         datetime.now(LIMA_TZ)))
+        conn.commit()
+    except Exception as e:  # noqa: BLE001 — un nombre que no se guarda no debe impedir el envío del archivo
+        conn.rollback()
+        logger.warning("No se guardó el nombre del archivo %s: %s", ruta, str(e)[:150])
+    finally:
+        release_connection(conn)
+
+
+def _nombres_de_archivos(cur, rutas) -> dict:
+    """{ruta: nombre original} de las rutas dadas ({} si la tabla aún no existe)."""
+    rutas = [r for r in set(rutas) if r]
+    if not rutas:
+        return {}
+    try:
+        cur.execute("SAVEPOINT nombres_archivos")
+        cur.execute("SELECT ruta, nombre FROM archivos_nombres WHERE ruta = ANY(%s)", (rutas,))
+        nombres = dict(cur.fetchall())
+        cur.execute("RELEASE SAVEPOINT nombres_archivos")
+        return nombres
+    except Exception:  # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT nombres_archivos")
+        return {}
 
 
 def _verificar_staff_por_query(token: str | None) -> int:
@@ -1320,6 +1468,9 @@ async def _notificar_escuchas_mensajes_nuevos(conversacion_id: int, desde_id: in
 async def _procesar_eventos_bot(conversacion_id: int, websocket: WebSocket, eventos: list):
     """Manda los eventos del bot al widget y, si alguno es 'en_cola', dispara
     el intento de asignación inmediata."""
+    if any(e.get("type") == "_celular_verificado" for e in eventos or []):
+        # Al final de este turno: invitación a actualizar celular/correo en la landing de Sanitas.
+        _lanzar_tarea(_invitar_actualizacion(conversacion_id, "celular", websocket, espera_seg=1.5))
     for evento in eventos:
         if evento.get("type") == "_plan_solicitud":
             _lanzar_tarea(_plan_asignar_y_avisar())   # solicitud de plan nueva: al backoffice
@@ -1334,6 +1485,7 @@ async def _procesar_eventos_bot(conversacion_id: int, websocket: WebSocket, even
                 texto = (await asyncio.to_thread(supervisor.obtener_configuracion, "mensaje_en_cola_guardado")
                          or MENSAJES_AUTOMATICOS["mensaje_en_cola_guardado"]["default"])
                 await websocket.send_json({"type": "aviso_cola", "payload": {"texto": texto}})
+            await _enviar_espera(conversacion_id, websocket)   # en cola o ya en la bandeja de la asesora
 
 
 def _obtener_historial(conversacion_id: int) -> list:
@@ -1483,6 +1635,57 @@ def _buscar_en_historial(sesion_token: str, conversacion_actual: int, consulta) 
     return r
 
 
+ARCHIVOS_MAX = 150
+
+
+def _archivos_del_historial(sesion_token: str, conversacion_actual: int) -> dict:
+    """Archivos intercambiados (fotos, documentos, notas de voz) de las conversaciones del cliente, del más reciente
+    al más antiguo, con quién lo envió. Mismo alcance que la búsqueda: verificado, sus conversaciones de los últimos
+    HISTORIAL_PREVIO_DIAS días; sin verificar, solo la actual."""
+    r = {"archivos": [], "alcance": "actual"}
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            alcance = _alcance_busqueda(cur, sesion_token, conversacion_actual)
+            if not alcance:
+                conn.rollback()
+                return r
+            usuario_id, verificado, desde = alcance
+            r["alcance"] = "todo" if verificado else "actual"
+            cur.execute(
+                """SELECT m.id, m.conversacion_id, m.emisor_tipo, m.contenido, m.metadata, m.enviado_en, cam.nombre,
+                          a.nombre_display
+                   FROM mensajes m
+                   JOIN conversaciones c ON c.id = m.conversacion_id
+                   LEFT JOIN campanas cam ON cam.id = c.campana_id
+                   LEFT JOIN asesores a ON a.id = m.emisor_id AND m.emisor_tipo IN ('asesor', 'supervisor')
+                   WHERE c.usuario_id = %s
+                     AND (c.id = %s OR (%s AND m.enviado_en >= %s))
+                     AND m.tipo_contenido = 'archivo' AND m.contenido LIKE 'webchat/%%'
+                   ORDER BY m.id DESC LIMIT %s""",
+                (usuario_id, conversacion_actual, verificado, desde, ARCHIVOS_MAX + 20))
+            filas = cur.fetchall()
+            nombres = _nombres_de_archivos(cur, [f[3] for f in filas])
+        conn.rollback()
+    except Exception:
+        conn.rollback()
+        logger.exception("No se pudo listar los archivos del widget")
+        return r
+    finally:
+        release_connection(conn)
+    for mid, conv, emisor, ruta, meta, ts, campana, asesor in filas:
+        if _parsear_metadata(meta).get("eliminado_en"):
+            continue
+        r["archivos"].append({"id": mid, "conversacion_id": conv, "emisor_tipo": emisor, "ruta": ruta,
+                              "nombre": nombres.get(ruta),
+                              "asesor": (asesor or "").split()[0] if asesor else None,
+                              "enviado_en": ts.isoformat(), "campana": campana,
+                              "es_actual": conv == conversacion_actual})
+        if len(r["archivos"]) >= ARCHIVOS_MAX:
+            break
+    return r
+
+
 def _contexto_de_mensaje(sesion_token: str, conversacion_actual: int, mensaje_id) -> dict:
     """La conversación de un resultado de búsqueda, alrededor del mensaje encontrado (para leerlo en contexto)."""
     try:
@@ -1514,6 +1717,7 @@ def _contexto_de_mensaje(sesion_token: str, conversacion_actual: int, mensaje_id
                             WHERE conversacion_id = %s AND id > %s AND tipo_contenido IN ('texto', 'archivo', 'boton_click')
                             ORDER BY id LIMIT 15)""", (conv[0], mid, conv[0], mid))
             filas = sorted(cur.fetchall(), key=lambda f: f[0])
+            nombres = _nombres_de_archivos(cur, [f[3] for f in filas if f[2] == "archivo"])
         conn.rollback()
     except Exception:
         conn.rollback()
@@ -1526,7 +1730,7 @@ def _contexto_de_mensaje(sesion_token: str, conversacion_actual: int, mensaje_id
         if _parsear_metadata(meta).get("eliminado_en"):
             contenido = ""
         if tipo == "archivo":
-            contenido = "📎 " + (str(contenido or "").rsplit("/", 1)[-1] or "Archivo")
+            contenido = "📎 " + (nombres.get(contenido) or str(contenido or "").rsplit("/", 1)[-1] or "Archivo")
         mensajes.append({"id": i, "emisor_tipo": emisor, "tipo_contenido": tipo, "contenido": contenido or "",
                          "enviado_en": ts.isoformat()})
     return {"ok": True, "objetivo": mid, "conversacion_id": conv[0], "es_actual": conv[0] == conversacion_actual,
@@ -1900,6 +2104,7 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
 
     # Encuesta de satisfacción (solo campañas con la encuesta activada y si hubo un asesor; ver encuesta.py).
     # Si el cliente no tiene el chat abierto, queda pendiente y se le muestra al volver (dentro de 24 h).
+    datos_encuesta = None
     try:
         datos_encuesta = await asyncio.to_thread(encuesta.crear_si_corresponde, conversacion_id)
         if datos_encuesta and conversacion_id in manager.widget_connections:
@@ -1909,6 +2114,9 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
                 await asyncio.to_thread(encuesta.marcar_entregada, datos_encuesta["encuesta_id"])
     except Exception:
         logger.warning("No se pudo enviar la encuesta de la conversación %s", conversacion_id, exc_info=True)
+    # Invitación a actualizar datos: si hay encuesta, después de que la responda u omita (no compiten).
+    if conversacion_id in manager.widget_connections and not datos_encuesta:
+        _lanzar_tarea(_invitar_actualizacion(conversacion_id, "cierre", espera_seg=2))
 
     # El conteo "Atendidas hoy" de la cabecera del asesor sube con cada cierre.
     asesor_de_la_conversacion = _obtener_asesor_actual(conversacion_id)
@@ -2983,8 +3191,10 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                 nombre = await asyncio.to_thread(_nombre_asesor_de_conversacion, conv_id)
                 if nombre:
                     await websocket.send_json({"type": "asignado", "payload": {"asesor_nombre": nombre}})
+                    await _enviar_espera(conv_id, websocket)   # si la asesora aún no le escribe
             elif estado == "en_cola":
                 await websocket.send_json({"type": "en_cola", "payload": {}})
+                await _enviar_espera(conv_id, websocket)
             elif estado == "bot":
                 # Si se había quedado esperando el código SMS, los botones de
                 # "Reenviar código"/"Llamarme" no forman parte del historial:
@@ -3113,6 +3323,16 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         await websocket.send_json({"type": "resultado_busqueda", "payload": resultado})
                         continue
 
+                    if tipo == "aviso_turno":
+                        await asyncio.to_thread(espera_cola.pedir_aviso, conversacion_id, bool(payload.get("pedir", True)))
+                        await _enviar_espera(conversacion_id, websocket)
+                        continue
+
+                    if tipo == "listar_archivos":
+                        resultado = await asyncio.to_thread(_archivos_del_historial, nuevo_token, conversacion_id)
+                        await websocket.send_json({"type": "archivos_historial", "payload": resultado})
+                        continue
+
                     if tipo == "contexto_mensaje":
                         resultado = await asyncio.to_thread(_contexto_de_mensaje, nuevo_token, conversacion_id,
                                                             payload.get("id"))
@@ -3164,10 +3384,21 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                                                    "payload": {**r, "encuesta_id": payload.get("encuesta_id")}})
                         if r.get("ok"):
                             _tarea_de_fondo(_despues_de_encuesta(int(payload.get("encuesta_id"))))
+                            if conversacion_id:
+                                _lanzar_tarea(_invitar_actualizacion(conversacion_id, "cierre", websocket, espera_seg=1.5))
                         continue
 
                     if tipo == "omitir_encuesta":
                         await asyncio.to_thread(encuesta.omitir, payload.get("encuesta_id"), nuevo_token)
+                        if conversacion_id:
+                            _lanzar_tarea(_invitar_actualizacion(conversacion_id, "cierre", websocket, espera_seg=0.5))
+                        continue
+
+                    if tipo == "actualizacion_datos_evento":
+                        if conversacion_id:
+                            usuario_id = await asyncio.to_thread(_usuario_de_conversacion, conversacion_id)
+                            await asyncio.to_thread(promo_datos.registrar, usuario_id, conversacion_id,
+                                                    str(payload.get("lugar") or ""), str(payload.get("evento") or ""))
                         continue
 
                     if tipo == "reiniciar_datos":
@@ -3982,8 +4213,7 @@ def _enviar_sms_respuesta(accion: dict) -> bool:
     widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
     if not widget_url or not accion.get("telefono") or not accion.get("sesion_token"):
         return False
-    separador = "&" if "?" in widget_url else "?"
-    link = f"{widget_url}{separador}wcs={accion['sesion_token']}"
+    link = _enlace_sms(f"wcs={accion['sesion_token']}", widget_url)
     plantilla = (supervisor.obtener_configuracion("mensaje_sms_respuesta_asesor")
                  or MENSAJES_AUTOMATICOS["mensaje_sms_respuesta_asesor"]["default"])
     asesor = (accion.get("asesor") or "").split()[0] if accion.get("asesor") else ""
@@ -3991,6 +4221,143 @@ def _enviar_sms_respuesta(accion: dict) -> bool:
     if "{{LINK}}" not in plantilla:
         mensaje = f"{mensaje} {link}"
     return bool(enviar_sms_danaconnect(accion["telefono"], mensaje))
+
+
+# ---------------------------------------------------------------------------
+# Espera en cola: posición, tiempo estimado y "Avísame cuando me toque" (ver espera_cola.py).
+# ---------------------------------------------------------------------------
+_espera_enviada: dict = {}   # conversacion_id -> último payload mandado al widget (solo se reenvía si cambia)
+
+
+def _umbral_aviso_cola() -> int:
+    return _cfg_entero("cola_aviso_minutos", 1, 240, espera_cola.UMBRAL_DEFECTO)
+
+
+async def _enviar_espera(conversacion_id: int, websocket=None):
+    """Manda al widget su posición y espera estimada (al entrar a la cola, al reconectar y al pedir el aviso)."""
+    try:
+        lista = await asyncio.to_thread(espera_cola.estado_colas, _umbral_aviso_cola(), conversacion_id)
+    except Exception:
+        logger.warning("No se pudo estimar la espera de %s", conversacion_id, exc_info=True)
+        return
+    if not lista:
+        return
+    payload = espera_cola.para_widget(lista[0])
+    _espera_enviada[conversacion_id] = payload
+    evento = {"type": "espera_cola", "payload": payload}
+    if websocket is not None:
+        try:
+            await websocket.send_json(evento)
+        except Exception:
+            pass
+    else:
+        await manager.enviar_a_widget(conversacion_id, evento)
+    await _invitar_actualizacion(conversacion_id, "espera", websocket)
+
+
+# ---------------------------------------------------------------------------
+# Invitación a actualizar celular y correo en la landing oficial (ver promo_datos.py).
+# ---------------------------------------------------------------------------
+def _usuario_de_conversacion(conversacion_id: int) -> int | None:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT usuario_id FROM conversaciones WHERE id = %s", (conversacion_id,))
+            f = cur.fetchone()
+        conn.rollback()
+        return f[0] if f else None
+    finally:
+        release_connection(conn)
+
+
+async def _invitar_actualizacion(conversacion_id: int, lugar: str, websocket=None, espera_seg: float = 0):
+    try:
+        url = (supervisor.obtener_configuracion("actualizacion_datos_url") or "").strip()
+        if url.lower() in ("no", "0", "-"):
+            return
+        url = url or promo_datos.URL_DEFECTO
+        if espera_seg:
+            await asyncio.sleep(espera_seg)
+        usuario_id = await asyncio.to_thread(_usuario_de_conversacion, conversacion_id)
+        dias = _cfg_entero("actualizacion_datos_dias", 7, 730, promo_datos.DIAS_SILENCIO_DEFECTO)
+        datos = await asyncio.to_thread(promo_datos.decidir, usuario_id, conversacion_id, lugar, url, dias)
+        if not datos:
+            return
+        evento = {"type": "actualizacion_datos", "payload": datos}
+        if websocket is not None:
+            await websocket.send_json(evento)
+        else:
+            await manager.enviar_a_widget(conversacion_id, evento)
+    except Exception:
+        logger.warning("No se pudo invitar a actualizar datos (%s, %s)", conversacion_id, lugar, exc_info=True)
+
+
+def _avisar_turno(e: dict) -> str:
+    """Push + SMS "ya casi es tu turno" con el enlace a su conversación. Devuelve los canales que salieron."""
+    cid = e["conversacion_id"]
+    canales = []
+    if e.get("respondio"):
+        # La asesora ya le escribió: el push de "te respondió" sale solo; aquí va el SMS de inmediato.
+        ok = _enviar_sms_respuesta({"telefono": e.get("celular"), "sesion_token": e.get("sesion_token"),
+                                    "asesor": e.get("asesor")}) if e.get("celular") else False
+        avisos_cliente.registrar(cid, "sms", "turno_respondio", ok)
+        resultado = "sms" if ok else "ninguno"
+        espera_cola.marcar_enviado(cid, resultado)
+        logger.info("Aviso (ya le respondieron) a la conversación %s: %s", cid, resultado)
+        return resultado
+    try:
+        r = push.avisar_usuario(e.get("usuario_id"), "turno", cid, respetar_pausa=False) or {}
+        if r.get("enviados"):
+            canales.append("push")
+            avisos_cliente.registrar(cid, "push", "turno")
+    except push.PushNoConfigurado:
+        pass
+    except Exception:
+        logger.warning("No se pudo mandar el push de turno a %s", cid, exc_info=True)
+    if e.get("celular") and e.get("sesion_token"):
+        plantilla = (supervisor.obtener_configuracion("mensaje_sms_turno")
+                     or MENSAJES_AUTOMATICOS["mensaje_sms_turno"]["default"])
+        link = _enlace_sms(f"wcs={e['sesion_token']}")
+        mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
+        ok = bool(enviar_sms_danaconnect(e["celular"], mensaje))
+        avisos_cliente.registrar(cid, "sms", "turno", ok)
+        if ok:
+            canales.append("sms")
+    resultado = ",".join(canales) or "ninguno"
+    espera_cola.marcar_enviado(cid, resultado)
+    logger.info("Aviso de turno a la conversación %s: %s", cid, resultado)
+    return resultado
+
+
+async def _revisar_colas():
+    """Cada 30 s: actualiza la posición y espera estimada en el widget de quienes esperan (en cola o en la bandeja de
+    su asesora sin primera respuesta; solo si cambió) y avisa a quienes pidieron "Avísame" cuando les queda 1
+    persona antes (o de inmediato si la asesora ya les respondió)."""
+    lista = await asyncio.to_thread(espera_cola.estado_colas, _umbral_aviso_cola())
+    vigentes = set()
+    for e in lista:
+        cid = e["conversacion_id"]
+        vigentes.add(cid)
+        if cid in manager.widget_connections:
+            payload = espera_cola.para_widget(e)
+            if _espera_enviada.get(cid) != payload:
+                _espera_enviada[cid] = payload
+                await manager.enviar_a_widget(cid, {"type": "espera_cola", "payload": payload})
+        if e["aviso_pedido"] and not e["aviso_enviado"] and e["personas_antes"] <= espera_cola.AVISAR_CON_PERSONAS_ANTES:
+            if manager.cliente_mirando(cid):
+                await asyncio.to_thread(espera_cola.marcar_enviado, cid, "en_pantalla")
+            else:
+                await asyncio.to_thread(_avisar_turno, e)
+    for a in await asyncio.to_thread(espera_cola.respondidas_con_aviso_pendiente):
+        if manager.cliente_mirando(a["conversacion_id"]):
+            await asyncio.to_thread(espera_cola.marcar_enviado, a["conversacion_id"], "en_pantalla")
+        else:
+            await asyncio.to_thread(_avisar_turno, a)
+    # Ya no espera (la asesora le respondió, se cerró, etc.): se quita la tarjeta del widget.
+    for cid in [c for c in _espera_enviada if c not in vigentes]:
+        _espera_enviada.pop(cid, None)
+        if cid in manager.widget_connections:
+            await manager.enviar_a_widget(cid, {"type": "espera_cola", "payload": {}})
 
 
 async def _revisar_avisos_no_leidos():
@@ -4042,8 +4409,7 @@ def _enviar_encuestas_sms():
         _cfg_entero("encuesta_sms_espera_minutos", 5, 240, 10), campanas or None,
         _cfg_entero("encuesta_sms_tope_diario", 0, 5000, 100), ahora)
     for p in pendientes:
-        separador = "&" if "?" in widget_url else "?"
-        link = f"{widget_url}{separador}es={p['codigo']}"
+        link = _enlace_sms(f"es={p['codigo']}", widget_url)
         mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
         ok = bool(enviar_sms_danaconnect(p["telefono"], mensaje))
         encuesta.resultado_sms(p["encuesta_id"], ok)
@@ -4079,6 +4445,11 @@ async def _loop_inactividad():
                 await asyncio.to_thread(_enviar_encuestas_sms)
             except Exception:
                 logger.exception("Error enviando encuestas por SMS")
+        if vuelta % 3 == 1:   # cada 30 s: posición y espera estimada de quienes están en cola; aviso de turno
+            try:
+                await _revisar_colas()
+            except Exception:
+                logger.exception("Error revisando la espera en cola")
         if vuelta % 2 == 1:   # cada 20 s: respuestas del asesor que el cliente no ha leído
             try:
                 await _revisar_avisos_no_leidos()
@@ -4413,6 +4784,31 @@ def _limpiar_pausa(conversacion_id: int) -> bool:
 # el enlace directo a esa conversación.
 SMS_INVITACION_LINK = "https://sanitasperu.com/?ac=1"
 
+# Enlaces de los SMS que abren el chat (invitación, enlace directo, archivo, respuesta del asesor, encuesta...):
+# apuntan a /app/i, dentro del alcance del app. En Android, si el cliente tiene instalada el app, el celular abre
+# el enlace directamente en el app; si no la tiene (o es iPhone, que no lo permite), /app/i lo manda a la página
+# web de siempre (widget_url) con los mismos parámetros. Se desactiva en el Editor con sms_abrir_en_app = no.
+URL_APP_ENLACES = os.environ.get("URL_APP_ENLACES", "https://api.sanitasperu.com/app/i")
+
+
+def _sms_abre_app() -> bool:
+    valor = (supervisor.obtener_configuracion("sms_abrir_en_app") or "si").strip().lower()
+    return valor not in ("no", "0", "false", "off")
+
+
+def _base_enlaces_sms(widget_url: str | None = None) -> str:
+    """Base de los enlaces de los SMS: /app/i (abre el app si está instalada) o la página web del widget."""
+    if _sms_abre_app():
+        return URL_APP_ENLACES
+    return ((widget_url if widget_url is not None else (supervisor.obtener_configuracion("widget_url") or "")).strip()
+            or SMS_INVITACION_LINK.split("?")[0])
+
+
+def _enlace_sms(parametro: str, widget_url: str | None = None) -> str:
+    """Enlace para un SMS con un parámetro del widget (p. ej. 'wcs=<sesión>', 'ad=<token>', 'ac=1')."""
+    base = _base_enlaces_sms(widget_url)
+    return f"{base}{'&' if '?' in base else '?'}{parametro}"
+
 # Límites del SMS de invitación (en memoria, por instancia): evitan que un
 # clic repetido o un error de digitación dispare muchos SMS al mismo número,
 # y que una sola cuenta mande SMS en masa.
@@ -4523,10 +4919,12 @@ def _enviar_sms_invitacion(celular_crudo, remitente_id: int, texto=None, campana
             _campanas_permitidas_para_sms(remitente_id))
         if token_directo is None:
             return {"ok": False, "motivo": destino_nombre}
-        mensaje = mensaje.replace(SMS_INVITACION_LINK, f"{SMS_INVITACION_LINK.split('?')[0]}?ad={token_directo}")
-        if len(mensaje) > SMS_INVITACION_MAX_CARACTERES:
+    # El texto lleva el enlace fijo de la plantilla; aquí se cambia por el real (que abre el app si está instalada).
+    mensaje = mensaje.replace(SMS_INVITACION_LINK, _enlace_sms(f"ad={token_directo}" if token_directo else "ac=1"))
+    if len(mensaje) > SMS_INVITACION_MAX_CARACTERES:
+        if token_directo:
             enlaces_directos.borrar_enlace(token_directo)
-            return {"ok": False, "motivo": f"Con el enlace directo el mensaje tiene {len(mensaje)} caracteres; el máximo es {SMS_INVITACION_MAX_CARACTERES}. Acórtalo un poco."}
+        return {"ok": False, "motivo": f"Con el enlace el mensaje tiene {len(mensaje)} caracteres; el máximo es {SMS_INVITACION_MAX_CARACTERES}. Acórtalo un poco."}
 
     if not enviar_sms_danaconnect(celular, mensaje):
         if token_directo:
@@ -4578,10 +4976,8 @@ def _enviar_archivo_sms(celular_crudo, remitente_id: int, rol: str, ruta, nombre
     if len(recientes) >= _ARCHIVO_SMS_MAX_POR_HORA:
         return {"ok": False, "motivo": f"Llegaste al máximo de {_ARCHIVO_SMS_MAX_POR_HORA} archivos por hora."}
 
-    base = (supervisor.obtener_configuracion("widget_url") or "").strip() or SMS_INVITACION_LINK.split("?")[0]
     token = secrets.token_urlsafe(16)
-    separador = "&" if "?" in base else "?"
-    link = f"{base}{separador}af={token}"
+    link = _enlace_sms(f"af={token}")
     mensaje = TEXTO_SMS_ARCHIVO.replace("{{LINK}}", link)
 
     conn = get_connection()
@@ -4943,8 +5339,7 @@ def _enviar_sms_saliente(conversacion_id: int, remitente_id: int) -> dict:
     if not telefono:
         return {"ok": False, "motivo": "Este cliente no tiene un celular registrado."}
 
-    separador = "&" if "?" in widget_url else "?"
-    link = f"{widget_url}{separador}wcs={sesion_token}"
+    link = _enlace_sms(f"wcs={sesion_token}", widget_url)
     plantilla = (
         supervisor.obtener_configuracion("mensaje_sms_saliente")
         or MENSAJES_AUTOMATICOS["mensaje_sms_saliente"]["default"]
@@ -5519,7 +5914,11 @@ def obtener_nota_cliente(conversacion_id: int, authorization: str | None = Heade
     documento = _documento_cliente(conversacion_id)
     if not documento:
         return {"documento": None, "nota": None}
+    return _leer_nota_cliente(documento)
 
+
+def _leer_nota_cliente(documento: str) -> dict:
+    """Nota interna vigente de un DNI/RUC (la misma que ve el asesor en la conversación)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -5544,21 +5943,8 @@ def obtener_nota_cliente(conversacion_id: int, authorization: str | None = Heade
     }
 
 
-@app.put("/notas-cliente/{conversacion_id}")
-def guardar_nota_cliente(conversacion_id: int, body: NotaClienteUpdate,
-                          authorization: str | None = Header(None)):
-    """Una sola nota vigente por documento -- cada edición la reemplaza por
-    completo (no es un historial de notas). Guardar una nota vacía la borra."""
-    asesor_id = _verificar_staff(authorization)
-    documento = (body.documento or "").strip() or _documento_cliente(conversacion_id)
-    if not documento:
-        raise HTTPException(
-            status_code=400,
-            detail="No se pudo identificar el DNI/RUC de este cliente todavía "
-                   "-- indícalo manualmente para poder guardar la nota.",
-        )
-
-    nota = (body.nota or "").strip()
+def _escribir_nota_cliente(documento: str, nota: str, asesor_id: int):
+    """Guarda (reemplaza) la nota del documento; vacía la borra."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -5574,9 +5960,33 @@ def guardar_nota_cliente(conversacion_id: int, body: NotaClienteUpdate,
             else:
                 cur.execute("DELETE FROM notas_cliente WHERE documento = %s", (documento,))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         release_connection(conn)
 
+
+def _documento_nota(valor) -> str:
+    return "".join(str(valor or "").split())[:20]
+
+
+@app.put("/notas-cliente/{conversacion_id}")
+def guardar_nota_cliente(conversacion_id: int, body: NotaClienteUpdate,
+                          authorization: str | None = Header(None)):
+    """Una sola nota vigente por documento -- cada edición la reemplaza por
+    completo (no es un historial de notas). Guardar una nota vacía la borra."""
+    asesor_id = _verificar_staff(authorization)
+    documento = (body.documento or "").strip() or _documento_cliente(conversacion_id)
+    if not documento:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo identificar el DNI/RUC de este cliente todavía "
+                   "-- indícalo manualmente para poder guardar la nota.",
+        )
+
+    nota = (body.nota or "").strip()
+    _escribir_nota_cliente(documento, nota, asesor_id)
     return {"documento": documento, "nota": nota or None}
 
 
@@ -5593,6 +6003,26 @@ MENSAJES_AUTOMATICOS = {
     "mensaje_feriado": {
         "etiqueta": "Mensaje por defecto cuando una campaña no atiende por feriado (se usa si el feriado no trae mensaje propio). Puedes usar {{FECHA}} (ej. jueves 8 de octubre) y {{FERIADO}} (nombre del feriado)",
         "default": "Hoy {{FECHA}} es feriado ({{FERIADO}}) y en este momento no estamos atendiendo por este canal. Retomaremos la atención en nuestro próximo día hábil. ¡Gracias por tu comprensión!",
+    },
+    "actualizacion_datos_url": {
+        "etiqueta": "Página oficial para que el cliente actualice su celular y correo. El chat lo invita mientras espera al asesor, al terminar la conversación y al validar su celular (como máximo una vez por conversación). Escribe no para no invitar",
+        "default": "https://actualizaciondatos.sanitasperu.com/",
+    },
+    "actualizacion_datos_dias": {
+        "etiqueta": "Invitación a actualizar datos: días sin volver a mostrarla a un cliente que ya hizo clic o eligió \"Ahora no\". Solo el número, p. ej. 90",
+        "default": "90",
+    },
+    "alerta_encuesta_asesor": {
+        "etiqueta": "Encuesta con nota 1 o 2: escribe si para que el asesor que atendió también reciba la alerta (la misma que el supervisor; si no está conectado, le llega al entrar), o no para que solo la reciba el supervisor",
+        "default": "si",
+    },
+    "cola_aviso_minutos": {
+        "etiqueta": "Clientes que esperan asesor (en cola o en la bandeja de su asesora sin primera respuesta): desde cuántos minutos de espera estimada se les ofrece \"Avísame cuando me toque\" (push y SMS cuando quede 1 persona antes que ellos). Solo el número, p. ej. 15",
+        "default": "15",
+    },
+    "mensaje_sms_turno": {
+        "etiqueta": "SMS al cliente que pidió \"Avísame cuando me toque\", cuando le queda 1 persona antes (en la cola o en la bandeja de su asesora). Usa {{LINK}} para el enlace a su conversación. Sin tildes ni emojis el SMS admite 160 caracteres; con tildes, solo 70",
+        "default": "Sanitas: ya casi es tu turno en el chat. Vuelve aqui para que un asesor te atienda: {{LINK}}",
     },
     "mensaje_en_cola_guardado": {
         "etiqueta": "Aviso al cliente cuando queda en cola esperando un asesor (le explica que su conversación queda guardada si cierra la ventana)",
@@ -5621,6 +6051,10 @@ MENSAJES_AUTOMATICOS = {
     "widget_url": {
         "etiqueta": "URL pública donde vive el widget (la página del sitio de Sanitas que tiene el script del webchat) — se usa para armar el enlace del SMS saliente",
         "default": "",
+    },
+    "sms_abrir_en_app": {
+        "etiqueta": "Enlaces de los SMS (invitación, enlace directo, archivo, respuesta del asesor, encuesta): escribe si para que abran el app Sofi cuando el cliente la tiene instalada en Android (si no la tiene, van a la página web de siempre), o no para que vayan siempre a la página web",
+        "default": "si",
     },
     "plan_salud_activo": {
         "etiqueta": "Mi plan de salud: escribe si para mostrar la opción a todos los clientes, o no para mantenerla oculta (solo la ven los celulares de plan_salud_testers). Aplica al instante, sin desplegar",
@@ -6038,7 +6472,12 @@ def _estadisticas_origen(conn, cur, desde, hasta):
 def estadisticas_app(authorization: str | None = Header(None)):
     """Cuántos clientes instalaron el app y cuántos aceptaron los avisos."""
     _verificar_editor(authorization)
-    return push.estadisticas()
+    r = push.estadisticas()
+    try:
+        r["actualizacion_datos"] = promo_datos.estadisticas()
+    except Exception:
+        logger.warning("No se pudo leer la invitación a actualizar datos", exc_info=True)
+    return r
 
 
 class _CursorFiltroCampana:
@@ -6548,6 +6987,17 @@ def _plantilla_agradecimiento() -> str | None:
             or seguimiento.AGRADECIMIENTO_DEFAULT)
 
 
+def _alerta_encuesta_a_asesor_activa() -> bool:
+    return (supervisor.obtener_configuracion("alerta_encuesta_asesor") or "si").strip().lower() not in ("no", "0", "false")
+
+
+async def _enviar_alerta_encuesta_asesor(asesor_id: int, caso: dict):
+    await manager.enviar_a_asesor(asesor_id, {"type": "alerta_encuesta", "payload": {
+        "texto": seguimiento.texto_alerta(caso), "tipo": caso["tipo"], "caso_id": caso["id"],
+        "conversacion_id": caso["conversacion_id"], "respondida_en": caso.get("respondida_en")}})
+    await asyncio.to_thread(seguimiento.marcar_alerta_asesor, caso["id"])
+
+
 async def _despues_de_encuesta(encuesta_id: int):
     """Encuesta recién respondida: agradecimiento (si corresponde) y, si es un caso para revisar, alerta en la
     consola del supervisor máximo."""
@@ -6560,6 +7010,11 @@ async def _despues_de_encuesta(encuesta_id: int):
             if await asyncio.to_thread(supervisor.obtener_alcance, sid, True) is None:
                 await manager.enviar_a_supervisor(sid, {"type": "alerta_encuesta", "payload": {
                     "texto": texto, "tipo": caso["tipo"], "caso_id": caso["id"], "conversacion_id": caso["conversacion_id"]}})
+        # El mismo mensaje al asesor que lo atendió (nota 1 o 2); si no está conectado, lo verá al volver a entrar.
+        if _alerta_encuesta_a_asesor_activa():
+            asesor_id = await asyncio.to_thread(seguimiento.asesor_del_caso, caso["id"])
+            if asesor_id and asesor_id in manager.asesor_connections:
+                await _enviar_alerta_encuesta_asesor(asesor_id, caso)
     except Exception:
         logger.warning("No se pudo revisar la encuesta %s después de responderla", encuesta_id, exc_info=True)
 
@@ -6625,7 +7080,7 @@ async def seguimiento_enviar(mejora_id: int, request: Request, authorization: st
     claves = cuerpo.get("claves") if isinstance(cuerpo, dict) else None
     widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip() or "https://sanitasperu.com/"
     r = await asyncio.to_thread(seguimiento.enviar, mejora_id, claves if isinstance(claves, list) else [],
-                                asesor_id, widget_url, enviar_sms_danaconnect)
+                                asesor_id, _base_enlaces_sms(widget_url), enviar_sms_danaconnect)
     # Quien está ahora mismo en el chat con el bot lo ve al instante.
     if r.get("ok") and r.get("usuarios"):
         try:
@@ -6968,8 +7423,7 @@ def _link_widget(sesion_token: str | None) -> str | None:
     widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip()
     if not widget_url:
         return None
-    sep = "&" if "?" in widget_url else "?"
-    return f"{widget_url}{sep}wcs={sesion_token}" if sesion_token else f"{widget_url}{sep}ac=1"
+    return _enlace_sms(f"wcs={sesion_token}" if sesion_token else "ac=1", widget_url)
 
 
 async def _avisar_cliente_plan(sid: int):
@@ -7025,6 +7479,10 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
         return
 
     await manager.connect_asesor(asesor_id, websocket)
+    try:
+        await websocket.send_json({"type": "version_servidor", "payload": _version_consolas()})
+    except Exception:
+        pass
     _marcar_conectado(asesor_id)
     # La pausa se restablece ANTES de enviar nada ni de asignar de la cola.
     _cambiar_pausa_asesor(asesor_id, bool(pausado))
@@ -7043,6 +7501,9 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
             "payload": {"ids": [a["conversacion_id"] for a in activas_conexion]},
         })
         await asignacion.asignar_desde_cola_para_asesor(asesor_id, manager)
+        if _alerta_encuesta_a_asesor_activa():   # encuestas con nota 1 o 2 que llegaron mientras no estaba
+            for caso in await asyncio.to_thread(seguimiento.alertas_pendientes_asesor, asesor_id):
+                await _enviar_alerta_encuesta_asesor(asesor_id, caso)
         es_backoffice = await asyncio.to_thread(planes.es_backoffice, asesor_id)
         if es_backoffice:
             await _plan_asignar_y_avisar()
@@ -7692,6 +8153,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
     alcance = supervisor.obtener_alcance(supervisor_id)
     await manager.connect_supervisor(supervisor_id, websocket, alcance)
     try:
+        await websocket.send_json({"type": "version_servidor", "payload": _version_consolas()})
         await manager.enviar_a_supervisor(supervisor_id, await _payload_permisos_supervisor(supervisor_id, alcance))
         await supervisor.enviar_estado_global(supervisor_id, manager)
         await supervisor.enviar_etiquetas(supervisor_id, manager, a_asesor=False)
@@ -8144,6 +8606,26 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 resultado = await asyncio.to_thread(
                     usuarios_sofi.guardar, payload.get("doi"), payload.get("cambios"), supervisor_id)
                 await manager.enviar_a_supervisor(supervisor_id, {"type": "resultado_guardar_usuario_sofi", "payload": resultado})
+
+            elif tipo in ("obtener_nota_doi", "guardar_nota_doi"):
+                # Nota interna del paciente (notas_cliente, por DNI/RUC) desde Mantenimiento de usuarios: la misma
+                # que ve y edita el asesor en la conversación.
+                doi = _documento_nota(payload.get("doi"))
+                if not doi:
+                    resultado = {"ok": False, "motivo": "Falta el DOI."}
+                else:
+                    try:
+                        if tipo == "guardar_nota_doi":
+                            nota = str(payload.get("nota") or "").strip()[:4000]
+                            await asyncio.to_thread(_escribir_nota_cliente, doi, nota, supervisor_id)
+                            logger.info("Nota del documento %s %s por el supervisor %s", doi,
+                                        "guardada" if nota else "borrada", supervisor_id)
+                        resultado = {"ok": True, "guardado": tipo == "guardar_nota_doi",
+                                     **await asyncio.to_thread(_leer_nota_cliente, doi)}
+                    except Exception:
+                        logger.exception("No se pudo leer/guardar la nota del documento %s", doi)
+                        resultado = {"ok": False, "documento": doi, "motivo": "No se pudo acceder a la nota. Intenta de nuevo."}
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "nota_doi", "payload": resultado})
 
             elif tipo == "enviar_sms_invitacion":
                 resultado = await asyncio.to_thread(_enviar_sms_invitacion, payload.get("celular"), supervisor_id, payload.get("texto"),

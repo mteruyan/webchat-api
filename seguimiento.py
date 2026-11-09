@@ -731,6 +731,62 @@ def al_responder(encuesta_id: int, plantilla_agradecimiento: str | None) -> dict
         release_connection(conn)
 
 
+# ---- Aviso al asesor que atendió: cuando el cliente calificó 1 o 2 le llega el mismo mensaje que al supervisor.
+# Si no estaba conectado, le llega al volver a entrar (columna encuesta_casos.notificado_asesor_en,
+# migracion_alerta_encuesta_asesor.sql; sin ella solo se avisa en vivo).
+ALERTA_ASESOR_MAX_NOTA = 2
+ALERTA_ASESOR_DIAS = 7
+
+
+def asesor_del_caso(caso_id: int) -> int | None:
+    """Asesor que atendió la conversación del caso, si la nota fue 1 o 2."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT e.asesor_id FROM encuesta_casos k JOIN encuestas_satisfaccion e ON e.id = k.encuesta_id
+                           WHERE k.id = %s AND e.satisfaccion <= %s""", (caso_id, ALERTA_ASESOR_MAX_NOTA))
+            f = cur.fetchone()
+        conn.rollback()
+        return f[0] if f else None
+    finally:
+        release_connection(conn)
+
+
+def marcar_alerta_asesor(caso_id: int):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE encuesta_casos SET notificado_asesor_en = %s WHERE id = %s AND notificado_asesor_en IS NULL",
+                        (datetime.now(LIMA_TZ), caso_id))
+        conn.commit()
+    except Exception as e:  # noqa: BLE001 — sin la columna, el aviso fue solo en vivo
+        conn.rollback()
+        if not _falta_migracion(e) and "notificado_asesor_en" not in str(e):
+            logger.warning("seguimiento: no se pudo marcar el aviso al asesor del caso %s", caso_id, exc_info=True)
+    finally:
+        release_connection(conn)
+
+
+def alertas_pendientes_asesor(asesor_id: int) -> list[dict]:
+    """Casos de los últimos días (nota 1 o 2) de conversaciones que atendió y que aún no vio."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(_SQL_CASOS + """ WHERE e.asesor_id = %s AND e.satisfaccion <= %s
+                                              AND k.notificado_asesor_en IS NULL AND k.creado_en >= %s
+                                            ORDER BY k.creado_en""",
+                            (asesor_id, ALERTA_ASESOR_MAX_NOTA, datetime.now(LIMA_TZ) - timedelta(days=ALERTA_ASESOR_DIAS)))
+                filas = cur.fetchall()
+            except Exception:  # noqa: BLE001 — falta la migración
+                conn.rollback()
+                return []
+        conn.rollback()
+        return [_caso_dict(f) for f in filas]
+    finally:
+        release_connection(conn)
+
+
 def texto_alerta(caso: dict) -> str:
     """Texto corto para la alerta en la consola del supervisor máximo (sin datos de salud)."""
     quien = caso.get("nombre") or "Un cliente"

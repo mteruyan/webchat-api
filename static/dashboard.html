@@ -1689,7 +1689,29 @@ function renderApp(d) {
       <div style="flex:1;background:#2FB88B;height:${Math.round(x.avisos * 100 / max)}%;min-height:${x.avisos ? 2 : 0}px;border-radius:2px 2px 0 0"></div></div>`).join('')}</div>` : '';
   const promo = renderPromoApp(d.promo, pct);
   const nota = `<div style="font-size:11.5px;color:var(--texto-suave);margin-top:12px">Avisos enviados en total: <b>${d.avisos_enviados}</b>. «Instalaron» cuenta dispositivos que abrieron el app desde la pantalla de inicio. Una persona con dos dispositivos cuenta dos veces. El navegador no avisa cuando se desinstala el app: quien la borró deja de usarla y sale de «últimos 30 días».</div>`;
-  return kpis + tabla + barras + promo + nota;
+  return kpis + tabla + barras + promo + renderActualizacionDatos(d.actualizacion_datos, pct) + nota;
+}
+
+// Invitación a actualizar celular y correo en la página oficial (espera, cierre, celular validado), 30 días.
+function renderActualizacionDatos(a, pct) {
+  if (a === undefined) return '';
+  if (a === null) return '<div class="vacio-panel" style="margin-top:14px">Invitación a actualizar datos: falta ejecutar <b>migracion_actualizacion_datos.sql</b>.</div>';
+  const nombres = { espera: '⏳ Mientras espera al asesor', cierre: '✅ Al terminar la conversación', celular: '📱 Al validar su celular' };
+  let tot = { mostrado: 0, clic: 0, cerrado: 0 };
+  const filas = Object.keys(nombres).map(k => {
+    const x = a[k] || {};
+    tot.mostrado += x.mostrado || 0; tot.clic += x.clic || 0; tot.cerrado += x.cerrado || 0;
+    return `<tr><td>${nombres[k]}</td><td style="text-align:right">${x.mostrado || 0}</td>
+      <td style="text-align:right">${x.clic || 0} <span style="color:var(--texto-suave)">(${pct(x.clic || 0, x.mostrado || 0)})</span></td>
+      <td style="text-align:right">${x.cerrado || 0}</td></tr>`;
+  }).join('');
+  return `<h2 style="margin:18px 0 8px;font-size:13px">Invitación a actualizar datos <span class="sub">últimos 30 días · actualizaciondatos.sanitasperu.com</span></h2>
+    <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:right;color:var(--texto-suave);font-size:12px">
+      <th style="text-align:left;font-weight:600">Dónde</th><th>Mostradas</th><th>Fueron a la página</th><th>«Ahora no»</th></tr></thead><tbody>${filas}
+      <tr style="font-weight:700"><td>Total</td><td style="text-align:right">${tot.mostrado}</td>
+      <td style="text-align:right">${tot.clic} <span style="color:var(--texto-suave);font-weight:400">(${pct(tot.clic, tot.mostrado)})</span></td><td style="text-align:right">${tot.cerrado}</td></tr>
+    </tbody></table>
+    <div style="font-size:11.5px;color:var(--texto-suave);margin-top:6px">Cuántos terminaron de actualizar se ve en la página de actualización: los enlaces llevan utm_source=webchat y utm_content con el lugar.</div>`;
 }
 
 // Embudo de la invitación a instalar el app al pie del teaser de Sofi (últimos 30 días).

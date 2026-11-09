@@ -493,6 +493,16 @@
   #usuarioForm input { width: 100%; padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
   #usuarioForm input:focus { outline: none; border-color: var(--azul); }
   #usuarioForm input.cambiado { border-color: #E0912E; background: #FFFBF3; }
+  /* Nota interna del paciente (notas_cliente, por DNI): la misma que ve el asesor en la conversación. */
+  #usuarioNota { margin-top: 16px; padding: 12px; border: 1px solid #F0DFA8; background: #FFFCF0; border-radius: 10px; }
+  #usuarioNota .nota-tit { font-size: 13px; font-weight: 700; color: var(--texto); }
+  #usuarioNota .nota-ayuda { font-size: 11.5px; color: var(--texto-suave); margin: 2px 0 8px; }
+  #usuarioNota textarea { width: 100%; min-height: 90px; padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; resize: vertical; background: white; }
+  #usuarioNota textarea:focus { outline: none; border-color: var(--azul); }
+  #usuarioNota textarea.cambiado { border-color: #E0912E; }
+  #usuarioNota .nota-pie { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  #usuarioNota .nota-meta { flex: 1; font-size: 11.5px; color: var(--texto-suave); min-width: 160px; }
+  #usuarioNota .nota-estado { font-size: 12px; }
   #usuariosEstado { min-height: 20px; margin-top: 10px; font-size: 12.5px; }
   #usuariosBotones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 </style>
@@ -784,6 +794,25 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir::before { content: ""; 
 body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgba(255,255,255,.18); }
 @media (prefers-reduced-motion: reduce) { body.sofi, .sofi-nav .nav-logo .nav-toggle svg { transition: none; } }
 </style>
+<style id="cabecera-conv-dos-filas">
+/* Cabecera de la conversación en dos filas (pantallas de PC):
+   1) datos del cliente a la izquierda (nombre; celular · DNI · fecha · código; tiempos de espera y atención) y a la
+      derecha la marca de color (y "Datos del afiliado" en el asesor);
+   2) debajo, todas las acciones en una sola barra a lo ancho; en el supervisor, "Control" y "Cerrar" al final, a la
+      derecha, separados del resto. Así los botones ya no se apilan ni aprietan los datos. */
+@media (min-width: 901px) {
+  body.sofi #panel .chat-header, body.sofi #panel .panel-header { flex-wrap: wrap; align-items: center; row-gap: 6px; }
+  #panel .chat-header .cab-info, #panel .panel-header .cab-info { flex: 1 1 auto; min-width: 0; }
+  #panel .cab-info .tiempos-cab { display: flex; gap: 14px; margin: 2px 0 0 !important; font-size: 11.5px; color: var(--texto-suave); line-height: 1.3 !important; white-space: nowrap; }
+  #panel .panel-header > .bandera-selector { margin-left: auto; }
+  #panel .panel-header .acciones-top { flex: 1 1 100%; margin-left: 0; display: flex; }
+  body.sofi #panel .acciones-conv { flex: 1 1 100% !important; max-width: none !important; justify-content: flex-start !important;
+    flex-wrap: wrap; gap: 6px; padding-top: 6px; border-top: 1px solid var(--borde); }
+  body.sofi #panel .acciones-conv #btnControl { margin-left: auto; }
+  #panelHeader.lectura .acciones-top { flex: 0 0 auto; margin-left: auto; }
+  #panelHeader.lectura .acciones-conv { flex: 0 0 auto !important; border-top: 0; padding-top: 0; }
+}
+</style>
 </head>
 <body>
   <div id="login" class="sofi-login">
@@ -847,24 +876,24 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
           <div class="telefono" id="phDni"></div>
           <div class="telefono" id="phFecha"></div>
           <span class="chip-lectura" id="phLectura"></span>
+          <div class="tiempos-cab">
+            <div>⏱ Esperó: <b id="phTiempoEspera">--</b></div>
+            <div>🕐 En atención: <b id="phTiempoAtencion">--</b></div>
+          </div>
         </div>
-        <div class="tiempos-cab" style="font-size:11.5px;color:var(--texto-suave);margin-left:14px;line-height:1.5;">
-          <div>⏱ Esperó: <b id="phTiempoEspera">--</b></div>
-          <div>🕐 En atención: <b id="phTiempoAtencion">--</b></div>
+        <div class="bandera-selector">
+          <button id="btnBandera" type="button" title="Marcar conversación">
+            <span class="bandera-dot blanco" id="banderaDotActual"></span>
+          </button>
+          <div class="bandera-menu" id="banderaMenu">
+            <button type="button" class="bandera-opcion rojo" data-bandera="rojo" title="Rojo"></button>
+            <button type="button" class="bandera-opcion azul" data-bandera="azul" title="Azul"></button>
+            <button type="button" class="bandera-opcion amarillo" data-bandera="amarillo" title="Amarillo"></button>
+            <button type="button" class="bandera-opcion verde" data-bandera="verde" title="Verde"></button>
+            <button type="button" class="bandera-opcion blanco" data-bandera="" title="Sin marca"></button>
+          </div>
         </div>
         <div class="acciones-top">
-          <div class="bandera-selector">
-            <button id="btnBandera" type="button" title="Marcar conversación">
-              <span class="bandera-dot blanco" id="banderaDotActual"></span>
-            </button>
-            <div class="bandera-menu" id="banderaMenu">
-              <button type="button" class="bandera-opcion rojo" data-bandera="rojo" title="Rojo"></button>
-              <button type="button" class="bandera-opcion azul" data-bandera="azul" title="Azul"></button>
-              <button type="button" class="bandera-opcion amarillo" data-bandera="amarillo" title="Amarillo"></button>
-              <button type="button" class="bandera-opcion verde" data-bandera="verde" title="Verde"></button>
-              <button type="button" class="bandera-opcion blanco" data-bandera="" title="Sin marca"></button>
-            </div>
-          </div>
           <div class="acciones-conv acciones-supervisor"><a class="chico gris" id="btnDescargarPdf" title="Descargar la conversación en PDF" target="_blank" rel="noopener">📄 PDF</a>
           <button class="chico gris" id="btnEnviarSms" title="Manda un SMS al cliente con un enlace directo a esta conversación, por si cerró el chat">📲 SMS</button>
           <button class="chico gris" id="btnAvisoInactividadEscucha" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
@@ -1023,6 +1052,16 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <div class="doi-fijo">DOI: <b id="usuarioDoi"></b> <span style="color:var(--texto-suave);">(no editable)</span></div>
         <div id="usuarioCampos"></div>
         <div id="usuariosEstado"></div>
+        <div id="usuarioNota">
+          <div class="nota-tit">📝 Nota interna del paciente</div>
+          <div class="nota-ayuda">La ven los asesores cuando este paciente escribe (está amarrada a su DOI). El paciente nunca la ve. Déjala vacía y guarda para borrarla.</div>
+          <textarea id="usuarioNotaTexto" maxlength="4000" placeholder="Cargando la nota…" disabled></textarea>
+          <div class="nota-pie">
+            <span class="nota-meta" id="usuarioNotaMeta"></span>
+            <span class="nota-estado" id="usuarioNotaEstado"></span>
+            <button id="btnGuardarNotaUsuario" type="button" disabled>Guardar nota</button>
+          </div>
+        </div>
         <div id="usuariosBotones">
           <button class="gris" id="btnVolverUsuarios" type="button">← Volver a resultados</button>
           <button id="btnGuardarUsuario" type="button">Guardar cambios</button>
@@ -1713,6 +1752,47 @@ document.getElementById('btnValidarManual').onclick = () => {
   ws.send(JSON.stringify({ type: 'validar_celular_manual', payload: { conversacion_id: Number(conversacionEscuchada) } }));
 };
 
+// ---- Versión: tras un deploy, la conexión en vivo seguía en la versión anterior y los mensajes de clientes nuevos
+// llegaban tarde. Cada minuto (y al volver a la pestaña) se compara con la versión actual del servidor: si cambió,
+// se reconecta sola, sin recargar ni perder lo escrito; si cambió esta pantalla, avisa para actualizar. ----
+const PANTALLA_CONSOLA = 'supervisor';
+let versionWs = null, versionPantalla = null, avisoVersionPospuesto = 0;
+function aplicarVersionServidor(p) {
+  versionWs = p.servidor || null;
+  if (versionPantalla === null) versionPantalla = (p.pantallas || {})[PANTALLA_CONSOLA] || '';
+}
+function mostrarAvisoVersionNueva() {
+  if (document.getElementById('avisoVersionNueva') || Date.now() < avisoVersionPospuesto) return;
+  const barra = document.createElement('div');
+  barra.id = 'avisoVersionNueva';
+  barra.setAttribute('role', 'status');
+  barra.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100000;display:flex;align-items:center;gap:12px;'
+    + 'background:#0A4C8C;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 10px 30px rgba(10,30,60,.3);font-size:13.5px;max-width:calc(100vw - 24px);flex-wrap:wrap;';
+  barra.innerHTML = '<span>✨ Hay una versión nueva de la consola.</span>'
+    + '<button type="button" id="btnActualizarVersion" style="border:0;border-radius:8px;background:#fff;color:#0A4C8C;font-weight:700;padding:7px 12px;cursor:pointer;font:inherit;font-weight:700">🔄 Actualizar</button>'
+    + '<button type="button" id="btnVersionLuego" style="border:0;background:none;color:#D6E4F2;cursor:pointer;font:inherit;font-size:12.5px;text-decoration:underline">Más tarde</button>';
+  document.body.appendChild(barra);
+  document.getElementById('btnActualizarVersion').onclick = () => location.reload();
+  document.getElementById('btnVersionLuego').onclick = () => { barra.remove(); avisoVersionPospuesto = Date.now() + 10 * 60 * 1000; };
+}
+async function revisarVersionServidor() {
+  if (typeof urlBaseGuardada === 'undefined' || !urlBaseGuardada || !ws || ws.readyState !== WebSocket.OPEN || !versionWs) return;
+  try {
+    const r = await fetch(`${urlBaseGuardada}/consola/version`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = await r.json();
+    const pantalla = (v.pantallas || {})[PANTALLA_CONSOLA];
+    if (versionPantalla && pantalla && pantalla !== versionPantalla) mostrarAvisoVersionNueva();
+    if (v.servidor && versionWs && v.servidor !== versionWs && ws && ws.readyState === WebSocket.OPEN) {
+      versionWs = null;
+      intentosReconexion = 0;
+      try { ws.close(4100, 'version nueva'); } catch (e) { /* onclose reconecta */ }
+    }
+  } catch (e) { /* sin red: lo intenta el próximo minuto */ }
+}
+setInterval(revisarVersionServidor, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) revisarVersionServidor(); });
+
 function conectarWs() {
   const urlWs = urlBaseGuardada.replace(/^https/, 'wss').replace(/^http/, 'ws');
   ws = new WebSocket(`${urlWs}/ws/supervisor?token=${tokenGuardado}`);
@@ -1754,6 +1834,7 @@ function conectarWs() {
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     const p = data.payload || {};
+    if (data.type === 'version_servidor') { aplicarVersionServidor(p); return; }
     if (data.type === 'estado_global') {
       asesoresPorId = {};
       p.asesores.forEach(a => asesoresPorId[a.asesor_id] = a);
@@ -1886,6 +1967,8 @@ function conectarWs() {
       if (window.__textoSmsInvitacion) window.__textoSmsInvitacion(p);
     } else if (data.type === 'resultados_usuarios_sofi') {
       if (window.__resultadosUsuariosSofi) window.__resultadosUsuariosSofi(p);
+    } else if (data.type === 'nota_doi') {
+      if (window.__notaDoi) window.__notaDoi(p);
     } else if (data.type === 'resultado_guardar_usuario_sofi') {
       if (window.__resultadoGuardarUsuarioSofi) window.__resultadoGuardarUsuarioSofi(p);
     } else if (data.type === 'resultados_busqueda_bot') {
@@ -3301,7 +3384,57 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     btnGuardar.textContent = 'Guardar cambios';
     vistaBuscar.style.display = 'none';
     form.style.display = 'block';
+    cargarNota(u.doi);
   }
+
+  // ---- Nota interna (notas_cliente) del DOI ----
+  const notaTexto = document.getElementById('usuarioNotaTexto');
+  const notaMeta = document.getElementById('usuarioNotaMeta');
+  const notaEstado = document.getElementById('usuarioNotaEstado');
+  const btnNota = document.getElementById('btnGuardarNotaUsuario');
+  let notaOriginal = '', notaDoi = null;
+  const estadoNota = (t, ok) => { notaEstado.textContent = t; notaEstado.style.color = ok ? '#197A54' : '#C0392B'; };
+  function cargarNota(doi) {
+    notaDoi = String(doi || '');
+    notaOriginal = '';
+    notaTexto.value = '';
+    notaTexto.disabled = true;
+    notaTexto.placeholder = 'Cargando la nota…';
+    notaTexto.classList.remove('cambiado');
+    btnNota.disabled = true;
+    notaMeta.textContent = '';
+    estadoNota('', true);
+    if (!ws || ws.readyState !== WebSocket.OPEN) { estadoNota('Sin conexión con el servidor.', false); return; }
+    ws.send(JSON.stringify({ type: 'obtener_nota_doi', payload: { doi: notaDoi } }));
+  }
+  notaTexto.addEventListener('input', () => {
+    const cambio = notaTexto.value.trim() !== notaOriginal;
+    notaTexto.classList.toggle('cambiado', cambio);
+    btnNota.disabled = !cambio;
+  });
+  btnNota.onclick = () => {
+    const nota = notaTexto.value.trim();
+    if (!nota && notaOriginal && !confirm('¿Borrar la nota interna de este paciente (DOI ' + notaDoi + ')?')) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) { estadoNota('Sin conexión con el servidor.', false); return; }
+    btnNota.disabled = true;
+    btnNota.textContent = 'Guardando...';
+    ws.send(JSON.stringify({ type: 'guardar_nota_doi', payload: { doi: notaDoi, nota } }));
+  };
+  window.__notaDoi = (p) => {
+    if (p.documento && String(p.documento) !== notaDoi.replace(/\s+/g, '')) return;   // respuesta de otro paciente
+    btnNota.textContent = 'Guardar nota';
+    notaTexto.disabled = false;
+    notaTexto.placeholder = 'Escribe una nota para los asesores (ej. "Prefiere que lo llamen por la tarde").';
+    if (!p.ok) { estadoNota(p.motivo || 'No se pudo cargar la nota.', false); btnNota.disabled = notaTexto.value.trim() === notaOriginal; return; }
+    notaOriginal = (p.nota || '').trim();
+    notaTexto.value = notaOriginal;
+    notaTexto.classList.remove('cambiado');
+    btnNota.disabled = true;
+    notaMeta.textContent = p.nota
+      ? 'Última edición: ' + (p.actualizado_por || '—') + (p.actualizado_en ? ' · ' + formatearFechaHoraCompleta(p.actualizado_en) : '')
+      : 'Este paciente no tiene nota.';
+    estadoNota(p.guardado ? (p.nota ? '✅ Nota guardada.' : '✅ Nota borrada.') : '', true);
+  };
 
   window.__resultadosUsuariosSofi = (p) => {
     const cont = document.getElementById('usuariosResultados');

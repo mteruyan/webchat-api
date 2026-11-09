@@ -295,6 +295,29 @@
     }
     .cabecera .buscar svg { width: 17px; height: 17px; display: block; }
     .cabecera .buscar:hover, .cabecera .buscar[aria-expanded="true"] { opacity: 1; background: rgba(255,255,255,.2); }
+    /* Archivos (📎): fotos, documentos y notas de voz que se intercambiaron, como en WhatsApp. Usa el mismo panel
+       que la lupa; la barra de búsqueda se oculta y se ven las pestañas. */
+    .bq-archivos-cab { display: none; align-items: center; gap: 8px; padding: 10px 12px; background: white; border-bottom: 1px solid ${TOKENS.borde}; }
+    .panel.viendo-archivos .bq-barra { display: none; }
+    .panel.viendo-archivos .bq-archivos-cab { display: flex; }
+    .bq-archivos-cab b { flex: 1; font-size: 15px; color: ${TOKENS.texto}; }
+    .ar-tabs { display: none; gap: 6px; padding: 8px 12px 0; }
+    .panel.viendo-archivos .ar-tabs { display: flex; }
+    .ar-tab { flex: 1; border: 1px solid ${TOKENS.borde}; background: white; color: ${TOKENS.texto}; font: inherit; font-size: 13px; font-weight: 600; border-radius: 999px; padding: 7px 8px; cursor: pointer; }
+    .ar-tab[aria-selected="true"] { background: ${TOKENS.azul}; border-color: ${TOKENS.azul}; color: white; }
+    .ar-grupo { font-size: 11.5px; font-weight: 700; color: ${TOKENS.textoSuave}; text-transform: uppercase; letter-spacing: .03em; margin: 10px 2px 6px; }
+    .ar-fotos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    .ar-foto { position: relative; aspect-ratio: 1; border: none; padding: 0; border-radius: 8px; overflow: hidden; cursor: pointer; background: #E6ECF3; }
+    .ar-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .ar-foto .ar-quien { position: absolute; left: 4px; bottom: 4px; font-size: 10px; color: white; background: rgba(10,30,50,.62); border-radius: 6px; padding: 1px 5px; }
+    .ar-doc { display: flex; align-items: center; gap: 10px; background: white; border: 1px solid ${TOKENS.borde}; border-radius: 12px; padding: 9px 11px; margin-bottom: 7px; }
+    .ar-doc .ar-ico { width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: white; flex-shrink: 0; background: #5B6B7C; }
+    .ar-doc .ar-ico.pdf { background: #D9453B; } .ar-doc .ar-ico.xls { background: #1E7A47; } .ar-doc .ar-ico.doc { background: #2B5FB8; } .ar-doc .ar-ico.voz { background: ${TOKENS.azul}; font-size: 17px; }
+    .ar-doc .ar-txt { flex: 1; min-width: 0; }
+    .ar-doc .ar-nom { font-size: 13.5px; font-weight: 600; color: ${TOKENS.texto}; overflow-wrap: anywhere; }
+    .ar-doc .ar-meta { font-size: 11.5px; color: ${TOKENS.textoSuave}; margin-top: 2px; }
+    .ar-doc a, .ar-doc button { font: inherit; font-size: 12.5px; font-weight: 700; color: ${TOKENS.azul}; background: none; border: none; cursor: pointer; text-decoration: none; padding: 4px 2px; }
+    .ar-doc audio { width: 100%; height: 34px; margin-top: 4px; }
     .busqueda { display: none; flex: 1; min-height: 0; flex-direction: column; background: ${TOKENS.fondo}; }
     .panel.buscando .busqueda { display: flex; }
     .panel.buscando .cuerpo, .panel.buscando .pie, .panel.buscando .responder-banner,
@@ -396,6 +419,25 @@
     @media (prefers-reduced-motion: reduce) { .msg.escribiendo .punto { animation: none; opacity: .7; } }
     .msg.usuario { background: ${TOKENS.burbujaUsuario}; color: ${TOKENS.texto}; margin-left: auto; border-bottom-right-radius: 4px; text-align: right; }
     .msg.sistema { background: transparent; color: ${TOKENS.textoSuave}; font-size: 12px; text-align: center; margin: 10px auto; max-width: 100%; }
+    /* Espera en cola: posición, tiempo estimado y "Avísame cuando me toque". Se actualiza en su lugar. */
+    .espera-cola { background: #EEF4FB; border: 1px solid #D3E2F3; border-radius: 14px; padding: 11px 13px; margin: 8px 4px 10px; color: ${TOKENS.texto}; font-size: 13.5px; line-height: 1.4; }
+    .espera-cola .ec-pos { font-weight: 700; }
+    .espera-cola .ec-tiempo { color: ${TOKENS.texto}; margin-top: 2px; }
+    .espera-cola .ec-oferta { margin-top: 9px; padding-top: 9px; border-top: 1px dashed #C7D8EC; font-size: 12.8px; color: ${TOKENS.textoSuave}; }
+    .espera-cola .ec-btn { display: block; width: 100%; margin-top: 8px; border: none; border-radius: 999px; background: ${TOKENS.azul}; color: white; font: inherit; font-weight: 700; font-size: 14px; padding: 10px 12px; cursor: pointer; }
+    .espera-cola .ec-btn:disabled { opacity: .6; cursor: default; }
+    .espera-cola .ec-ok { margin-top: 9px; padding-top: 9px; border-top: 1px dashed #C7D8EC; font-size: 13px; }
+    /* Invitación a actualizar celular y correo en la página oficial de Sanitas (espera, cierre, celular validado). */
+    .act-datos { background: #F2FAF6; border: 1px solid #CDEBDD; border-radius: 14px; padding: 11px 13px; margin: 8px 4px 10px; color: ${TOKENS.texto}; font-size: 13.2px; line-height: 1.4; }
+    .act-datos .ad-tit { font-weight: 700; }
+    .act-datos .ad-txt { color: ${TOKENS.textoSuave}; margin-top: 2px; }
+    .act-datos .ad-acc { display: flex; align-items: center; gap: 12px; margin-top: 9px; flex-wrap: wrap; }
+    .act-datos .ad-btn { display: inline-flex; align-items: center; gap: 6px; background: #1E8A5A; color: white; text-decoration: none; font-weight: 700; font-size: 13.5px; border-radius: 999px; padding: 8px 14px; }
+    .act-datos .ad-btn:hover { background: #177049; }
+    .act-datos .ad-no { font: inherit; font-size: 12.5px; color: ${TOKENS.textoSuave}; background: none; border: none; cursor: pointer; text-decoration: underline; padding: 4px 0; }
+    .act-datos .ad-oficial { font-size: 11.5px; color: ${TOKENS.textoSuave}; margin-top: 6px; }
+    .act-datos.ad-gracias { background: transparent; border: none; padding: 2px 4px; text-align: center; font-size: 12px; color: ${TOKENS.textoSuave}; }
+    .espera-cola .ec-cancelar { font: inherit; font-size: 12.5px; color: ${TOKENS.azul}; background: none; border: none; padding: 4px 0 0; cursor: pointer; text-decoration: underline; }
     .msg .hora { display: block; font-size: 10.5px; margin-top: 3px; font-weight: 400; }
     .msg .editado-tag { font-size: 10.5px; opacity: .65; font-style: italic; margin-left: 4px; }
     .msg.eliminado { font-style: italic; opacity: .65; }
@@ -820,6 +862,9 @@
         <button class="buscar" type="button" aria-label="Buscar en mis conversaciones" title="Buscar en mis conversaciones" aria-expanded="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         </button>
+        <button class="buscar archivos" type="button" aria-label="Archivos de mis conversaciones" title="Fotos y archivos" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m21 11.5-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg>
+        </button>
         <button class="tam-fuente" type="button" aria-label="Tamaño del texto" title="Tamaño del texto" aria-haspopup="true" aria-expanded="false">Aa</button>
         <button class="info-guardada" type="button" aria-label="¿Se pierde mi conversación?" title="¿Se pierde mi conversación?">i</button>
         <button class="cerrar" aria-label="Cerrar chat">✕</button>
@@ -852,6 +897,14 @@
           <svg class="bq-lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
           <input class="bq-input" type="search" maxlength="60" placeholder="Buscar una palabra en tus conversaciones" aria-label="Palabra a buscar" autocomplete="off" />
           <button class="bq-cerrar" type="button" aria-label="Cerrar búsqueda" title="Volver al chat">✕</button>
+        </div>
+        <div class="bq-archivos-cab">
+          <b>📎 Fotos y archivos</b>
+          <button class="bq-cerrar ar-cerrar" type="button" aria-label="Cerrar archivos" title="Volver al chat">✕</button>
+        </div>
+        <div class="ar-tabs" role="tablist">
+          <button class="ar-tab" type="button" role="tab" data-tab="fotos" aria-selected="true">Fotos</button>
+          <button class="ar-tab" type="button" role="tab" data-tab="docs" aria-selected="false">Documentos</button>
         </div>
         <div class="bq-estado" aria-live="polite"></div>
         <div class="bq-lista"></div>
@@ -1011,6 +1064,7 @@
       d.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
   }
   function abrirBusqueda() {
+    salirDeArchivos();
     $panelChat.classList.add("buscando");
     $buscarBtn.setAttribute("aria-expanded", "true");
     verResultados();
@@ -1021,8 +1075,103 @@
   function cerrarBusqueda() {
     $panelChat.classList.remove("buscando");
     $buscarBtn.setAttribute("aria-expanded", "false");
+    salirDeArchivos();
   }
   function verResultados() { $bqCtx.hidden = true; $bqLista.hidden = false; $bqEstado.hidden = false; }
+
+  // ---- 📎 Fotos y archivos: lo que se intercambió con Sofi y los asesores (mismo alcance que la lupa). Tocar una
+  // foto la amplía; un documento se abre; "Ver en el chat" muestra la conversación alrededor de ese archivo. ----
+  const $archivosBtn = root.querySelector(".cabecera .archivos");
+  let arDatos = null, arTab = "fotos", arUsada = false;
+  const AR_EXT = { pdf: ["PDF", "pdf"], xls: ["XLS", "xls"], xlsx: ["XLS", "xls"], csv: ["CSV", "xls"], doc: ["DOC", "doc"], docx: ["DOC", "doc"] };
+  function arQuien(a) {
+    if (a.emisor_tipo === "usuario") return "Tú";
+    if (a.emisor_tipo === "bot") return "Sofi";
+    return a.asesor || "Asesor";
+  }
+  function salirDeArchivos() {
+    $panelChat.classList.remove("viendo-archivos");
+    $archivosBtn.setAttribute("aria-expanded", "false");
+  }
+  function abrirArchivos() {
+    $panelChat.classList.add("buscando", "viendo-archivos");
+    $buscarBtn.setAttribute("aria-expanded", "false");
+    $archivosBtn.setAttribute("aria-expanded", "true");
+    verResultados();
+    $bqLista.innerHTML = "";
+    if (!ws || ws.readyState !== WebSocket.OPEN) { $bqEstado.textContent = "Sin conexión en este momento. Intenta en unos segundos."; return; }
+    $bqEstado.textContent = "Cargando tus archivos…";
+    enviar({ type: "listar_archivos", payload: {} });
+    if (!arUsada) { arUsada = true; medir("sofi_archivos_abiertos", {}); }
+  }
+  function mostrarArchivos(p) {
+    if (!$panelChat.classList.contains("viendo-archivos")) return;
+    arDatos = p || { archivos: [] };
+    pintarArchivos();
+  }
+  function pintarArchivos() {
+    if (!arDatos) return;
+    verResultados();
+    const todos = arDatos.archivos || [];
+    const fotos = todos.filter((a) => esImagen(a.ruta));
+    const docs = todos.filter((a) => !esImagen(a.ruta));
+    $busq.querySelectorAll(".ar-tab").forEach((t) => {
+      const n = t.dataset.tab === "fotos" ? fotos.length : docs.length;
+      t.textContent = (t.dataset.tab === "fotos" ? "Fotos" : "Documentos") + (n ? ` (${n})` : "");
+      t.setAttribute("aria-selected", String(t.dataset.tab === arTab));
+    });
+    const lista = arTab === "fotos" ? fotos : docs;
+    const soloActual = arDatos.alcance === "actual" ? " Solo de esta conversación: verifica tu celular para ver también los de tus conversaciones anteriores." : "";
+    $bqEstado.textContent = lista.length ? soloActual.trim()
+      : `${arTab === "fotos" ? "Todavía no hay fotos" : "Todavía no hay documentos"} en tus conversaciones.${soloActual}`;
+    $bqLista.innerHTML = "";
+    // Agrupadas por mes, como en WhatsApp.
+    let mesActual = "", contenedor = null;
+    lista.forEach((a) => {
+      const d = new Date(a.enviado_en);
+      const mes = d.toLocaleDateString("es-PE", { month: "long", year: "numeric" });
+      if (mes !== mesActual) {
+        mesActual = mes;
+        const g = document.createElement("div"); g.className = "ar-grupo"; g.textContent = mes;
+        $bqLista.appendChild(g);
+        contenedor = document.createElement("div");
+        if (arTab === "fotos") contenedor.className = "ar-fotos";
+        $bqLista.appendChild(contenedor);
+      }
+      const url = urlArchivoWidget(a.ruta, a.conversacion_id);
+      const meta = `${bqEsc(arQuien(a))} · ${bqEsc(bqFecha(a.enviado_en))}${a.es_actual ? "" : a.campana ? " · " + bqEsc(a.campana) : ""}`;
+      if (arTab === "fotos") {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "ar-foto"; b.title = `${a.nombre ? a.nombre + " · " : ""}${arQuien(a)} · ${bqFecha(a.enviado_en)}`;
+        b.innerHTML = `<img loading="lazy" alt="Foto" src="${bqEsc(url)}"><span class="ar-quien">${bqEsc(arQuien(a))}</span>`;
+        b.addEventListener("click", () => abrirLightbox(url));
+        contenedor.appendChild(b);
+        return;
+      }
+      const ext = (a.ruta.split(".").pop() || "").toLowerCase();
+      const voz = esAudio(a.ruta);
+      const [sigla, clase] = voz ? ["🎤", "voz"] : (AR_EXT[ext] || [ext.slice(0, 4).toUpperCase() || "ARCH", ""]);
+      const fila = document.createElement("div");
+      fila.className = "ar-doc";
+      fila.innerHTML = `<div class="ar-ico ${clase}">${bqEsc(sigla)}</div>
+        <div class="ar-txt"><div class="ar-nom">${voz ? "Nota de voz" : a.nombre ? bqEsc(a.nombre) : `Documento ${bqEsc(sigla)}`}</div>
+          <div class="ar-meta">${meta}</div>${voz ? `<audio controls preload="none" src="${bqEsc(url)}"></audio>` : ""}</div>
+        ${voz ? "" : `<a href="${bqEsc(url)}" target="_blank" rel="noopener">Abrir</a>`}
+        <button type="button" class="ar-ver">Ver en el chat</button>`;
+      fila.querySelector(".ar-ver").addEventListener("click", () => {
+        $bqLista.hidden = true; $bqEstado.hidden = true; $bqCtx.hidden = false;
+        $bqCtx.innerHTML = '<div class="bq-ctx-cab">Cargando la conversación…</div>';
+        enviar({ type: "contexto_mensaje", payload: { id: a.id } });
+      });
+      contenedor.appendChild(fila);
+    });
+  }
+  $busq.querySelectorAll(".ar-tab").forEach((t) => t.addEventListener("click", () => { arTab = t.dataset.tab; pintarArchivos(); }));
+  $archivosBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if ($panelChat.classList.contains("viendo-archivos")) cerrarBusqueda(); else abrirArchivos();
+  });
+  $busq.querySelector(".ar-cerrar").addEventListener("click", cerrarBusqueda);
   function bqBuscar() {
     const q = $bqInput.value.trim();
     if (q.length < 2) { bqUltima = ""; $bqLista.innerHTML = ""; $bqEstado.textContent = q ? "Escribe al menos 2 letras." : ""; return; }
@@ -1061,16 +1210,23 @@
       const titulo = p.es_actual ? "Esta conversación" : `Conversación del ${bqEsc(bqFecha(p.iniciado_en || p.mensajes[0]?.enviado_en || new Date()).split(" ")[0])}${p.campana ? " · " + bqEsc(p.campana) : ""}`;
       $bqCtx.innerHTML = `<div class="bq-ctx-cab"><button type="button" class="bq-volver">← Resultados</button><span>${titulo}</span></div>` +
         p.mensajes.map((m) => `<div class="bq-msg ${m.emisor_tipo === "usuario" ? "usuario" : ""}${m.id === p.objetivo ? " objetivo" : ""}" data-id="${m.id}">${
-          m.contenido ? bqResaltar(m.contenido, bqUltima) : "<i>Mensaje eliminado</i>"}<span class="bq-hora">${BQ_QUIEN[m.emisor_tipo] || ""} · ${bqEsc(bqFecha(m.enviado_en))}</span></div>`).join("");
+          m.contenido ? bqResaltar(m.contenido, $panelChat.classList.contains("viendo-archivos") ? "" : bqUltima) : "<i>Mensaje eliminado</i>"}<span class="bq-hora">${BQ_QUIEN[m.emisor_tipo] || ""} · ${bqEsc(bqFecha(m.enviado_en))}</span></div>`).join("");
       const obj = $bqCtx.querySelector(".bq-msg.objetivo");
       if (obj) setTimeout(() => obj.scrollIntoView({ block: "center" }), 30);
     }
     const volver = $bqCtx.querySelector(".bq-volver");
-    if (volver) volver.addEventListener("click", () => { verResultados(); $bqInput.focus(); });
+    if (volver) {
+      if ($panelChat.classList.contains("viendo-archivos")) volver.textContent = "← Archivos";
+      volver.addEventListener("click", () => {
+        if ($panelChat.classList.contains("viendo-archivos")) { pintarArchivos(); return; }
+        verResultados(); $bqInput.focus();
+      });
+    }
   }
   $buscarBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if ($panelChat.classList.contains("buscando")) cerrarBusqueda(); else abrirBusqueda();
+    if ($panelChat.classList.contains("buscando") && !$panelChat.classList.contains("viendo-archivos")) cerrarBusqueda();
+    else abrirBusqueda();
   });
   $busq.querySelector(".bq-cerrar").addEventListener("click", cerrarBusqueda);
   $bqInput.addEventListener("input", () => { clearTimeout(bqTimer); bqTimer = setTimeout(bqBuscar, 350); });
@@ -1078,7 +1234,9 @@
   $busq.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
-    if (!$bqCtx.hidden) { verResultados(); $bqInput.focus(); } else cerrarBusqueda();
+    if (!$bqCtx.hidden) {
+      if ($panelChat.classList.contains("viendo-archivos")) pintarArchivos(); else { verResultados(); $bqInput.focus(); }
+    } else cerrarBusqueda();
   });
 
   const $infoGuardada = root.querySelector(".info-guardada");
@@ -2493,6 +2651,99 @@
     return div;
   }
 
+  // ---- Espera en cola: el servidor manda la posición y el tiempo estimado al entrar a la cola y cada vez que
+  // cambian; si la espera es larga, ofrece avisarle por SMS / notificación cuando quede 1 persona antes. ----
+  let $esperaCola = null;
+  function quitarEsperaCola() {
+    if ($esperaCola) $esperaCola.remove();
+    $esperaCola = null;
+  }
+  function textoCanalesAviso(p) {
+    const c = p.canales || {};
+    const sms = c.sms ? `por SMS${p.celular_oculto ? " al " + p.celular_oculto : ""}` : "";
+    if (sms && c.push) return `${sms} y con una notificación`;
+    return sms || (c.push ? "con una notificación" : "");
+  }
+  function mostrarEsperaCola(p) {
+    const enBandeja = p && p.modo === "bandeja";
+    if (!p || p.personas_antes == null || !(enBandeja ? atendidoPorAsesor : esperandoAsesor)) { quitarEsperaCola(); return; }
+    const cerca = estaCercaDelFinal();
+    if (!$esperaCola || !$esperaCola.isConnected) {
+      $esperaCola = document.createElement("div");
+      $esperaCola.className = "espera-cola";
+      $esperaCola.setAttribute("role", "status");
+    }
+    const n = p.personas_antes;
+    const quien = p.asesor || "Tu asesor";
+    const pos = enBandeja
+      ? (n === 0 ? `${quien} ya tiene tu conversación y eres el siguiente.`
+                 : `${quien} está atendiendo a ${n} ${n === 1 ? "persona" : "personas"} antes que tú.`)
+      : (n === 0 ? "Eres el siguiente en la fila." : `Hay ${n} ${n === 1 ? "persona" : "personas"} antes que tú.`);
+    let tiempo = "";
+    if (p.en_breve) tiempo = enBandeja ? "Te responderá en breve." : "Te atenderán en breve.";
+    else if (p.rango) tiempo = enBandeja ? `Te responderá en unos ${p.rango[0]} a ${p.rango[1]} minutos.`
+                                         : `Tiempo estimado: entre ${p.rango[0]} y ${p.rango[1]} minutos.`;
+    const canales = textoCanalesAviso(p);
+    const conQuien = (p.avisar_con === 1 ? "quede 1 persona antes que tú" : "sea tu turno")
+      + (enBandeja ? ` o cuando ${p.asesor || "tu asesor"} te responda` : "");
+    let aviso = "";
+    if (p.aviso_pedido) {
+      aviso = `<div class="ec-ok">🔔 <b>Listo, te avisaremos</b>${canales ? " " + bqEsc(canales) : ""} cuando ${conQuien}. Puedes cerrar esta ventana sin perder tu lugar.
+        <br><button type="button" class="ec-cancelar">Cancelar aviso</button></div>`;
+    } else if (p.ofrecer_aviso && canales) {
+      aviso = `<div class="ec-oferta">¿Prefieres no esperar con el chat abierto? Te avisamos ${bqEsc(canales)} cuando ${conQuien}, sin perder tu lugar.
+        <button type="button" class="ec-btn">🔔 Avísame cuando me toque</button></div>`;
+    }
+    $esperaCola.innerHTML = `<div class="ec-pos">⏳ ${bqEsc(pos)}</div>${tiempo ? `<div class="ec-tiempo">${bqEsc(tiempo)}</div>` : ""}${aviso}`;
+    const btn = $esperaCola.querySelector(".ec-btn");
+    if (btn) btn.addEventListener("click", () => {
+      btn.disabled = true; btn.textContent = "Guardando…";
+      enviar({ type: "aviso_turno", payload: { pedir: true } });
+      medir("sofi_aviso_turno_pedido", { personas_antes: n });
+    });
+    const cancelar = $esperaCola.querySelector(".ec-cancelar");
+    if (cancelar) cancelar.addEventListener("click", () => {
+      cancelar.disabled = true;
+      enviar({ type: "aviso_turno", payload: { pedir: false } });
+      medir("sofi_aviso_turno_cancelado", {});
+    });
+    // Siempre al final del chat, para que se vea aunque lleguen otros mensajes mientras espera.
+    const invitacion = $cuerpo.lastElementChild && $cuerpo.lastElementChild.classList.contains("act-datos") ? $cuerpo.lastElementChild : null;
+    const ultimo = invitacion ? invitacion.previousElementSibling : $cuerpo.lastElementChild;
+    if ($esperaCola.parentNode !== $cuerpo || ultimo !== $esperaCola) $cuerpo.insertBefore($esperaCola, invitacion);
+    if (cerca) scrollAlFinal();
+  }
+
+  // ---- Invitación a actualizar celular y correo (el servidor decide cuándo y cuántas veces; ver promo_datos.py) ----
+  function mostrarActualizacionDatos(p) {
+    if (!p || !p.url || !/^https:\/\//.test(p.url)) return;
+    if ($cuerpo.querySelector(".act-datos:not(.ad-gracias)")) return;
+    const cerca = estaCercaDelFinal();
+    let dominio = "";
+    try { dominio = new URL(p.url).hostname; } catch (e) { /* sin dominio */ }
+    const caja = document.createElement("div");
+    caja.className = "act-datos";
+    caja.innerHTML = `<div class="ad-tit">📲 ${bqEsc(p.titulo || "¿Tus datos están al día?")}</div>
+      <div class="ad-txt">${bqEsc(p.texto || "")}</div>
+      <div class="ad-acc"><a class="ad-btn" href="${bqEsc(p.url)}" target="_blank" rel="noopener">Actualizar mis datos ↗</a>
+        <button type="button" class="ad-no">Ahora no</button></div>
+      ${dominio ? `<div class="ad-oficial">🔒 Página oficial de Sanitas: ${bqEsc(dominio)}</div>` : ""}`;
+    const evento = (ev) => enviar({ type: "actualizacion_datos_evento", payload: { lugar: p.lugar, evento: ev } });
+    caja.querySelector(".ad-btn").addEventListener("click", () => {
+      evento("clic");
+      medir("sofi_actualizar_datos_clic", { lugar: p.lugar });
+      caja.className = "act-datos ad-gracias";
+      caja.textContent = "¡Gracias! Se abrió la página de Sanitas en otra pestaña. Aquí sigues en el chat.";
+    });
+    caja.querySelector(".ad-no").addEventListener("click", () => {
+      evento("cerrado");
+      caja.remove();
+    });
+    // En la espera va justo debajo de la tarjeta de espera; en los demás casos, al final del chat.
+    $cuerpo.appendChild(caja);
+    if (cerca) scrollAlFinal();
+  }
+
   function marcarMensajeRecibido(mensajeId, recibido) {
     // El servidor confirmó que guardó/entregó el mensaje — pasa de ✓ a ✓✓
     // (gris) y le asigna a esa burbuja su id real (para poder editarla,
@@ -3854,6 +4105,12 @@
         case "aviso_cola":
           agregarMensaje(p.texto, "sistema");
           break;
+        case "espera_cola":
+          mostrarEsperaCola(p);
+          break;
+        case "actualizacion_datos":
+          mostrarActualizacionDatos(p);
+          break;
         case "encuesta_satisfaccion":
           mostrarEncuesta(p);
           break;
@@ -3979,6 +4236,9 @@
         case "contexto_mensaje":
           mostrarContextoBusqueda(p);
           break;
+        case "archivos_historial":
+          mostrarArchivos(p);
+          break;
         case "mensaje_bot":
           agregarMensaje(p.texto, "bot", p.imagen_url);
           if (p.opciones) agregarOpciones(p.opciones);
@@ -4020,12 +4280,14 @@
           agregarFormulario(p.campos);
           break;
         case "mensaje_asesor":
+          quitarEsperaCola();
           agregarMensaje(p.asesor_nombre ? `${p.asesor_nombre}: ${p.texto}` : p.texto, "bot", null, null,
                          { mensajeId: p.mensaje_id, respondidoA: p.respondido_a });
           marcarLeidoSiLoVe();
           avisarMensajeNuevoSiNoMiraPantalla();
           break;
         case "archivo_asesor":
+          quitarEsperaCola();
           agregarMensaje("", "bot", urlArchivoWidget(p.ruta), p.ruta, { mensajeId: p.mensaje_id });
           marcarLeidoSiLoVe();
           avisarMensajeNuevoSiNoMiraPantalla();
@@ -4081,6 +4343,7 @@
           actualizarIconoEnviar();
           break;
         case "asignado":
+          quitarEsperaCola();
           $estadoTexto.textContent = `Con ${p.asesor_nombre}`;
           if (!volviendoDeReposo) agregarMensaje(`✅ Te está atendiendo ${p.asesor_nombre}`, "sistema");
           volviendoDeReposo = false;
@@ -4090,6 +4353,7 @@
           actualizarIconoEnviar();
           break;
         case "conversacion_cerrada":
+          quitarEsperaCola();
           ocultarGuardada();
           $infoGuardada.classList.remove("visible");
           agregarMensaje("— Conversación finalizada —", "sistema");
