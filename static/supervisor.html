@@ -317,7 +317,7 @@
   #chatEscucha { flex: 1; padding: 16px; overflow-y: auto; display: none; }
   /* Conversación pasada desde "Buscar": se abre en el panel como las demás, en solo lectura (sin acciones). */
   #panelHeader.lectura .tiempos-cab, #panelHeader.lectura .bandera-selector,
-  #panelHeader.lectura .acciones-supervisor > :not(#btnDescargarPdf):not(#btnSalirLectura) { display: none !important; }
+  #panelHeader.lectura .acciones-supervisor > :not(#btnDescargarPdf):not(#btnSalirLectura):not(#btnHistorialUsuario) { display: none !important; }
   #panelHeader.lectura .cab-info { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; flex: 1 1 auto; min-width: 0; max-width: none; }
   #panelHeader.lectura .cab-info .nombre { flex-basis: 100%; }
   #panelHeader.lectura .acciones-top { flex: 0 0 auto; margin-left: auto; }
@@ -422,6 +422,20 @@
   /* ---- Modal de buscador de conversaciones ---- */
   #modalBuscarOverlay, #modalAyudarBotOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
   #modalBuscarOverlay.activa, #modalAyudarBotOverlay.activa { display: flex; }
+  /* ---- Validaciones de celular pedidas por el cliente ("No me llega el código") ---- */
+  #btnValidaciones { background: #FFF4E5 !important; color: #8A4B00 !important; border: 1.5px solid #F5A623 !important; font-weight: 700; }
+  #btnValidaciones.nueva { animation: latidoValidacion 1s ease-in-out 3; }
+  @keyframes latidoValidacion { 50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(245,166,35,.25); } }
+  #modalValidacionesOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
+  #modalValidacionesOverlay.activa { display: flex; }
+  #modalValidaciones { background: white; border-radius: 14px; padding: 22px; width: 460px; max-width: calc(100vw - 32px); max-height: 82vh; overflow-y: auto; display: flex; flex-direction: column; }
+  #modalValidaciones h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalValidaciones .ayuda { margin: 0 0 12px; font-size: 12.5px; color: var(--texto-suave); }
+  #modalValidaciones .vacio { font-size: 13px; color: var(--texto-suave); text-align: center; padding: 14px 0; }
+  #modalValidaciones .linea { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+  #modalValidaciones .linea.on { background: #E7F8EE; color: #1E7B45; }
+  #modalValidaciones .linea.off { background: #F1F3F5; color: #6B7785; }
+  #btnCerrarValidaciones { align-self: flex-end; margin-top: 10px; }
   #modalBuscar { background: white; border-radius: 14px; padding: 22px; width: 460px; max-height: 82vh; overflow-y: auto; display: flex; flex-direction: column; }
   #modalBuscar h3 { margin: 0 0 12px; font-size: 16px; }
   #buscarFila { display: flex; gap: 8px; margin-bottom: 14px; }
@@ -473,6 +487,11 @@
   }
   #modalTransferir .vacio-transferir { font-size: 13px; color: var(--texto-suave); text-align: center; padding: 14px 0; }
   #modalTransferir .cerrar { align-self: flex-end; margin-top: 10px; }
+  #modalTransferir .transf-seccion { margin: 14px 0 6px; padding-top: 12px; border-top: 1px solid var(--borde); font-size: 12px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .03em; }
+  #modalTransferir .transf-ayuda { margin: 0 0 8px; font-size: 12px; }
+  #listaOpcionesMenu { display: flex; flex-direction: column; gap: 6px; }
+  .opcion-menu-item { text-align: left; padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; background: white; font: inherit; font-size: 13px; cursor: pointer; color: inherit; }
+  .opcion-menu-item:hover { background: var(--fondo); border-color: var(--azul); }
 
   /* ---- Mantenimiento de usuarios (sofi_usuarios) ---- */
   #modalUsuariosOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
@@ -505,6 +524,60 @@
   #usuarioNota .nota-estado { font-size: 12px; }
   #usuariosEstado { min-height: 20px; margin-top: 10px; font-size: 12.5px; }
   #usuariosBotones { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  /* ---- Buscar SMS enviados a un celular ---- */
+  #modalSmsOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
+  #modalSmsOverlay.activa { display: flex; }
+  #modalSms { background: white; border-radius: 14px; padding: 22px; width: 500px; max-width: calc(100vw - 32px); max-height: 82vh; overflow-y: auto; display: flex; flex-direction: column; }
+  #modalSms h3 { margin: 0 0 12px; font-size: 16px; }
+  #modalSms .sms-fila { display: flex; gap: 8px; margin-bottom: 12px; }
+  #modalSms .sms-fila input { flex: 1; padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; min-width: 0; }
+  #modalSms .sms-aviso { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 14px 0; }
+  #modalSms .sms-nota { font-size: 11.5px; color: var(--texto-suave); margin: 8px 0 0; }
+  .sms-dia { font-size: 11.5px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+  .sms-dia:first-child { margin-top: 0; }
+  .sms-item { border: 1px solid var(--borde); border-radius: 10px; padding: 9px 11px; margin-bottom: 7px; font-size: 13px; }
+  .sms-item.fallo { border-color: #F2C4C0; background: #FFF7F6; }
+  .sms-item.anterior { border-style: dashed; background: #FBFAF7; }
+  .sms-item .sms-cab { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .sms-item .sms-tipo { font-weight: 700; }
+  .sms-item .sms-hora { font-size: 11.5px; color: var(--texto-suave); white-space: nowrap; }
+  .sms-item .sms-texto { margin-top: 5px; white-space: pre-wrap; word-break: break-word; color: var(--texto); background: var(--fondo); border-radius: 8px; padding: 6px 8px; font-size: 12.5px; }
+  .sms-item .sms-meta { margin-top: 5px; font-size: 11.5px; color: var(--texto-suave); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .sms-item .sms-estado.ok { color: #17663F; font-weight: 600; }
+  .sms-item .sms-estado.no { color: #B3261E; font-weight: 600; }
+  .sms-item .sms-conv { color: var(--azul); cursor: pointer; text-decoration: underline; background: none; border: 0; padding: 0; font: inherit; font-size: 11.5px; }
+  /* Filtro entrantes / salientes en "Buscar conversación" (igual que el historial) */
+  .buscar-filtros { display: flex; gap: 6px; margin: -4px 0 10px; flex-wrap: wrap; }
+  .buscar-filtros button { border: 1px solid var(--borde); background: #fff; color: var(--texto); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .buscar-filtros button.activo { background: var(--azul); border-color: var(--azul); color: #fff; }
+  .resultado-item .dir { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 1px 7px; margin-right: 6px; vertical-align: 1px; }
+  .resultado-item .dir.entrante { background: #E8F1FB; color: #0A4C8C; }
+  .resultado-item .dir.saliente { background: #FFF1E0; color: #8A4B00; }
+  .resultado-item .via { font-size: 11.5px; color: #8A4B00; margin-top: 2px; }
+  /* ---- 🕘 Historial del cliente (como en la consola del asesor) ---- */
+  #modalHistorialOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
+  #modalHistorialOverlay.activa { display: flex; }
+  #modalHistorial { background: white; border-radius: 14px; padding: 20px; width: 420px; max-width: calc(100vw - 32px); max-height: 82vh; overflow-y: auto; display: flex; flex-direction: column; }
+  #modalHistorial h3 { margin: 0 0 12px; font-size: 16px; }
+  #historialFiltros { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  #historialFiltros button { border: 1px solid var(--borde); background: #fff; color: var(--texto); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  #historialFiltros button.activo { background: var(--azul); border-color: var(--azul); color: #fff; }
+  #historialVacio { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 20px; }
+  .historial-dia { font-size: 11.5px; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
+  .historial-dia:first-child { margin-top: 0; }
+  .historial-item { padding: 9px 10px; border: 1px solid var(--borde); border-radius: 8px; margin-bottom: 6px; cursor: pointer; font-size: 13px; }
+  .historial-item:hover { background: var(--fondo); }
+  .historial-item .campana { font-weight: 600; }
+  .historial-item .meta { font-size: 11.5px; color: var(--texto-suave); margin-top: 2px; }
+  .historial-item .coincide { display: inline-block; font-size: 10.5px; background: #EEF3F8; color: var(--azul); border-radius: 999px; padding: 1px 7px; margin-left: 4px; }
+  .historial-item .dir { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 1px 7px; margin-right: 6px; vertical-align: 1px; }
+  .historial-item .dir.entrante { background: #E8F1FB; color: #0A4C8C; }
+  .historial-item .dir.saliente { background: #FFF1E0; color: #8A4B00; }
+  .historial-item.contacto { cursor: default; background: #FBFAF7; border-style: dashed; }
+  .historial-item.contacto.abrible { cursor: pointer; }
+  .historial-item .estado-sms { font-weight: 600; }
+  .historial-item .estado-sms.no { color: #B04A00; }
+  .historial-item .estado-sms.si { color: #17663F; }
 </style>
 <link rel="icon" type="image/png" href="/static/imagenes/sofi-cara-chica.png">
 <style id="sofi-css">
@@ -665,7 +738,7 @@ body.sofi th { font-weight: 700; color: var(--texto-suave); }
 .sofi-card, body.sofi .panel, body.sofi .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 16px; }
 
 /* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
-body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
+body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
 body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
 body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnUsuariosSofi, body.sofi #barraConectado #btnCampanas { display: none !important; }
 body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
@@ -835,7 +908,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
   </div>
   <nav class="sofi-nav" aria-label="Menú principal">
     <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b><button type="button" class="nav-toggle" id="navToggle" aria-expanded="true" aria-label="Reducir barra lateral" title="Reducir barra lateral"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></button></div>
-    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Equipo en vivo</span></a><a href="#" data-click="btnCola"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Sin asignar</span></a><a href="#" data-click="btnAsesoresAdmin"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg><span>Asesores</span></a><a href="#" data-click="btnCampanas" class="solo-maximo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg><span>Campañas</span></a><a href="#" data-click="btnEtiquetas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13 13 20a2 2 0 0 1-2.8 0L3 12.8V3h9.8L20 10.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span>Etiquetas</span></a><a href="#" data-click="btnRespuestasRapidas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span>Respuestas rápidas</span></a><a href="#" data-click="btnHorarios"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Horarios</span></a><a href="#" data-click="btnReporte"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 17v-3"/><path d="M12 17v-5"/><path d="M15 17v-2"/></svg><span>Reporte</span></a><a href="#" data-click="btnUsuariosSofi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Usuarios</span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Equipo en vivo</span></a><a href="#" data-click="btnCola"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Sin asignar</span></a><a href="#" data-click="btnAsesoresAdmin"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg><span>Asesores</span></a><a href="#" data-click="btnCampanas" class="solo-maximo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg><span>Campañas</span></a><a href="#" data-click="btnEtiquetas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13 13 20a2 2 0 0 1-2.8 0L3 12.8V3h9.8L20 10.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span>Etiquetas</span></a><a href="#" data-click="btnRespuestasRapidas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span>Respuestas rápidas</span></a><a href="#" data-click="btnHorarios"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Horarios</span></a><a href="#" data-click="btnReporte"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 17v-3"/><path d="M12 17v-5"/><path d="M15 17v-2"/></svg><span>Reporte</span></a><a href="#" data-click="btnUsuariosSofi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Usuarios</span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnBuscarSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 6h4"/><path d="M9.5 11h5M9.5 14h3"/></svg><span>Buscar SMS</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
     <div class="nav-seccion">Ir a</div>
     <div class="nav-links"><a href="/asesor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><span>Asesor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a><a href="/dashboard" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
     <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Supervisor</small></div></div>
@@ -848,9 +921,11 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <button class="gris chico" id="btnRefrescarTablero" title="Actualizar">🔄 Actualizar</button>
     <button class="gris chico" id="btnUsuariosSofi" title="Mantenimiento de datos personales de pacientes (tabla sofi_usuarios)">👤 Usuarios</button>
     <button class="gris chico" id="btnBuscar">🔎 Buscar</button>
+    <button class="gris chico" id="btnBuscarSms" title="Ver los SMS enviados a un celular">📲 Buscar SMS</button>
     <button class="gris chico" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
     <button class="gris chico" id="btnArchivoSms" title="Subir un PDF o imagen y enviarle al cliente un enlace único por SMS">📎 Enviar archivo</button>
     <button class="gris chico" id="btnAyudarBot">🧭 Ayudar en el bot</button>
+    <button class="chico" id="btnValidaciones" style="display:none" title="Clientes que no reciben el código SMS y pidieron que validemos su celular">📱 Validar celular <span id="validacionesN">0</span></button>
     <button id="btnEtiquetas">🏷️ Etiquetas</button>
     <button id="btnRespuestasRapidas">⚡ Respuestas rápidas</button>
     <button id="btnAsesoresAdmin">👥 Asesores</button>
@@ -895,6 +970,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         </div>
         <div class="acciones-top">
           <div class="acciones-conv acciones-supervisor"><a class="chico gris" id="btnDescargarPdf" title="Descargar la conversación en PDF" target="_blank" rel="noopener">📄 PDF</a>
+          <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones y SMS de este cliente">🕘 Histor.</button>
           <button class="chico gris" id="btnEnviarSms" title="Manda un SMS al cliente con un enlace directo a esta conversación, por si cerró el chat">📲 SMS</button>
           <button class="chico gris" id="btnAvisoInactividadEscucha" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
           <button class="chico gris" id="btnPausarConv" title="Pausar o reanudar: la pasa a la bandeja 'Pausados' del asesor que la atiende">⏸ Pausar</button>
@@ -1078,10 +1154,38 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <input id="buscarInput" placeholder="Celular, DNI, nombre o código de conversación (ej. 6888)..." />
         <button id="btnEjecutarBusqueda">Buscar</button>
       </div>
+      <div class="buscar-filtros" id="buscarFiltros" role="group" aria-label="Filtrar resultados" style="display:none">
+        <button type="button" data-bf="todo" class="activo">Todo</button>
+        <button type="button" data-bf="entrante">📥 Entrantes</button>
+        <button type="button" data-bf="saliente">📤 Salientes</button>
+      </div>
       <div id="buscarResultados"></div>
       <div id="buscarVacio">Escribe un celular, DNI, nombre o código de conversación y presiona buscar.</div>
       <div id="buscarSinResultados" style="display:none;">No se encontraron conversaciones.</div>
       <button id="btnCerrarModalBuscar">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalValidacionesOverlay">
+    <div id="modalValidaciones">
+      <h3>📱 Validar celular</h3>
+      <p class="ayuda">Clientes a los que no les llega el código SMS. Abre la conversación, llama al celular para confirmar que es el titular y usa «Validar sin código».</p>
+      <div id="listaValidaciones"></div>
+      <button class="gris" id="btnCerrarValidaciones">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalSmsOverlay">
+    <div id="modalSms">
+      <h3>📲 SMS enviados a un celular</h3>
+      <div class="sms-fila">
+        <input id="smsBuscarInput" inputmode="numeric" placeholder="Celular (ej. 987654321)" />
+        <button id="btnEjecutarBuscarSms">Buscar</button>
+      </div>
+      <div id="smsResultados"></div>
+      <div class="sms-aviso" id="smsAviso">Escribe el celular y presiona buscar.</div>
+      <p class="sms-nota" id="smsNota"></p>
+      <button class="gris" id="btnCerrarModalSms" style="align-self:flex-end;margin-top:10px">Cerrar</button>
     </div>
   </div>
 
@@ -1097,6 +1201,20 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
       <div id="buscarBotVacio">Escribe un número de celular y presiona buscar.</div>
       <div id="buscarBotSinResultados" style="display:none;">No hay conversaciones en el bot o en cola con ese celular.</div>
       <button id="btnCerrarModalAyudarBot">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalHistorialOverlay">
+    <div id="modalHistorial">
+      <h3>Historial del cliente</h3>
+      <div id="historialFiltros" role="group" aria-label="Filtrar historial">
+        <button type="button" data-hf="todo" class="activo">Todo</button>
+        <button type="button" data-hf="entrante">📥 Entrantes</button>
+        <button type="button" data-hf="saliente">📤 Salientes</button>
+      </div>
+      <div id="historialAgrupado"></div>
+      <div id="historialVacio" style="display:none;">Este cliente no tiene conversaciones anteriores.</div>
+      <button class="gris" id="btnCerrarModalHistorial" style="align-self:flex-end;margin-top:10px">Cerrar</button>
     </div>
   </div>
 
@@ -1116,6 +1234,9 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
       <p>Selecciona a qué asesor conectado le quieres pasar esta conversación.</p>
       <div id="listaAsesoresTransferir"></div>
       <div class="vacio-transferir" id="transferirVacio" style="display:none;">No hay otros asesores conectados ahora mismo.</div>
+      <div class="transf-seccion">O enviar a una opción del menú</div>
+      <p class="transf-ayuda">Si la consulta no corresponde (asignada o en cola): el bot la atiende en esa opción.</p>
+      <div id="listaOpcionesMenu"><div class="vacio-transferir">Cargando opciones…</div></div>
       <button class="gris cerrar" id="btnCancelarTransferir">Cancelar</button>
     </div>
   </div>
@@ -1521,8 +1642,12 @@ document.getElementById('lightboxOverlay').addEventListener('click', (e) => {
 });
 
 // ---- Tooltip del último mensaje sobre cada conversación del tablero ----
+// En celulares y tablets (pantalla táctil, sin mouse) no se muestra: el toque simula un "mouse encima" y el
+// recuadro quedaba pegado tapando la lista.
+const TOOLTIP_CON_MOUSE = window.matchMedia ? window.matchMedia('(hover: hover) and (pointer: fine)') : null;
 function mostrarTooltipUltimoMensaje(e, texto) {
   if (!texto) return;
+  if (TOOLTIP_CON_MOUSE && !TOOLTIP_CON_MOUSE.matches) return;
   const tip = document.getElementById('tooltipUltimoMensaje');
   tip.textContent = texto;
   tip.style.display = 'block';
@@ -1980,6 +2105,11 @@ function conectarWs() {
       renderAsesoresAdmin();
     } else if (data.type === 'resultado_campanas_asesor') {
       if (!p.ok) alert(p.motivo || 'No se pudieron guardar las campañas.');
+    } else if (data.type === 'historial_usuario') {
+      historialDatos = { conversaciones: p.conversaciones || [], contactos: p.contactos || [] };
+      renderHistorialAgrupado(historialDatos.conversaciones, historialDatos.contactos);
+    } else if (data.type === 'resultados_sms') {
+      renderResultadosSms(p);
     } else if (data.type === 'resultados_busqueda') {
       renderResultadosBusqueda(p.resultados || []);
     } else if (data.type === 'detalle_conversacion') {
@@ -1990,6 +2120,10 @@ function conectarWs() {
       else { const ent = confirmarSinCid(p.conversacion_id); if (ent) quitarPendienteEscucha(ent.cid); }
     } else if (data.type === 'lista_asesores') {
       renderListaAsesoresTransferir(p.asesores || []);
+    } else if (data.type === 'validaciones_pendientes') {
+      recibirValidacionesPendientes(p.lista);
+    } else if (data.type === 'opciones_menu') {
+      renderOpcionesMenu(p);
     } else if (data.type === 'error_transferencia') {
       alert(p.motivo || 'No se pudo transferir la conversación.');
     } else if (data.type === 'horarios_actuales') {
@@ -2501,6 +2635,8 @@ document.getElementById('btnTransferir').onclick = () => {
   document.getElementById('listaAsesoresTransferir').innerHTML = '';
   document.getElementById('transferirVacio').style.display = 'none';
   ws.send(JSON.stringify({ type: 'listar_asesores', payload: {} }));
+  document.getElementById('listaOpcionesMenu').innerHTML = '<div class="vacio-transferir">Cargando opciones…</div>';
+  ws.send(JSON.stringify({ type: 'listar_opciones_menu', payload: { conversacion_id: Number(conversacionEscuchada) } }));
   document.getElementById('modalTransferirOverlay').classList.add('activa');
 };
 
@@ -2540,6 +2676,31 @@ function renderListaAsesoresTransferir(asesores) {
       };
     }
     cont.appendChild(item);
+  });
+}
+
+// Devolver la conversación al bot, en una opción del menú (Pase de atención, Medicamentos, SCTR, EPS...).
+function renderOpcionesMenu(p) {
+  if (String(p.conversacion_id) !== String(conversacionEscuchada)) return;
+  const cont = document.getElementById('listaOpcionesMenu');
+  cont.innerHTML = '';
+  const opciones = p.opciones || [];
+  if (!opciones.length) {
+    cont.innerHTML = '<div class="vacio-transferir">No hay opciones disponibles.</div>';
+    return;
+  }
+  opciones.forEach(o => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'opcion-menu-item';
+    b.textContent = o.label;
+    b.onclick = () => {
+      if (!conversacionEscuchada || !ws) return;
+      if (!confirm(`¿Enviar esta conversación a «${o.label}»?\n\nEl bot la atenderá en esa opción y saldrá de la bandeja del asesor (o de la cola).`)) return;
+      ws.send(JSON.stringify({ type: 'devolver_a_opcion', payload: { conversacion_id: Number(conversacionEscuchada), codigo: o.codigo } }));
+      document.getElementById('modalTransferirOverlay').classList.remove('activa');
+    };
+    cont.appendChild(b);
   });
 }
 
@@ -3483,6 +3644,56 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
   };
 })();
 
+// ---- Validaciones pedidas por el cliente ("🙋 No me llega el código") ----
+let validacionesPendientes = [];
+function recibirValidacionesPendientes(lista) {
+  const antes = new Set(validacionesPendientes.map(v => String(v.conversacion_id)));
+  validacionesPendientes = lista || [];
+  const btn = document.getElementById('btnValidaciones');
+  document.getElementById('validacionesN').textContent = validacionesPendientes.length;
+  if (validacionesPendientes.length) btn.style.removeProperty('display');
+  else btn.style.setProperty('display', 'none', 'important');
+  if (validacionesPendientes.some(v => !antes.has(String(v.conversacion_id)))) {
+    btn.classList.remove('nueva'); void btn.offsetWidth; btn.classList.add('nueva');
+  }
+  pintarListaValidaciones();
+}
+function pintarListaValidaciones() {
+  const cont = document.getElementById('listaValidaciones');
+  cont.innerHTML = '';
+  if (!validacionesPendientes.length) {
+    cont.innerHTML = '<div class="vacio">No hay validaciones pendientes. 🎉</div>';
+    return;
+  }
+  validacionesPendientes.forEach(v => {
+    const div = document.createElement('div');
+    div.className = 'resultado-item';
+    div.innerHTML = `
+      <div class="nombre">${escapeHtml(v.nombre)}</div>
+      <div class="datos">${escapeHtml(['📱 ' + (v.celular || '(sin número)'), v.dni ? 'DNI ' + v.dni : null].filter(Boolean).join(' · '))}</div>
+      <div class="fila-estado">
+        <span class="linea ${v.en_linea ? 'on' : 'off'}">${v.en_linea ? 'Chat abierto' : 'Chat cerrado'}</span>
+        <span style="font-size:11.5px;color:var(--texto-suave);">Pidió ayuda ${formatearFechaHoraLista(v.pedido_en)}</span>
+      </div>`;
+    div.onclick = () => {
+      document.getElementById('modalValidacionesOverlay').classList.remove('activa');
+      escuchar(v.conversacion_id, v.nombre, v.celular, v.entrada_cola, null, v.dni);
+    };
+    cont.appendChild(div);
+  });
+}
+document.getElementById('btnValidaciones').onclick = () => {
+  pintarListaValidaciones();
+  document.getElementById('modalValidacionesOverlay').classList.add('activa');
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'listar_validaciones_pendientes', payload: {} }));
+};
+document.getElementById('btnCerrarValidaciones').onclick = () => {
+  document.getElementById('modalValidacionesOverlay').classList.remove('activa');
+};
+setInterval(() => {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'listar_validaciones_pendientes', payload: {} }));
+}, 60000);
+
 // ---- Ayudar en el bot: buscar por celular conversaciones que todavía no
 // llegan a un asesor, y abrir el panel de escucha en vivo para poder
 // mandarle mensajes directos a esa persona mientras sigue en el bot. ----
@@ -3546,12 +3757,93 @@ document.getElementById('btnRefrescarTablero').onclick = (e) => {
   btn.classList.add('girando');
 };
 
+// ---- Buscar SMS enviados a un celular (códigos, invitaciones, avisos, encuestas...) ----
+document.getElementById('btnBuscarSms').onclick = () => {
+  document.getElementById('smsBuscarInput').value = '';
+  document.getElementById('smsResultados').innerHTML = '';
+  document.getElementById('smsNota').textContent = '';
+  const aviso = document.getElementById('smsAviso');
+  aviso.textContent = 'Escribe el celular y presiona buscar.';
+  aviso.style.display = 'block';
+  document.getElementById('modalSmsOverlay').classList.add('activa');
+  setTimeout(() => document.getElementById('smsBuscarInput').focus(), 50);
+};
+document.getElementById('btnCerrarModalSms').onclick = () => {
+  document.getElementById('modalSmsOverlay').classList.remove('activa');
+};
+function ejecutarBuscarSms() {
+  const celular = document.getElementById('smsBuscarInput').value.trim();
+  if (!celular || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const aviso = document.getElementById('smsAviso');
+  aviso.textContent = 'Buscando…';
+  aviso.style.display = 'block';
+  document.getElementById('smsResultados').innerHTML = '';
+  ws.send(JSON.stringify({ type: 'buscar_sms', payload: { celular } }));
+}
+document.getElementById('btnEjecutarBuscarSms').onclick = ejecutarBuscarSms;
+document.getElementById('smsBuscarInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') ejecutarBuscarSms(); });
+
+function horaSms(iso) {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function renderResultadosSms(p) {
+  const cont = document.getElementById('smsResultados');
+  const aviso = document.getElementById('smsAviso');
+  const nota = document.getElementById('smsNota');
+  cont.innerHTML = '';
+  nota.textContent = '';
+  if (!p.ok) { aviso.textContent = p.motivo || 'No se pudo buscar.'; aviso.style.display = 'block'; return; }
+  const lista = p.sms || [];
+  if (!lista.length) { aviso.textContent = 'No hay SMS enviados a ese celular.'; aviso.style.display = 'block'; }
+  else aviso.style.display = 'none';
+  let dia = null;
+  lista.forEach(s => {
+    const d = new Date(s.enviado_en);
+    const diaTxt = d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    if (diaTxt !== dia) {
+      dia = diaTxt;
+      const h = document.createElement('div');
+      h.className = 'sms-dia';
+      h.textContent = diaTxt;
+      cont.appendChild(h);
+    }
+    const div = document.createElement('div');
+    div.className = 'sms-item' + (s.ok ? '' : ' fallo') + (s.anterior ? ' anterior' : '');
+    const quien = s.enviado_por ? `Enviado por ${escapeHtml(s.enviado_por)}${s.rol === 'supervisor' ? ' (supervisor)' : ''}` : 'Automático';
+    div.innerHTML = `
+      <div class="sms-cab"><span class="sms-tipo">${escapeHtml(s.tipo_texto || s.tipo)}</span><span class="sms-hora">${horaSms(s.enviado_en)}</span></div>
+      ${s.texto ? `<div class="sms-texto">${escapeHtml(s.texto)}</div>` : ''}
+      <div class="sms-meta">
+        <span class="sms-estado ${s.ok ? 'ok' : 'no'}">${s.ok ? '✅ Enviado al proveedor' : '❌ No se pudo enviar'}</span>
+        <span>${quien}</span>
+        ${s.anterior ? '<span>· registro anterior, sin texto</span>' : ''}
+        ${s.conversacion_id ? `<button type="button" class="sms-conv">Ver conversación #${escapeHtml(String(s.conversacion_id))}</button>` : ''}
+      </div>`;
+    const btn = div.querySelector('.sms-conv');
+    if (btn) btn.onclick = () => {
+      document.getElementById('modalSmsOverlay').classList.remove('activa');
+      document.getElementById('btnBuscar').onclick();
+      document.getElementById('buscarInput').value = String(s.conversacion_id);
+      ejecutarBusqueda();
+    };
+    cont.appendChild(div);
+  });
+  if (p.desde_registro) {
+    nota.textContent = 'El texto de cada SMS se guarda desde el ' + new Date(p.desde_registro).toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' })
+      + '. "Enviado al proveedor" significa que Danaconnect lo aceptó; no confirma que haya llegado al celular. Los enlaces no se muestran.';
+  } else if (lista.length) {
+    nota.textContent = 'Solo hay registros anteriores (sin texto). Los nuevos SMS se registrarán con su texto.';
+  }
+}
+
 // ---- Buscador de conversaciones (abiertas o cerradas) por celular/DNI/nombre ----
 let ultimosResultadosBusqueda = [];
 
 document.getElementById('btnBuscar').onclick = () => {
   document.getElementById('buscarInput').value = '';
   document.getElementById('buscarResultados').innerHTML = '';
+  document.getElementById('buscarFiltros').style.display = 'none';
   document.getElementById('buscarVacio').style.display = 'block';
   document.getElementById('buscarSinResultados').style.display = 'none';
   document.getElementById('modalBuscarOverlay').classList.add('activa');
@@ -3581,7 +3873,26 @@ function formatearFechaHoraCompleta(iso) {
 
 const ETIQUETAS_ESTADO = { bot: 'En bot', en_cola: 'En cola', asignada: 'Asignada', cerrada: 'Cerrada' };
 
-function renderResultadosBusqueda(resultados) {
+// Filtro 📥 entrantes / 📤 salientes de "Buscar conversación" (igual que en el historial).
+var buscarFiltro = 'todo', resultadosBusquedaTodos = [];
+document.querySelectorAll('#buscarFiltros [data-bf]').forEach(b => b.onclick = () => {
+  buscarFiltro = b.dataset.bf;
+  document.querySelectorAll('#buscarFiltros [data-bf]').forEach(x => x.classList.toggle('activo', x === b));
+  renderResultadosBusqueda(resultadosBusquedaTodos, true);
+});
+function htmlDireccionBusqueda(r) {
+  return r.direccion === 'saliente'
+    ? '<span class="dir saliente" title="La abrió un SMS que le enviamos">📤 Saliente</span>'
+    : '<span class="dir entrante" title="El cliente nos escribió por su cuenta">📥 Entrante</span>';
+}
+function renderResultadosBusqueda(todos, soloFiltro) {
+  if (!soloFiltro) {
+    resultadosBusquedaTodos = todos || [];
+    buscarFiltro = 'todo';
+    document.querySelectorAll('#buscarFiltros [data-bf]').forEach(x => x.classList.toggle('activo', x.dataset.bf === 'todo'));
+  }
+  document.getElementById('buscarFiltros').style.display = resultadosBusquedaTodos.length ? 'flex' : 'none';
+  const resultados = resultadosBusquedaTodos.filter(r => buscarFiltro === 'todo' || (r.direccion || 'entrante') === buscarFiltro);
   ultimosResultadosBusqueda = resultados;
   const cont = document.getElementById('buscarResultados');
   cont.innerHTML = '';
@@ -3594,8 +3905,9 @@ function renderResultadosBusqueda(resultados) {
     const detalleEstado = r.estado === 'asignada' && r.asesor_nombre && !r.atendieron ? ` · ${escapeHtml(r.asesor_nombre)}`
                          : r.estado === 'cerrada' && r.etiqueta ? ` · ${escapeHtml(r.etiqueta)}` : '';
     div.innerHTML = `
-      <div class="nombre">${escapeHtml(r.usuario_nombre)}</div>
+      <div class="nombre">${htmlDireccionBusqueda(r)}${escapeHtml(r.usuario_nombre)}</div>
       <div class="datos">${escapeHtml(['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      ${r.via ? `<div class="via">📲 Llegó por ${escapeHtml(r.via)}</div>` : ''}
       ${r.atendieron ? `<div class="atendio">👤 Atendió: <b>${escapeHtml(r.atendieron)}</b></div>` : ''}
       <div class="fila-estado">
         <span class="estado-pill ${r.estado}">${ETIQUETAS_ESTADO[r.estado] || r.estado}${detalleEstado}</span>
@@ -3679,6 +3991,99 @@ function salirLecturaPanel() {
   document.getElementById('panelHeader').classList.remove('lectura');
 }
 
+
+// ---- 🕘 Historial del cliente desde el panel (el mismo que ve el asesor): conversaciones anteriores (📥/📤) y
+// SMS con los que lo contactamos. Una conversación se abre encima, en la ventana de detalle. ----
+var historialDatos = { conversaciones: [], contactos: [] };
+var historialFiltro = 'todo';
+document.getElementById('btnHistorialUsuario').onclick = () => {
+  const id = conversacionEscuchada || conversacionLectura;
+  if (!id || !ws || ws.readyState !== WebSocket.OPEN) return;
+  historialFiltro = 'todo';
+  document.querySelectorAll('#historialFiltros [data-hf]').forEach(x => x.classList.toggle('activo', x.dataset.hf === 'todo'));
+  document.getElementById('historialAgrupado').innerHTML = '<div style="color:var(--texto-suave);font-size:13px;padding:10px">Cargando…</div>';
+  document.getElementById('historialVacio').style.display = 'none';
+  ws.send(JSON.stringify({ type: 'obtener_historial_usuario', payload: { conversacion_id: Number(id) } }));
+  document.getElementById('modalHistorialOverlay').classList.add('activa');
+};
+document.getElementById('btnCerrarModalHistorial').onclick = () => {
+  document.getElementById('modalHistorialOverlay').classList.remove('activa');
+};
+document.querySelectorAll('#historialFiltros [data-hf]').forEach(b => b.onclick = () => {
+  historialFiltro = b.dataset.hf;
+  document.querySelectorAll('#historialFiltros [data-hf]').forEach(x => x.classList.toggle('activo', x === b));
+  renderHistorialAgrupado(historialDatos.conversaciones, historialDatos.contactos);
+});
+function horaHistorial(iso) {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function abrirConversacionHistorial(id, titulo) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  document.getElementById('detalleNombre').textContent = 'Conversación #' + id;
+  document.getElementById('detalleSubtitulo').textContent = titulo || '';
+  document.getElementById('btnDescargarPdfDetalle').href =
+    `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(id)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
+  document.getElementById('detalleConvChat').innerHTML = '<div style="color:var(--texto-suave);font-size:13px">Cargando…</div>';
+  document.getElementById('modalDetalleOverlay').classList.add('activa');
+  ws.send(JSON.stringify({ type: 'ver_conversacion', payload: { conversacion_id: Number(id) } }));
+}
+function renderHistorialAgrupado(conversacionesPasadas, contactos) {
+  const cont = document.getElementById('historialAgrupado');
+  const vacio = document.getElementById('historialVacio');
+  cont.innerHTML = '';
+  const items = [
+    ...(conversacionesPasadas || []).map(c => ({ tipo: 'conv', fecha: c.iniciado_en, dir: c.direccion || 'entrante', c })),
+    ...(contactos || []).map(k => ({ tipo: 'sms', fecha: k.enviado_en, dir: 'saliente', k })),
+  ].filter(x => x.fecha && (historialFiltro === 'todo' || x.dir === historialFiltro))
+   .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  if (!items.length) {
+    vacio.textContent = historialFiltro === 'todo' ? 'Este cliente no tiene conversaciones anteriores.'
+      : historialFiltro === 'entrante' ? 'No hay conversaciones entrantes.' : 'No hay contactos salientes.';
+    vacio.style.display = 'block';
+    return;
+  }
+  vacio.style.display = 'none';
+  let diaActual = null;
+  const motivos = { celular: '📱 mismo celular', dni: '🪪 mismo DNI', navegador: '💻 mismo dispositivo' };
+  items.forEach(x => {
+    const dia = new Date(x.fecha).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    if (dia !== diaActual) {
+      diaActual = dia;
+      const header = document.createElement('div');
+      header.className = 'historial-dia';
+      header.textContent = dia;
+      cont.appendChild(header);
+    }
+    const item = document.createElement('div');
+    if (x.tipo === 'conv') {
+      const c = x.c;
+      item.className = 'historial-item';
+      const tags = (c.coincide || []).map(k => `<span class="coincide">${motivos[k] || escapeHtml(k)}</span>`).join('');
+      const dir = x.dir === 'saliente'
+        ? '<span class="dir saliente" title="La abrió un SMS que le enviamos">📤 Saliente</span>'
+        : '<span class="dir entrante" title="El cliente nos escribió por su cuenta">📥 Entrante</span>';
+      item.innerHTML = `
+        <div class="campana">${dir}${escapeHtml(c.campana || 'Sin campaña')} ${c.etiqueta ? '· ' + escapeHtml(c.etiqueta) : ''}</div>
+        <div class="meta">#${escapeHtml(String(c.conversacion_id))} · ${horaHistorial(c.iniciado_en)} — ${escapeHtml(c.estado)}${c.via ? ' · ' + escapeHtml(c.via) : ''}${tags}</div>
+        ${c.atendieron ? `<div class="atendio">👤 Atendió: <b>${escapeHtml(c.atendieron)}</b></div>` : ''}`;
+      item.onclick = () => abrirConversacionHistorial(c.conversacion_id,
+        [c.campana, c.etiqueta, c.atendieron ? 'Atendió: ' + c.atendieron : null].filter(Boolean).join(' · '));
+    } else {
+      const k = x.k;
+      const abrible = k.conversacion_id && !k.es_actual;
+      item.className = 'historial-item contacto' + (abrible ? ' abrible' : '');
+      const estado = k.abierto_en
+        ? `<span class="estado-sms si">✅ Lo abrió ${horaHistorial(k.abierto_en)}${k.es_actual ? ' (es esta conversación)' : k.conversacion_id ? ` → conversación #${escapeHtml(String(k.conversacion_id))}` : ''}</span>`
+        : '<span class="estado-sms no">⏳ No lo abrió</span>';
+      item.innerHTML = `
+        <div class="campana"><span class="dir saliente">📤 ${escapeHtml(k.tipo_texto)}</span>${k.detalle ? (k.tipo === 'enlace_directo' ? 'hacia ' : '') + escapeHtml(k.detalle) : ''}</div>
+        <div class="meta">${horaHistorial(k.enviado_en)} · enviado por ${escapeHtml(k.enviado_por || '¿?')}${k.rol === 'supervisor' ? ' (supervisor)' : ''} — ${estado}</div>`;
+      if (abrible) item.onclick = () => abrirConversacionHistorial(k.conversacion_id, k.tipo_texto);
+    }
+    cont.appendChild(item);
+  });
+}
 
 document.getElementById('btnCerrarModalDetalle').onclick = () => {
   document.getElementById('modalDetalleOverlay').classList.remove('activa');
@@ -4600,7 +5005,7 @@ window.sofi2fa = function (data, urlBase) {
   body.sofi #barraConectado .estado { flex: 0 0 auto; font-size: 12px; }
   body.sofi #barraConectado .nombre-asesor { display: none; }
   /* Los atajos que el escritorio deja en la barra lateral, aquí vuelven a la barra */
-  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
+  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
   body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
   body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi,
   body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnCampanas { display: inline-flex !important; align-items: center; }

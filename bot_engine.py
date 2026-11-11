@@ -23,6 +23,7 @@ p.ej. [{"type": "mensaje_bot", "payload": {...}}, {"type": "en_cola", "payload":
 
 import os
 import re
+import unicodedata
 import json
 import logging
 from datetime import datetime, timezone, timedelta
@@ -39,11 +40,12 @@ from api_handlers import (
     resumen_ubicacion_mad, validar_distrito_mad,
     api_sctr_nuevo, api_sctr_continuidad, api_eps_nuevo,
     detalle_planilla_sctr, generar_excel_sctr, borrar_trabajador_sctr,
-    enviar_sms_otp, validar_sms_otp,
+    enviar_sms_otp, validar_sms_otp, acciones_otp,
     consulta_doi_potestativo, consulta_doi_potestativo_carta,
     consulta_carta_rechazada, update_cg_rechazados, alta_usuario_programa,
     afiliacion_iniciar, afiliacion_consulta_ruc, afiliacion_registrar_titular,
-    afiliacion_registrar_dependiente, lead_consultas, consulta_agente_ia,
+    afiliacion_registrar_dependiente, lead_consultas, consulta_agente_ia, sofi_filtro,
+    sofi_sabe_responder,
 )
 
 LIMA_TZ = timezone(timedelta(hours=-5))
@@ -94,6 +96,7 @@ API_HANDLERS = {
     "afiliacion_registrar_dependiente": afiliacion_registrar_dependiente,
     "lead_consultas": lead_consultas,
     "consulta_agente_ia": consulta_agente_ia,
+    "sofi_filtro": sofi_filtro,
 }
 
 
@@ -537,12 +540,19 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             # "codigo_nodo" se manda siempre (no solo para el OTP) -- lo usa el
             # widget para reconocer en qué captura_dato puntual está parado y
             # decidir si debe mostrar acciones extra, como los botones de
-            # "Reenviar código"/"Llamarme" durante webchat_valida_pide_codigo
-            # (ver main.py: _reenviar_codigo_otp / _solicitar_llamada_otp).
-            eventos.append({"type": "mensaje_bot", "payload": {
-                "texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables),
-                "codigo_nodo": nodo["codigo"]}})
+            # "Reenviar código"/"Verificar con WhatsApp" durante webchat_valida_pide_codigo
+            # (ver main.py: _reenviar_codigo_otp / _pedir_validacion_manual).
+            payload_msg = {"texto": texto, "imagen_url": sustituir_variables(nodo["imagen_url"], variables),
+                           "codigo_nodo": nodo["codigo"]}
+            if nodo["codigo"] == "webchat_valida_pide_codigo":
+                payload_msg.update(acciones_otp(variables))   # celular enmascarado, reenvíos, ayuda
+            eventos.append({"type": "mensaje_bot", "payload": payload_msg})
             _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+            val = nodo["validacion"] or {}
+            if val.get("tipo") == "imagen" and val.get("multiple") and val.get("variable"):
+                # Varias imágenes (ej. receta en 2+ fotos): se empieza una lista nueva cada vez que se pide.
+                for sufijo in ("_LISTA", "_RUTAS"):
+                    variables.pop(val["variable"] + sufijo, None)
             _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
             break  # espera el texto/adjunto del usuario
 
@@ -565,6 +575,11 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             # recibir_entrada_usuario (_turno_ia) SIN avanzar de nodo; se sale con "menu"
             # (lo intercepta main.py en cualquier punto del bot).
             es_plan = (nodo["accion_config"] or {}).get("fuente") == "plan"
+            if variables.pop("IA_SIN_BIENVENIDA", None) == "si":
+                # Llega desde el filtro de "Hablar c/ asesor" cuando Sofi le hizo una pregunta: la conversación
+                # sigue con Sofi sin repetir la bienvenida (el cliente solo contesta lo que ella le preguntó).
+                _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
+                break
             if es_plan:
                 vigentes, elegido = _plan_elegido(cur, variables)
                 if elegido is None and len(vigentes) > 1:
@@ -578,7 +593,7 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
                     _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
                     break
             texto = sustituir_variables(nodo["texto"] or "", variables)
-            botones = _botones_temas_ia(_temas_ia(nodo))
+            botones = _botones_temas_ia(_temas_ia(nodo), con_plan=not es_plan and nodo["codigo"] == NODO_SOFI)
             if es_plan:
                 # Su plan en PDF, para que lo revise cuando quiera (se ve y descarga desde el chat).
                 eventos.extend(_eventos_pdf_plan(cur, conversacion_id, variables))
@@ -617,6 +632,8 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             if accion_config.get("api") == "sctr_archivo_previo":
                 # Archivos de la última solicitud de esta empresa (ver archivos_cliente.py): necesita la base.
                 resultado = archivos_cliente.accion_archivo_previo(cur, conversacion_id, variables)
+            elif accion_config.get("api") == "sofi_filtro":
+                resultado = _sofi_filtro(cur, conversacion_id, variables, parametros)
             elif accion_config.get("api") == "plan_buscar":
                 resultado = planes.accion_buscar(cur, conversacion_id, variables)
             elif accion_config.get("api") == "plan_solicitar":
@@ -731,6 +748,9 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
     return eventos
 
 
+VARIABLES_DE_NAVEGADOR = ("OTP_DOMINIO",)
+
+
 def iniciar_conversacion(conversacion_id: int, nodo_inicial: str, variables_iniciales: dict = None) -> list:
     conn = get_connection()
     try:
@@ -738,7 +758,15 @@ def iniciar_conversacion(conversacion_id: int, nodo_inicial: str, variables_inic
             if (variables_iniciales or {}).get("CELULAR"):
                 # Entró un visitante ya reconocido (celular verificado en este navegador).
                 _hito(cur, conversacion_id, "reconocido", nodo_inicial)
-            eventos = _avanzar(cur, conversacion_id, nodo_inicial, dict(variables_iniciales or {}))
+            variables = dict(variables_iniciales or {})
+            # Datos de la sesión del navegador (no del trámite) que sobreviven al reinicio del árbol: p. ej. el
+            # dominio de la página para el SMS del código (ver api_handlers.texto_sms_otp).
+            cur.execute("SELECT variables_sesion FROM conversaciones WHERE id = %s", (conversacion_id,))
+            fila = cur.fetchone()
+            for clave in VARIABLES_DE_NAVEGADOR:
+                if clave not in variables and fila and (fila[0] or {}).get(clave):
+                    variables[clave] = fila[0][clave]
+            eventos = _avanzar(cur, conversacion_id, nodo_inicial, variables)
         conn.commit()
         return eventos
     finally:
@@ -753,6 +781,67 @@ class _TurnoIA:
         self.variables = variables
         self.temas = temas or []
         self.fuente = fuente
+
+
+# ---- Captura de VARIAS imágenes (validacion.multiple = true, p. ej. la receta en 2 o más fotos) ----
+# Cada imagen se agrega a <VARIABLE>_LISTA (URL firmada, para procesarla ya) y <VARIABLE>_RUTAS (ruta en el bucket);
+# <VARIABLE> queda con la primera, como antes. Después de cada una se pregunta si hay más; con "No, ya envié todas"
+# (o al llegar a validacion.max, 5 por defecto) sigue al siguiente paso. Si manda otra imagen sin tocar el botón,
+# también se agrega.
+ID_IMG_MAS = "img_mas"
+ID_IMG_LISTO = "img_listo"
+_TEXTOS_LISTO = {"no", "listo", "ya", "ya esta", "eso es todo", "es todo", "ninguna", "no tengo mas", "no hay mas",
+                 "termine", "fin", "nada mas", "ya envie todas", "ya las envie"}
+_TEXTOS_MAS = {"si", "si tengo", "tengo mas", "otra", "una mas", "hay mas", "falta", "me falta"}
+
+
+def _captura_varias_imagenes(cur, conversacion_id: int, nodo: dict, validacion: dict, variables: dict,
+                             texto, opcion_id, archivo_url, archivo_ruta):
+    """None = ya terminó (seguir al siguiente paso); lista de eventos = sigue en este paso."""
+    var = validacion["variable"]
+    lista = list(variables.get(var + "_LISTA") or [])
+    rutas = list(variables.get(var + "_RUTAS") or [])
+    maximo = max(1, min(int(validacion.get("max") or 5), 10))
+    t = unicodedata.normalize("NFD", (texto or "").strip().lower())
+    t = re.sub(r"[^\w\s]", "", "".join(c for c in t if unicodedata.category(c) != "Mn")).strip()
+
+    def preguntar(intro: str):
+        botones = [{"id": ID_IMG_MAS, "label": validacion.get("boton_mas") or "➕ Sí, enviar otra"},
+                   {"id": ID_IMG_LISTO, "label": validacion.get("boton_listo") or "✅ No, ya envié todas"}]
+        pregunta = validacion.get("pregunta_mas") or "¿Tu receta tiene *más imágenes o páginas*?"
+        texto_bot = f"{intro} {pregunta}".strip()
+        _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto_bot)
+        _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(botones))
+        return [{"type": "mensaje_bot", "payload": {"texto": texto_bot, "opciones": botones,
+                                                     "codigo_nodo": nodo["codigo"]}}]
+
+    if archivo_url:
+        _guardar_mensaje(cur, conversacion_id, "usuario", "archivo", archivo_ruta or archivo_url)
+        lista.append(archivo_url)
+        rutas.append(archivo_ruta or "")
+        variables[var + "_LISTA"] = lista
+        variables[var + "_RUTAS"] = rutas
+        variables[var] = lista[0]
+        if len(lista) >= maximo:
+            return None
+        n = len(lista)
+        return preguntar(f"✅ Recibí {n} {'imagen' if n == 1 else 'imágenes'}.")
+    if not lista:
+        return [{"type": "mensaje_bot", "payload": {
+            "texto": validacion.get("mensaje_falta") or "📎 Envíame una *imagen o PDF* de tu receta para continuar.",
+            "codigo_nodo": nodo["codigo"]}}]
+    if opcion_id == ID_IMG_LISTO or (not opcion_id and t in _TEXTOS_LISTO):
+        _guardar_mensaje(cur, conversacion_id, "usuario", "boton_click" if opcion_id else "texto",
+                         validacion.get("boton_listo") or "✅ No, ya envié todas")
+        return None
+    if opcion_id == ID_IMG_MAS or (not opcion_id and t in _TEXTOS_MAS):
+        _guardar_mensaje(cur, conversacion_id, "usuario", "boton_click" if opcion_id else "texto",
+                         validacion.get("boton_mas") or "➕ Sí, enviar otra")
+        msg = validacion.get("mensaje_siguiente") or "📸 Perfecto, envíame la siguiente imagen."
+        _guardar_mensaje(cur, conversacion_id, "bot", "texto", msg)
+        return [{"type": "mensaje_bot", "payload": {"texto": msg, "codigo_nodo": nodo["codigo"]}}]
+    n = len(lista)
+    return preguntar(f"Ya tengo {n} {'imagen' if n == 1 else 'imágenes'} de tu receta.")
 
 
 def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
@@ -782,6 +871,66 @@ def conversacion_en_ia(conversacion_id: int) -> bool:
             return cur.fetchone() is not None
     finally:
         release_connection(conn)
+
+
+# ---------------------------------------------------------------------------
+# "Enviar a una opción del menú": el asesor (o el supervisor) devuelve al bot una conversación que no le
+# corresponde, directo a la opción correcta (Pase de atención, Programas de salud, Medicamentos, SCTR, EPS...).
+# Las opciones salen de los mismos menús que ve el cliente, así que si se agrega o renombra una opción en el
+# Editor, aparece sola. Se excluyen las que vuelven a un asesor, piden datos de nuevo o despiden.
+# ---------------------------------------------------------------------------
+MENUS_PARA_DEVOLVER = ("webchat_menu_principal", "consultas_menu_todos", "consultas_menu_potestativos")
+NODOS_NO_DEVOLVER = {"consultas_asesor_dni__chk", "consultas_despedida_hola", "consultas_datos",
+                     "webchat_menu_principal", "webchat_bienvenida", "webchat_gate"}
+TIPOS_NO_DEVOLVER = {"derivar_asesor", "cierre"}
+NODO_MENU_PRINCIPAL = "webchat_menu_principal"
+
+
+def opciones_para_devolver(conversacion_id: int) -> list:
+    """[{codigo, label, variables}] en el orden de los menús; la última es "Menú principal"."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT variables_sesion FROM conversaciones WHERE id = %s", (conversacion_id,))
+            fila = cur.fetchone()
+            if fila is None:
+                return []
+            variables = fila[0] or {}
+            cur.execute("SELECT codigo, opciones FROM bot_menus WHERE codigo = ANY(%s) AND activo",
+                        (list(MENUS_PARA_DEVOLVER),))
+            por_menu = {codigo: opciones for codigo, opciones in cur.fetchall()}
+            candidatas = []
+            for menu in MENUS_PARA_DEVOLVER:
+                opciones = por_menu.get(menu)
+                if isinstance(opciones, str):
+                    try:
+                        opciones = json.loads(opciones)
+                    except ValueError:
+                        opciones = []
+                opciones = _opciones_visibles(cur, conversacion_id, opciones or [], variables) or []
+                candidatas += [o for o in opciones if isinstance(o, dict) and o.get("next_codigo")]
+            destinos = list({o["next_codigo"] for o in candidatas} | {NODO_MENU_PRINCIPAL})
+            cur.execute("SELECT codigo, tipo FROM bot_menus WHERE codigo = ANY(%s) AND activo", (destinos,))
+            tipos = dict(cur.fetchall())
+        conn.rollback()
+    finally:
+        release_connection(conn)
+
+    resultado, vistos = [], set()
+    for o in candidatas:
+        codigo = o["next_codigo"]
+        if codigo in vistos or codigo in NODOS_NO_DEVOLVER or codigo not in tipos or tipos[codigo] in TIPOS_NO_DEVOLVER:
+            continue
+        vistos.add(codigo)
+        extra = {}
+        guardar = o.get("guardar_variable")
+        for g in (guardar if isinstance(guardar, list) else [guardar] if guardar else []):
+            if isinstance(g, dict) and g.get("nombre"):
+                extra[g["nombre"]] = g.get("valor")
+        resultado.append({"codigo": codigo, "label": str(o.get("label") or codigo), "variables": extra})
+    if NODO_MENU_PRINCIPAL in tipos:
+        resultado.append({"codigo": NODO_MENU_PRINCIPAL, "label": "🏠 Menú principal", "variables": {}})
+    return resultado
 
 
 def entrar_a_nodo(conversacion_id: int, codigo_nodo: str, variables_extra: dict = None):
@@ -819,14 +968,101 @@ _consultas_ia: dict = {}      # conversacion_id -> [instantes]; por instancia, s
 
 
 def _temas_ia(nodo: dict) -> list:
+    """Temas del nodo. Un tema tiene preguntas (van al agente) o un "nodo" (lleva a ese paso del bot, p. ej. los
+    canales de atención o los requisitos de reembolso; al terminar, vuelve a Sofi)."""
     temas = (nodo.get("accion_config") or {}).get("temas") or []
-    return [t for t in temas if isinstance(t, dict) and t.get("label") and t.get("preguntas")]
+    return [t for t in temas if isinstance(t, dict) and t.get("label") and (t.get("preguntas") or t.get("nodo"))]
 
 
-def _botones_temas_ia(temas: list) -> list:
-    """Botones de los temas + "🏠 Menú principal" al mismo nivel (para salir sin tener que escribir *menu*)."""
+def _botones_temas_ia(temas: list, con_plan: bool = False) -> list:
+    """Botones de los temas + "🏠 Menú principal" al mismo nivel (para salir sin tener que escribir *menu*).
+    En Sofi general (con_plan) el primer tema es "📋 Mi plan: copagos y coberturas", que lleva al plan de salud."""
     botones = [{"id": f"ia_t:{i}", "label": t["label"]} for i, t in enumerate(temas)]
+    if con_plan:
+        botones = [{"id": ID_IA_PLAN, "label": "📋 Mi plan: copagos y coberturas"}] + botones
     return botones + [{"id": ID_IA_MENU, "label": "🏠 Menú principal"}] if botones else []
+
+
+# ---- "Pregúntale a Sofi" absorbe "Mi plan": Sofi general responde todo; si la pregunta es de su plan (copago,
+# cobertura, deducible...) y ya conocemos un DNI con plan cargado, responde con SU plan; si no, responde lo general
+# y ofrece "📋 Responder con mi plan" (flujo del plan: pide el DNI, lo busca o lo solicita). ----
+ID_IA_PLAN = "ia_plan"
+ID_IA_SOFI = "ia_sofi"
+NODO_SOFI = os.environ.get("IA_NODO_SOFI", "ia_conversacion")
+NODO_PLAN_INICIO = os.environ.get("IA_NODO_PLAN", "plan_root")
+NODO_PLAN_BUSCA = os.environ.get("IA_NODO_PLAN_BUSCA", "plan_busca")
+_RE_PREGUNTA_PLAN = re.compile(
+    r"copago|deducible|coaseguro|cobertur|\bcubre|\bcubren|cubiert|cubierto|mi plan|\bel plan\b|mi seguro|"
+    r"\btope\b|beneficio|cuanto (me )?(pago|cuesta|cobran|sale)|porcentaje|carta de garantia|clinica|"
+    r"maternidad|oncolog|preexist|carencia|latencia|atender|atiend|atencion|\bred\b|centro (medico|de salud)|"
+    r"hospital|especialista|odontolog|dental|oftalm|psicolog|chequeo|ambulatori|hospitalizac|emergencia")
+
+
+def _plan_para_pregunta(cur, conversacion_id: int, variables: dict, pregunta: str):
+    """(dni, plan) con el que responder una pregunta de plan, o None (no es del plan, no hay DNI con plan, o tiene
+    varios y no eligió)."""
+    if not _es_pregunta_de_plan(pregunta):
+        return None
+    dni, vig = _dni_con_plan(cur, conversacion_id, variables)
+    if not dni:
+        return None
+    pid = str(variables.get("PLAN_ID") or "") if variables.get("PLAN_DNI") == dni else ""
+    elegido = next((p for p in vig if str(p[0]) == pid), None) or (vig[0] if len(vig) == 1 else None)
+    return (dni, elegido) if elegido else None
+
+
+def _respuesta_con_plan(conversacion_id: int, dni_plan, pregunta: str) -> str | None:
+    """Responde con el plan (Gemini, sin tener una conexión a la base tomada). None si el plan no lo dice:
+    entonces responde Sofi general."""
+    if not dni_plan:
+        return None
+    dni, elegido = dni_plan
+    texto = planes.responder(conversacion_id, dni, pregunta, elegido[0])
+    if not texto or texto == planes.RESPUESTA_RESPALDO or not sofi_sabe_responder(texto):
+        return None
+    nombre = (elegido[1] or "").strip()
+    titulo = (f"tu {nombre}" if nombre.lower().startswith("plan") else
+              f"tu plan {nombre}" if nombre else "tu plan de salud")
+    return f"📋 *Según {titulo}:*\n\n{texto}"
+
+
+def _sofi_filtro(cur, conversacion_id: int, variables: dict, parametros: dict) -> dict:
+    """Filtro antes del asesor: primero con su plan (si la pregunta es del plan y lo tenemos), si no Sofi general."""
+    pregunta = str(parametros.get("pregunta") or "")
+    try:
+        con_plan = _respuesta_con_plan(conversacion_id, _plan_para_pregunta(cur, conversacion_id, variables, pregunta),
+                                       pregunta)
+    except Exception:
+        con_plan = None
+    if con_plan:
+        return {"status": 200, "response": {"sabe": "true", "respuesta": con_plan, "fuente": "plan"}}
+    return sofi_filtro(parametros, variables)
+
+
+def _es_pregunta_de_plan(texto: str) -> bool:
+    t = unicodedata.normalize("NFD", (texto or "").lower())
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return bool(_RE_PREGUNTA_PLAN.search(t))
+
+
+def _dni_con_plan(cur, conversacion_id: int, variables: dict) -> tuple:
+    """(dni, planes vigentes) del primer DNI conocido que tenga plan cargado: el que ya usó en "Mi plan"
+    (PLAN_DNI), el que dio en la conversación (DNI / DOI) o el de su ficha. (None, []) si ninguno."""
+    candidatos = [(variables or {}).get(k) for k in ("PLAN_DNI", "DNI", "DOI")]
+    cur.execute("""SELECT u.dni FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.id = %s""", (conversacion_id,))
+    fila = cur.fetchone()
+    candidatos.append(fila[0] if fila else None)
+    vistos = set()
+    for crudo in candidatos:
+        dni = planes.normalizar_dni(crudo)
+        if not dni or dni in vistos:
+            continue
+        vistos.add(dni)
+        vigentes = planes.planes_vigentes(cur, dni)
+        if vigentes:
+            return dni, vigentes
+    return None, []
 
 
 ID_PLAN_PDF = "plan_pdf"
@@ -876,6 +1112,8 @@ def _bienvenida_plan(cur, conversacion_id: int, nodo: dict, variables: dict, ele
     eventos = _eventos_pdf_plan(cur, conversacion_id, variables)
     texto = sustituir_variables(nodo["texto"] or "", variables)
     botones = _botones_temas_ia(_temas_ia(nodo))
+    if botones:   # antes de "🏠 Menú principal": volver a Sofi para consultas que no son del plan
+        botones.insert(-1, {"id": ID_IA_SOFI, "label": "🤖 Otras consultas a Sofi"})
     if texto or botones:
         payload = {"texto": texto, "imagen_url": sustituir_variables(nodo.get("imagen_url"), variables)}
         if botones:
@@ -1009,7 +1247,28 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
     if not texto and opcion_id:
         if opcion_id == ID_IA_TEMAS:
             return _responder_con_botones_ia(conversacion_id, "📚 Ver temas", "¿Sobre qué tema quieres saber? 👇",
-                                             _botones_temas_ia(temas))
+                                             _botones_temas_ia(temas, con_plan=turno.fuente != "plan"
+                                                               and turno.nodo_codigo == NODO_SOFI))
+        if opcion_id in (ID_IA_PLAN, ID_IA_SOFI):
+            # 📋 Mi plan (desde Sofi): si ya consultó un plan en esta conversación, directo a ese plan; si no,
+            # el flujo del plan pide el DNI del afiliado (puede ser de un familiar).
+            # 🤖 Otras consultas a Sofi (desde el plan): vuelve a Sofi general.
+            etiqueta = "📋 Mi plan: copagos y coberturas" if opcion_id == ID_IA_PLAN else "🤖 Otras consultas a Sofi"
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    _guardar_mensaje(cur, conversacion_id, "usuario", "texto", etiqueta)
+                conn.commit()
+            finally:
+                release_connection(conn)
+            if opcion_id == ID_IA_SOFI:
+                eventos = entrar_a_nodo(conversacion_id, NODO_SOFI)
+            elif planes.normalizar_dni(turno.variables.get("PLAN_DNI")):
+                eventos = entrar_a_nodo(conversacion_id, NODO_PLAN_BUSCA)
+            else:
+                eventos = entrar_a_nodo(conversacion_id, NODO_PLAN_INICIO)
+            return eventos or [{"type": "mensaje_bot", "payload": {
+                "texto": "Esa opción no está disponible en este momento 😕 Escribe *menu* para volver al menú principal."}}]
         if opcion_id == ID_IA_ASESOR:
             conn = get_connection()
             try:
@@ -1018,13 +1277,28 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
                 conn.commit()
             finally:
                 release_connection(conn)
-            eventos = entrar_a_nodo(conversacion_id, NODO_ASESOR_IA)
+            # Ya conversó con Sofi: el flujo de asesor no vuelve a pasar su consulta por Sofi (SOFI_YA_INTENTO).
+            eventos = entrar_a_nodo(conversacion_id, NODO_ASESOR_IA, {"SOFI_YA_INTENTO": "si"})
             if eventos is None:   # el nodo no existe en esta base: se orienta a la persona
                 return _responder_con_botones_ia(
                     conversacion_id, None,
                     "Para hablar con un asesor escribe *menu* y elige *Hablar c/ asesor* 😊", [])
             return eventos
         m = re.fullmatch(r"ia_t:(\d+)", opcion_id)
+        if m and int(m.group(1)) < len(temas) and temas[int(m.group(1))].get("nodo"):
+            tema = temas[int(m.group(1))]
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    _guardar_mensaje(cur, conversacion_id, "usuario", "texto", tema["label"])
+                conn.commit()
+            finally:
+                release_connection(conn)
+            # VOLVER_A_SOFI: al terminar ese paso (consultas_info_fin) vuelve a Sofi en vez de despedirse.
+            eventos = entrar_a_nodo(conversacion_id, tema["nodo"],
+                                    {"VOLVER_A_SOFI": "si"} if turno.nodo_codigo == NODO_SOFI else None)
+            return eventos or [{"type": "mensaje_bot", "payload": {
+                "texto": "Esa opción no está disponible en este momento 😕 Escribe *menu* para volver al menú principal."}}]
         if m and int(m.group(1)) < len(temas):
             tema = temas[int(m.group(1))]
             botones = [{"id": f"ia_q:{m.group(1)}:{j}", "label": p["label"]} for j, p in enumerate(tema["preguntas"])]
@@ -1058,8 +1332,21 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
             return _responder_con_botones_ia(
                 conversacion_id, texto, "Para responderte bien, primero elige sobre cuál de tus planes es tu "
                 "pregunta 👇 (luego vuelve a escribirla)", _botones_elegir_plan(vigentes))
-    celular = "" if es_plan else _celular_para_agente(conversacion_id, turno.variables)
-    if not es_plan and not celular:
+    # Sofi general: ¿es una pregunta de su plan y conocemos un DNI con plan cargado? Se responde con su plan; si el
+    # plan no lo dice, responde Sofi general (con "📋 Responder con mi plan" si la pregunta era del plan).
+    plan_auto, sugerir_plan = None, False
+    if not es_plan and turno.nodo_codigo == NODO_SOFI and _es_pregunta_de_plan(texto):
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                dni_plan = _plan_para_pregunta(cur, conversacion_id, turno.variables, texto)
+            conn.commit()
+        finally:
+            release_connection(conn)
+        plan_auto = _respuesta_con_plan(conversacion_id, dni_plan, texto)
+        sugerir_plan = not plan_auto
+    celular = "" if (es_plan or plan_auto) else _celular_para_agente(conversacion_id, turno.variables)
+    if not es_plan and not plan_auto and not celular:
         return [{"type": "mensaje_bot", "payload": {
             "texto": "Necesito tu número de celular para ayudarte. Escribe *menu* para volver al menú principal."}}]
 
@@ -1081,6 +1368,8 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
         # IA con el plan de salud del DNI (Gemini). Responde solo con lo que dice el plan.
         respuesta = planes.responder(conversacion_id, turno.variables.get("PLAN_DNI"), texto,
                                      elegido[0] if elegido else None)
+    elif plan_auto:
+        respuesta = plan_auto
     else:
         resultado = API_HANDLERS["consulta_agente_ia"]({"pregunta": texto, "celular": celular}, turno.variables)
         respuesta = ((resultado or {}).get("response") or {}).get("respuesta") or ""
@@ -1092,7 +1381,12 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
     if es_plan and botones:
         botones = ([{"id": ID_PLAN_PDF, "label": "📄 Ver mi plan"}]
                    + ([{"id": ID_PLAN_CAMBIAR, "label": "🔀 Cambiar de plan"}] if len(vigentes) > 1 else [])
+                   + [{"id": ID_IA_SOFI, "label": "🤖 Otras consultas a Sofi"}]
                    + botones)
+    elif plan_auto and botones:
+        botones = [{"id": ID_IA_PLAN, "label": "📋 Seguir con mi plan"}] + botones
+    elif sugerir_plan and botones:
+        botones = [{"id": ID_IA_PLAN, "label": "📋 Responder con mi plan"}] + botones
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -1152,6 +1446,17 @@ def _recibir_entrada_usuario_arbol(conversacion_id: int, texto: str = None,
                 variable_nombre = validacion.get("variable")
                 tipo_campo = validacion.get("tipo")
                 valor = archivo_url if tipo_campo in ("imagen", "ubicacion") else texto
+
+                if tipo_campo == "imagen" and validacion.get("multiple") and variable_nombre:
+                    respuesta_multiple = _captura_varias_imagenes(cur, conversacion_id, nodo, validacion, variables,
+                                                                  texto, opcion_id, archivo_url, archivo_ruta)
+                    if respuesta_multiple is not None:      # sigue esperando más imágenes (o una respuesta)
+                        _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
+                        conn.commit()
+                        return respuesta_multiple
+                    eventos = _avanzar(cur, conversacion_id, nodo["siguiente_codigo"], variables)
+                    conn.commit()
+                    return eventos
 
                 # Números (celular u otro): deja solo dígitos — borra espacios,
                 # guiones, paréntesis, "+", etc. antes de guardar. Exige mínimo

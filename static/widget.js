@@ -516,6 +516,11 @@
       transition: background .12s;
     }
     .opciones button:hover { background: ${TOKENS.burbujaBot}; }
+    .otp-ayuda { flex-basis: 100%; font-size: calc(12.5px + var(--fs, 0px)); color: ${TOKENS.textoSuave}; line-height: 1.45; margin: 0 2px 2px; }
+    .otp-ayuda b { color: ${TOKENS.texto}; }
+    .otp-ayuda.pedida { background: #EEF4FB; border: 1px solid #D3E2F3; border-radius: 12px; padding: 8px 10px; color: ${TOKENS.texto}; }
+    .opciones button.otp-wa { background: #25D366; border-color: #25D366; color: white; font-weight: 700; }
+    .opciones button.otp-wa:hover { background: #1EBE5B; }
     .no-soy-yo {
       display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
       padding: 5px 12px; font-size: 12px; color: ${TOKENS.textoSuave};
@@ -3570,7 +3575,7 @@
     scrollAlFinal();
   }
 
-  // Botones de "Reenviar código"/"Llamarme" durante la verificación de
+  // Botones de "Reenviar código"/WhatsApp durante la verificación de
   // celular (nodo webchat_valida_pide_codigo). No se quitan solos al hacer
   // clic (a diferencia de agregarOpciones) porque la persona puede querer
   // reenviar más de una vez; en vez de eso se reemplazan por completo cada
@@ -3585,7 +3590,7 @@
   const OTP_ESPERA_REENVIO_SEGUNDOS = 30;
 
   // --- Verificación por WhatsApp (respaldo del SMS) --------------------------
-  const WA_APARECE_SEGUNDOS = 30;   // tras este tiempo sin SMS se ofrece "Verificar con WhatsApp"
+  const WA_APARECE_SEGUNDOS = 20;   // tras este tiempo sin SMS se ofrece "Verificar con WhatsApp"
   const WA_SONDEO_MS = 3000;
   let waTimerAparece = null;
   let waSondeoId = null;
@@ -3690,7 +3695,28 @@
     waBotonVisible = false;
   }
 
+  // WebOTP (Chrome en Android): si el SMS trae "@<dominio de esta página> #código", el navegador ofrece
+  // completarlo con un toque, sin tener que buscar el SMS. En otros navegadores no hace nada.
+  let otpWebAbort = null;
+  function escucharCodigoWebOtp() {
+    if (otpWebAbort || !("OTPCredential" in window) || !navigator.credentials) return;
+    let abort;
+    try { abort = new AbortController(); } catch (e) { return; }
+    otpWebAbort = abort;
+    navigator.credentials.get({ otp: { transport: ["sms"] }, signal: abort.signal })
+      .then((otp) => {
+        if (otpWebAbort !== abort) return;
+        otpWebAbort = null;
+        if (!otp || !otp.code || !$otpAccionesActual) return;
+        $textoInput.value = otp.code;
+        actualizarIconoEnviar();
+        enviarTexto();
+      })
+      .catch(() => { if (otpWebAbort === abort) otpWebAbort = null; });
+  }
+
   function quitarAccionesOtp() {
+    if (otpWebAbort) { try { otpWebAbort.abort(); } catch (e) { /* nada */ } otpWebAbort = null; }
     $textoInput.removeAttribute("autocomplete");
     $textoInput.removeAttribute("inputmode");
     if (waTimerAparece) { clearTimeout(waTimerAparece); waTimerAparece = null; }
@@ -3704,13 +3730,29 @@
     }
   }
 
-  function agregarAccionesOtp(reenvios, puedeLlamar) {
+  function escaparHtmlOtp(t) {
+    return String(t || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function agregarAccionesOtp(p) {
+    p = p || {};
     quitarAccionesOtp();
     // El teclado del celular ofrece el código que llegó por SMS (iPhone: "De Mensajes"; Android: sugerencia).
     $textoInput.setAttribute("autocomplete", "one-time-code");
     $textoInput.setAttribute("inputmode", "numeric");
+    escucharCodigoWebOtp();
     const cont = document.createElement("div");
     cont.className = "opciones";
+
+    // A qué número se mandó y dónde buscarlo (muchos SMS de códigos caen en "Spam" o "Desconocidos").
+    const ayuda = document.createElement("div");
+    ayuda.className = "otp-ayuda" + (p.otp_ayuda_pedida ? " pedida" : "");
+    ayuda.innerHTML = p.otp_ayuda_pedida
+      ? "🙋 Un asesor validará tu número en breve. No cierres el chat; si te llega el SMS, escribe el código aquí."
+      : (p.otp_celular ? `Lo enviamos al <b>${escaparHtmlOtp(p.otp_celular)}</b>. ` : "")
+        + "Si no lo ves en unos segundos, revisa <b>Spam / Mensajes no deseados</b> (Android) "
+        + "o <b>Remitentes desconocidos</b> (iPhone).";
+    cont.appendChild(ayuda);
 
     const btnReenviar = document.createElement("button");
     btnReenviar.disabled = true;
@@ -3720,30 +3762,16 @@
     };
     cont.appendChild(btnReenviar);
 
-    // "Token por llamada": siempre disponible (ya no hay que reenviar dos veces antes);
-    // se habilita junto con "Reenviar" para darle tiempo al SMS de llegar.
-    const btnLlamar = document.createElement("button");
-    btnLlamar.disabled = true;
-    btnLlamar.onclick = () => {
-      btnLlamar.disabled = true;
-      agregarMensaje("📞 Token por llamada", "usuario");
-      enviar({ type: "solicitar_llamada_otp", payload: {} });
-    };
-    cont.appendChild(btnLlamar);
-
     let restante = OTP_ESPERA_REENVIO_SEGUNDOS;
     const actualizarCuentaRegresiva = () => {
       if (restante <= 0) {
         btnReenviar.textContent = "🔁 Reenviar código";
         btnReenviar.disabled = false;
-        btnLlamar.textContent = "📞 Token por llamada";
-        btnLlamar.disabled = false;
         clearInterval(otpTimerId);
         otpTimerId = null;
         return;
       }
       btnReenviar.textContent = `🔁 Reenviar código (${restante}s)`;
-      btnLlamar.textContent = `📞 Token por llamada (${restante}s)`;
       restante--;
     };
     actualizarCuentaRegresiva();
@@ -3752,7 +3780,8 @@
     // "Verificar con WhatsApp": aparece a los WA_APARECE_SEGUNDOS sin que llegue el SMS
     // (o de inmediato si ya había aparecido antes en esta verificación).
     const btnWhatsapp = document.createElement("button");
-    btnWhatsapp.textContent = "💬 Verificar con WhatsApp";
+    btnWhatsapp.className = "otp-wa";
+    btnWhatsapp.textContent = "💬 Verificar con WhatsApp (sin SMS)";
     btnWhatsapp.style.display = "none";
     btnWhatsapp.onclick = () => {
       agregarMensaje("💬 Verificar con WhatsApp", "usuario");
@@ -3763,7 +3792,7 @@
     if (waBotonVisible) mostrarBotonWa();
     else waTimerAparece = setTimeout(mostrarBotonWa, WA_APARECE_SEGUNDOS * 1000);
 
-    // A diferencia de "Reenviar"/"Llamar", este botón está disponible desde
+    // A diferencia de "Reenviar", este botón está disponible desde
     // el primer intento (sin esperar ni contador) -- si la persona se dio
     // cuenta de que escribió mal su celular, no tiene sentido hacerla
     // esperar un reenvío que de todas formas va a fallar.
@@ -3775,6 +3804,18 @@
       enviar({ type: "modificar_celular", payload: {} });
     };
     cont.appendChild(btnCambiarCelular);
+
+    // Tras varios reenvíos: que un asesor lo valide (lo ven los supervisores en "📱 Validaciones").
+    if (p.otp_puede_ayuda && !p.otp_ayuda_pedida) {
+      const btnAyuda = document.createElement("button");
+      btnAyuda.textContent = "🙋 No me llega el código";
+      btnAyuda.onclick = () => {
+        btnAyuda.disabled = true;
+        agregarMensaje("🙋 No me llega el código", "usuario");
+        enviar({ type: "pedir_validacion_manual", payload: {} });
+      };
+      cont.appendChild(btnAyuda);
+    }
 
     $cuerpo.appendChild(cont);
     $otpAccionesActual = cont;
@@ -4049,7 +4090,8 @@
       // (el servidor lo guarda únicamente si la conversación todavía no lo tiene).
       try {
         ws.send(JSON.stringify({ type: "registrar_origen",
-                                 payload: { origen: origenApertura, pagina: window.location.pathname } }));
+                                 payload: { origen: origenApertura, pagina: window.location.pathname,
+                                            host: window.location.hostname } }));
       } catch (e) { /* es solo una métrica */ }
       $estadoTexto.textContent = "En línea";
       $textoInput.disabled = false;
@@ -4203,7 +4245,7 @@
           break;
         case "otp_acciones":
           // Tras reconectar mientras esperaba el código SMS: repone los botones.
-          agregarAccionesOtp(p.otp_reenvios || 0, !!p.otp_puede_llamar);
+          agregarAccionesOtp(p);
           scrollAlFinal();
           break;
         case "historial":
@@ -4246,12 +4288,12 @@
           // "codigo_nodo" llega en TODO captura_dato (ver bot_engine.py);
           // acá solo nos importa cuando es el que pide el código OTP, para
           // mostrarle a la persona el botón de reenviar/llamar. El reenvío
-          // y la llamada responden con otp_reenvios/otp_puede_llamar en vez
+          // y el pedido de ayuda responden con otp_reenvios/otp_celular en vez
           // de codigo_nodo (no pasan por bot_engine), por eso se chequea
           // cualquiera de los dos. En cualquier otro mensaje (ya avanzó a
           // otro paso, cerró, lo derivó a un asesor) se quitan los botones.
           if (p.codigo_nodo === "webchat_valida_pide_codigo" || p.otp_reenvios !== undefined) {
-            agregarAccionesOtp(p.otp_reenvios || 0, !!p.otp_puede_llamar);
+            agregarAccionesOtp(p);
           } else {
             quitarAccionesOtp();
             if (!waCard || !waCodigoActual) waLimpiar();
@@ -4349,6 +4391,19 @@
           volviendoDeReposo = false;
           avisoPuedesSalir();
           atendidoPorAsesor = true;
+          esperandoAsesor = false;
+          actualizarIconoEnviar();
+          break;
+        case "devuelto_al_bot":
+          // El asesor la pasó a una opción del menú (p. ej. "Entrega de medicamentos"): vuelve a
+          // atenderla el bot, que manda enseguida los mensajes de esa opción.
+          quitarEsperaCola();
+          ocultarGuardada();
+          $infoGuardada.classList.remove("visible");
+          $estadoTexto.textContent = "En línea";
+          if (p.texto) agregarMensaje(p.texto, "sistema");
+          volviendoDeReposo = false;
+          atendidoPorAsesor = false;
           esperandoAsesor = false;
           actualizarIconoEnviar();
           break;

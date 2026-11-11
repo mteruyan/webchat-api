@@ -12,6 +12,7 @@ import math
 import os
 import random
 import re
+import unicodedata
 import string
 import time
 from datetime import datetime, timezone, timedelta
@@ -210,6 +211,60 @@ def consulta_agente_ia(parametros: dict, variables: dict) -> dict:
     except Exception:  # noqa: BLE001  (timeout, red, JSON inválido, falta SOFI_APIS_KEY...)
         logger.exception("consulta_agente_ia falló")
         return {"status": 500, "response": {"respuesta": MENSAJE_RESPALDO_IA}}
+
+
+# --- Sofi como filtro antes de pasar a un asesor -------------------------------------------------
+# En "Hablar c/ asesor" la persona escribe su consulta; antes de derivarla, Sofi intenta responderla. Si la
+# respuesta sirve, se le muestra con "✅ Ya me ayudó" / "👩‍💼 Igual quiero un asesor"; si Sofi no sabe (no
+# encontró la información, falló o ella misma sugiere un asesor), se deriva directo, sin hacerle elegir.
+# El agente de sofi-apis devuelve solo texto, así que "no sabe" se detecta por frases típicas.
+_FRASES_SOFI_NO_SABE = re.compile(
+    r"no (tengo|cuento con|dispongo de|encontre|encuentro|ubico|hallo)( la| esa| mas| suficiente)? "
+    r"(informacion|datos|detalle|registro|acceso)|"
+    r"no (tengo|cuento con) acceso|no (puedo|podria|logro) (ayudarte|responder|brindarte|confirmar|acceder|verificar|revisar)|"
+    r"no es posible (responder|brindar|confirmar)|no estoy segur|fuera de mi alcance|"
+    r"(comunicate|comuniquese|contacta|contactate|contactar|comunicarte|hablar|habla) (a |con )?(un |una |nuestro |nuestros )?"
+    r"(asesor|agente|ejecutivo|especialista)|te (derivo|derivare|paso con)|un (asesor|agente) (podra|te podra|puede)|"
+    r"no (aparece|figura|se menciona|se especifica|se indica|esta indicad|esta especificad)|no lo (indica|menciona|especifica)")
+# Sofi devolvió una pregunta (le pide más datos: distrito, tipo de atención...): no es una respuesta final, así que
+# en vez de "¿Esto resolvió tu consulta?" la conversación sigue con Sofi para que el cliente le conteste.
+_FRASES_REPREGUNTA = re.compile(
+    r"\b(dime|indicame|cuentame|me indicas|me dices|me cuentas|me puedes (decir|indicar|contar)|podrias (decirme|indicarme|contarme)|"
+    r"necesito (saber|que me indiques)|para ayudarte mejor)\b")
+
+
+def sofi_sabe_responder(texto: str) -> bool:
+    t = unicodedata.normalize("NFD", (texto or "").lower())
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    t = re.sub(r"\s+", " ", t)
+    return bool(t.strip()) and not _FRASES_SOFI_NO_SABE.search(t)
+
+
+def _normalizar_para_sofi(texto: str) -> str:
+    t = unicodedata.normalize("NFD", (texto or "").lower())
+    return re.sub(r"\s+", " ", "".join(c for c in t if unicodedata.category(c) != "Mn")).strip()
+
+
+def sofi_es_repregunta(texto: str) -> bool:
+    """La respuesta termina en pregunta o le pide datos al cliente."""
+    t = _normalizar_para_sofi(texto)
+    sin_emojis = re.sub(r"[^\w?¿.!,;:)\]\s]+$", "", t).rstrip()
+    return sin_emojis.endswith("?") or bool(_FRASES_REPREGUNTA.search(t))
+
+
+def sofi_filtro(parametros: dict, variables: dict) -> dict:
+    """Sofi intenta responder la consulta antes de derivarla. {"response": {"sabe": "true"/"false", "respuesta"}}.
+    Nunca falla: ante cualquier problema, "sabe" = "false" y el flujo deriva al asesor como antes."""
+    pregunta = str(parametros.get("pregunta") or "").strip()
+    celular = str(parametros.get("celular") or "").strip()
+    if len(pregunta) < 4 or not celular:
+        return {"status": 200, "response": {"sabe": "false", "respuesta": "", "motivo": "sin_datos"}}
+    r = consulta_agente_ia({"pregunta": pregunta, "celular": celular}, variables)
+    texto = str(((r or {}).get("response") or {}).get("respuesta") or "").strip()
+    sabe = (r or {}).get("status") == 200 and texto != MENSAJE_RESPALDO_IA and sofi_sabe_responder(texto)
+    estado = ("pregunta" if sofi_es_repregunta(texto) else "true") if sabe else "false"
+    logger.info("sofi_filtro -> %s (respuesta de %s caracteres)", estado, len(texto))
+    return {"status": 200, "response": {"sabe": estado, "respuesta": texto if sabe else "", "fuente": "general"}}
 
 
 # --- Médico a domicilio (MAD) / Ambulancia -------------------------------------------------------
@@ -848,11 +903,21 @@ def _enviar_correo_receta_asesoras(parametros: dict) -> None:
     del clic (igual que /archivo-receta, pero sin pedir login de staff,
     porque este correo va a un buzón compartido, no a la sesión de un
     asesor puntual)."""
-    ruta_objeto = _ruta_objeto_desde_url_firmada(parametros.get("ruta") or "")
-    url_corta = (
-        f"{WEBCHAT_API_BASE_URL}/receta-correo?ruta={quote(ruta_objeto, safe='')}"
-        if ruta_objeto else ""
-    )
+    rutas_objeto = [r for r in (parametros.get("rutas_objeto") or []) if r.startswith("webchat/")]
+    if not rutas_objeto:
+        ruta_objeto = _ruta_objeto_desde_url_firmada(parametros.get("ruta") or "")
+        rutas_objeto = [ruta_objeto] if ruta_objeto else []
+    url_corta = ""
+    if rutas_objeto:
+        # Varias imágenes: un solo enlace con todas (separadas por coma; /receta-correo muestra la galería).
+        # Danaconnect rechaza URLs largas: si no entran todas, van las que quepan (las primeras).
+        for cuantas in range(len(rutas_objeto), 0, -1):
+            url_corta = (f"{WEBCHAT_API_BASE_URL}/receta-correo?ruta="
+                         + quote(",".join(rutas_objeto[:cuantas]), safe=",/"))
+            if len(url_corta) <= 480:
+                break
+        if cuantas < len(rutas_objeto):
+            logger.warning("Correo receta: el enlace lleva %s de %s imágenes (límite de largo)", cuantas, len(rutas_objeto))
     datos_reales = _datos_sin_enmascarar_por_doi(parametros.get("doi") or "")
     if not datos_reales:
         # Sin esto el correo sale con los datos ENMASCARADOS de TRAE_ESCOGE
@@ -900,14 +965,44 @@ def procesar_receta(parametros: dict, variables: dict) -> dict:
 
     Aparte, avisa por correo a las asesoras (ver _enviar_correo_receta_asesoras)
     — equivalente al correo que mandaba gcp_inserta_bitacora_ivr en WhatsApp."""
-    resultado = _llamar_api_externa(PROCESAR_RECETA_BASE, "", {
-        "ruta": parametros.get("ruta"),
+    urls, rutas_objeto = _imagenes_de_la_receta(parametros.get("ruta"), variables)
+    cuerpo = {
+        "ruta": urls[0] if urls else parametros.get("ruta"),
         "doi": parametros.get("doi"),
         "celular": parametros.get("celular"),
         "chat_id": parametros.get("chat_id"),
-    }, timeout=30)
-    _enviar_correo_receta_asesoras(parametros)
+    }
+    if len(urls) > 1:
+        # Receta en varias imágenes: "ruta" sigue siendo la primera (compatible con la versión anterior del
+        # servicio y con WhatsApp) y "rutas" trae TODAS, en el orden en que las envió el cliente.
+        cuerpo["rutas"] = urls
+    resultado = _llamar_api_externa(PROCESAR_RECETA_BASE, "", cuerpo,
+                                    timeout=min(90, 30 + 15 * (max(len(urls), 1) - 1)))
+    _enviar_correo_receta_asesoras({**parametros, "rutas_objeto": rutas_objeto})
     return _ajustar_textos_receta(resultado)
+
+
+# main.py la apunta a su _generar_url_firmada: con varias imágenes el cliente puede tardar entre una y otra, y la
+# URL firmada de la primera dura 60 minutos; se firman de nuevo todas justo antes de enviarlas al API.
+FIRMAR_URL = None
+
+
+def _imagenes_de_la_receta(ruta, variables: dict) -> tuple:
+    """(URLs firmadas, rutas en el bucket) de todas las imágenes de la receta. Si el paso de captura pidió varias
+    (validacion.multiple), están en <VARIABLE>_LISTA / <VARIABLE>_RUTAS: se busca la lista cuyo primer elemento es
+    la ruta que recibe esta acción. Si no, solo esa."""
+    for clave, valor in (variables or {}).items():
+        if clave.endswith("_LISTA") and isinstance(valor, list) and valor and valor[0] == ruta:
+            rutas = variables.get(clave[:-len("_LISTA")] + "_RUTAS") or []
+            urls = list(valor)
+            if FIRMAR_URL and len(rutas) == len(urls) and all(rutas):
+                try:
+                    urls = [FIRMAR_URL(r, 60) for r in rutas]
+                except Exception as e:  # noqa: BLE001 — se usan las firmadas originales
+                    logger.warning("procesar_receta: no se pudieron volver a firmar las imágenes: %s", e)
+            return urls, [r for r in rutas if r]
+    objeto = _ruta_objeto_desde_url_firmada(ruta or "")
+    return ([ruta] if ruta else []), ([objeto] if objeto else [])
 
 
 # El servicio procesar-receta (compartido con el flujo de WhatsApp) responde
@@ -1013,7 +1108,48 @@ def _generar_codigo_otp() -> str:
     return "".join(random.choices(string.digits, k=6))
 
 
-def enviar_sms_danaconnect(celular: str, mensaje: str) -> bool:
+# --- Registro de SMS enviados (sms_enviados, migracion_sms_enviados.sql): "Buscar SMS" en las consolas ---
+TIPOS_SMS = {
+    "otp": "🔐 Código de verificación", "otp_reenvio": "🔐 Código de verificación (reenvío)",
+    "invitacion": "📨 Invitación al chat", "enlace_directo": "🔗 Enlace directo", "archivo": "📎 Archivo",
+    "aviso_manual": "📲 Aviso de mensaje (manual)", "aviso_respuesta": "💬 Aviso: te respondieron",
+    "turno": "⏳ Aviso de turno", "encuesta": "⭐ Encuesta", "plan": "📋 Plan de salud",
+    "recordatorio_receta": "💊 Recordatorio de receta", "seguimiento": "📣 Seguimiento", "otro": "✉️ SMS",
+}
+_sms_sin_tabla_avisado = False
+
+
+def _registrar_sms(celular, texto, ok, error, tipo, conversacion_id, enviado_por):
+    """Nunca interrumpe el envío: si falta la tabla, avisa una vez en el log."""
+    global _sms_sin_tabla_avisado
+    digitos = "".join(ch for ch in str(celular or "") if ch.isdigit())
+    conn = None
+    try:
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO sms_enviados (celular, celular9, tipo, texto, ok, error, conversacion_id, enviado_por)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (str(celular or "").strip()[:30], digitos[-9:], tipo if tipo in TIPOS_SMS else "otro",
+                 (texto or "")[:1000], bool(ok), (error or "")[:300] or None,
+                 int(conversacion_id) if str(conversacion_id or "").isdigit() else None,
+                 int(enviado_por) if str(enviado_por or "").isdigit() else None))
+        conn.commit()
+    except Exception as e:  # noqa: BLE001
+        if conn:
+            conn.rollback()
+        if "sms_enviados" in str(e) and not _sms_sin_tabla_avisado:
+            _sms_sin_tabla_avisado = True
+            logger.warning("Falta ejecutar migracion_sms_enviados.sql: los SMS no quedan registrados")
+        elif "sms_enviados" not in str(e):
+            logger.warning("No se pudo registrar el SMS enviado: %s", str(e)[:200])
+    finally:
+        if conn:
+            release_connection(conn)
+
+
+def enviar_sms_danaconnect(celular: str, mensaje: str, tipo: str = "otro", conversacion_id=None,
+                           enviado_por=None, texto_registro: str | None = None) -> bool:
     """Envío DIRECTO de SMS a Danaconnect (mismo patrón que usa sofi-apis
     para SMS urgentes: reset de password, lead_pases, etc.), no pasa por
     cola/batch. Reutilizado tanto por el OTP de validación de celular como
@@ -1025,39 +1161,81 @@ def enviar_sms_danaconnect(celular: str, mensaje: str) -> bool:
         "Content-Type": "application/json",
         "Authorization": os.environ["DANACONNECT_AUTH"],
     }
+    # Queda registrado (ok o falló) para "Buscar SMS"; texto_registro permite guardar el código enmascarado.
     try:
         resp = requests.post(DANACONNECT_URL, json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
-        return True
     except requests.RequestException as e:
         logger.error("Error al enviar SMS a %s: %s", celular, e)
+        _registrar_sms(celular, texto_registro or mensaje, False, str(e), tipo, conversacion_id, enviado_por)
         return False
+    _registrar_sms(celular, texto_registro or mensaje, True, None, tipo, conversacion_id, enviado_por)
+    return True
 
 
-# Otro "conversation" de Danaconnect (609623) -- en vez de SMS, hace una
-# LLAMADA de voz y le dicta el token a la persona. Se ofrece como alternativa
-# al SMS del OTP cuando ya pidió reenviar dos veces y probablemente no le
-# esté llegando (ver main.py: botón "Prefiero que me llamen" durante
-# webchat_valida_pide_codigo).
-DANACONNECT_LLAMADA_OTP_URL = "https://appserv.danaconnect.com/api/1.0/rest/conversation/609623/start/data"
+# --- Código OTP: texto del SMS y códigos vigentes ---------------------------------------------------
+# Antes, cada "Reenviar" invalidaba el código anterior: si el primer SMS llegaba tarde (operador lento, o
+# estaba en "Spam"), el cliente escribía ese código y le salía "incorrecto". Ahora vale cualquier código
+# enviado a ESE celular en los últimos OTP_VIGENCIA_SEG segundos (OTP_CODIGOS en variables_sesion).
+OTP_VIGENCIA_SEG = 10 * 60
+OTP_MAX_CODIGOS = 6
+# Dominios de la página donde está abierto el chat: la última línea "@dominio #código" permite que Chrome
+# en Android ofrezca completar el código solo (WebOTP). Tiene que ser EXACTAMENTE el dominio de la página.
+_DOMINIOS_OTP = re.compile(r"^([a-z0-9-]+\.)*sanitasperu\.com$")
 
 
-def enviar_llamada_otp(celular: str, token: str) -> bool:
-    """Pide a Danaconnect que llame por voz a `celular` y le dicte `token`.
-    No genera un código nuevo -- se le pasa el mismo que ya se le mandó por
-    SMS (el que la persona todavía debe ingresar), para no invalidarlo."""
-    payload = json.dumps({"CELULAR": celular, "TOKEN": token})
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": os.environ["DANACONNECT_AUTH"],
-    }
-    try:
-        resp = requests.post(DANACONNECT_LLAMADA_OTP_URL, data=payload, headers=headers, timeout=15)
-        resp.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        logger.error("Error al llamar con el código OTP a %s: %s", celular, e)
-        return False
+def dominio_otp_valido(host) -> str:
+    host = str(host or "").strip().lower().split(":")[0]
+    return host if len(host) <= 80 and _DOMINIOS_OTP.match(host) else ""
+
+
+def texto_sms_otp(codigo: str, variables: dict | None = None) -> str:
+    """El código va primero (se lee en la vista previa de la notificación sin abrir el SMS)."""
+    texto = f"{codigo} es tu código de verificación de Sanitas. No lo compartas con nadie."
+    dominio = dominio_otp_valido((variables or {}).get("OTP_DOMINIO"))
+    if dominio:
+        texto += f"\n\n@{dominio} #{codigo}"
+    return texto
+
+
+def _ultimos9_otp(valor) -> str:
+    digitos = "".join(ch for ch in str(valor or "") if ch.isdigit())
+    return digitos[-9:]
+
+
+def celular_enmascarado(celular) -> str:
+    """"9•• ••• 321": para que el cliente vea a qué número se mandó sin mostrarlo completo."""
+    d = _ultimos9_otp(celular)
+    return f"{d[0]}•• ••• {d[-3:]}" if len(d) == 9 else ""
+
+
+OTP_REENVIOS_PARA_AYUDA = 2   # tras este número de reenvíos se ofrece "Pedir ayuda para validar"
+
+
+def acciones_otp(variables: dict) -> dict:
+    """Lo que el widget necesita para pintar la pantalla del código (al entrar, al reenviar y al reconectar)."""
+    reenvios = int((variables or {}).get("OTP_REENVIOS") or 0)
+    return {"otp_reenvios": reenvios,
+            "otp_celular": celular_enmascarado((variables or {}).get("CELULAR")),
+            "otp_puede_ayuda": reenvios >= OTP_REENVIOS_PARA_AYUDA,
+            "otp_ayuda_pedida": bool((variables or {}).get("OTP_AYUDA_PEDIDA"))}
+
+
+def registrar_codigo_otp(variables: dict, celular: str, codigo: str):
+    """Guarda el código recién enviado en la lista de vigentes (y descarta los vencidos)."""
+    ahora = int(time.time())
+    lista = [c for c in (variables.get("OTP_CODIGOS") or [])
+             if isinstance(c, dict) and ahora - int(c.get("t") or 0) <= OTP_VIGENCIA_SEG]
+    lista.append({"c": str(codigo), "t": ahora, "cel": _ultimos9_otp(celular)})
+    variables["OTP_CODIGOS"] = lista[-OTP_MAX_CODIGOS:]
+
+
+def _codigos_vigentes(variables: dict) -> set:
+    ahora = int(time.time())
+    celular = _ultimos9_otp((variables or {}).get("CELULAR"))
+    return {str(c.get("c")) for c in ((variables or {}).get("OTP_CODIGOS") or [])
+            if isinstance(c, dict) and c.get("c") and ahora - int(c.get("t") or 0) <= OTP_VIGENCIA_SEG
+            and (not celular or c.get("cel") == celular)}
 
 
 def enviar_sms_otp(parametros: dict, variables: dict) -> dict:
@@ -1073,10 +1251,15 @@ def enviar_sms_otp(parametros: dict, variables: dict) -> dict:
         return {"status": 400, "response": {"enviado": False}}
 
     codigo = _generar_codigo_otp()
-    mensaje = f"Tu código de verificación Sanitas es: {codigo}"
-    if not enviar_sms_danaconnect(celular, mensaje):
+    texto = texto_sms_otp(codigo, variables)
+    if not enviar_sms_danaconnect(celular, texto, "otp", (variables or {}).get("CONVERSACION_ID"),
+                                  texto_registro=texto.replace(codigo, "••••••")):
         return {"status": 500, "response": {"enviado": False}}
 
+    if isinstance(variables, dict):
+        # Mismo dict que el motor guarda después en variables_sesion. Si el cliente vuelve a esta pantalla
+        # (cambió el celular, reinició), la lista se filtra por celular y por vigencia.
+        registrar_codigo_otp(variables, celular, codigo)
     return {"status": 200, "response": {"enviado": True, "codigo": codigo}}
 
 
@@ -1088,5 +1271,7 @@ def validar_sms_otp(parametros: dict, variables: dict) -> dict:
     externo, es una comparación local."""
     ingresado = "".join(c for c in (parametros.get("codigo_ingresado") or "") if c.isdigit())
     enviado = (parametros.get("codigo_enviado") or "").strip()
-    valido = bool(ingresado) and bool(enviado) and ingresado == enviado
+    # Vale el último código o cualquiera enviado a este celular en los últimos 10 minutos (ver OTP_CODIGOS).
+    vigentes = _codigos_vigentes(variables) | ({enviado} if enviado else set())
+    valido = bool(ingresado) and ingresado in vigentes
     return {"status": 200 if valido else 400, "response": {"valido": valido}}

@@ -14,6 +14,7 @@ import io
 import re
 import uuid
 import secrets
+import functools
 import json
 import html as html_lib
 import asyncio
@@ -25,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import google.auth
@@ -43,7 +44,9 @@ logger = logging.getLogger("main")
 
 from db import get_connection, release_connection, estado_pools as db_estado_pools
 from bot_engine import iniciar_conversacion, recibir_entrada_usuario, conversacion_en_ia, entrar_a_nodo
-from api_handlers import enviar_sms_danaconnect, enviar_llamada_otp, _generar_codigo_otp, validar_horario_consultas
+import api_handlers
+import bot_engine
+from api_handlers import enviar_sms_danaconnect, _generar_codigo_otp, validar_horario_consultas
 import asignacion
 import enlaces_directos
 import auth
@@ -665,6 +668,9 @@ def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como:
     return url
 
 
+
+api_handlers.FIRMAR_URL = _generar_url_firmada   # receta en varias imágenes: firmarlas de nuevo al procesar
+
 def _subir_a_bucket(bucket_nombre: str, nombre_archivo: str, contenido: bytes, content_type: str | None):
     """Sube un objeto a Cloud Storage (llamada de red: usar con asyncio.to_thread)."""
     with _gcs_lock:
@@ -1017,11 +1023,33 @@ def ver_receta_correo(ruta: str):
     mismo flujo en WhatsApp (ahí todo el bucket era público; acá solo se
     puede pedir, uno por uno, un archivo puntual ya conocido).
     """
-    if not ruta or ".." in ruta or not ruta.startswith("webchat/"):
+    # Receta en varias imágenes: "ruta" trae todas separadas por coma -> página con todas (cada una abre la suya).
+    rutas = [r.strip() for r in (ruta or "").split(",") if r.strip()][:10]
+    if not rutas or any(".." in r or not r.startswith("webchat/") for r in rutas):
         raise HTTPException(status_code=400, detail="Ruta inválida")
+    if len(rutas) == 1:
+        return RedirectResponse(_generar_url_firmada(rutas[0], minutos=15))
 
-    url = _generar_url_firmada(ruta, minutos=15)
-    return RedirectResponse(url)
+    tarjetas = []
+    for i, r in enumerate(rutas, 1):
+        url = html_lib.escape(_generar_url_firmada(r, minutos=60))
+        es_pdf = r.lower().endswith(".pdf")
+        vista = ('<div class="pdf">📄 PDF</div>' if es_pdf
+                 else f'<img src="{url}" alt="Imagen {i} de la receta" loading="lazy">')
+        tarjetas.append(f'<a class="img" href="{url}" target="_blank" rel="noopener">{vista}'
+                        f'<span>Imagen {i} de {len(rutas)} · abrir</span></a>')
+    pagina = f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Receta ({len(rutas)} imágenes)</title>
+<style>body{{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#F4F7FB;color:#10233A}}
+h1{{font-size:18px;margin:18px 16px 4px}} p{{margin:0 16px 14px;color:#4A5B70;font-size:13px}}
+.g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:0 16px 24px}}
+.img{{display:block;background:#fff;border:1px solid #DCE5EF;border-radius:12px;overflow:hidden;text-decoration:none;color:#0A4C8C}}
+.img img{{width:100%;height:360px;object-fit:contain;background:#EEF2F7;display:block}}
+.pdf{{height:360px;display:grid;place-items:center;font-size:28px;background:#EEF2F7}}
+.img span{{display:block;padding:9px 12px;font-size:13px;font-weight:600}}</style></head>
+<body><h1>📄 Receta en {len(rutas)} imágenes</h1><p>Enlaces válidos por 60 minutos. Si vencen, vuelve a abrir el enlace del correo.</p>
+<div class="g">{"".join(tarjetas)}</div></body></html>"""
+    return HTMLResponse(pagina, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
 
 
 # Orígenes externos permitidos para /widget/redirigir — un enlace generado
@@ -2169,6 +2197,8 @@ _SQL_DNI_CONV = r"regexp_replace(COALESCE(NULLIF(u.dni, ''), c.variables_sesion-
 # Conversación SALIENTE = la abrió un SMS que le mandamos (invitación, enlace directo, enlace de sesión o archivo);
 # las demás son ENTRANTES (el cliente nos buscó: burbuja, teaser, menú del portal, WhatsApp, etc.).
 _ORIGENES_SALIENTES = {"invitacion_sms", "enlace_directo", "enlace_sms"}
+_VIA_ORIGEN = {"invitacion_sms": "SMS de invitación", "enlace_directo": "SMS con enlace directo",
+               "enlace_sms": "SMS con enlace a su conversación"}
 _TIPOS_CONTACTO = {"invitacion": "SMS de invitación", "enlace_directo": "SMS con enlace directo",
                    "archivo": "SMS con archivo"}
 
@@ -2317,11 +2347,9 @@ def _obtener_estado_conversacion(conversacion_id: int):
 # texto libre), y bot_engine.recibir_entrada_usuario() no permite que un
 # mismo nodo acepte a la vez texto libre Y un click de botón/menú -- un nodo
 # "menu" solo avanza con un id/label exacto, lo que rompería la captura del
-# código. Por eso el botón de reenvío/llamada se maneja directo acá, al
-# margen del árbol de bot_menus, leyendo y escribiendo variables_sesion a mano.
-
-LIMITE_REENVIOS_SMS_ANTES_DE_LLAMADA = 2  # (ya no condiciona el botón de llamada, que está siempre disponible)
-MAX_LLAMADAS_OTP = 3  # llamadas con el token por conversación (cada una tiene costo)
+# código. Por eso el botón de reenvío se maneja directo acá, al margen del
+# árbol de bot_menus, leyendo y escribiendo variables_sesion a mano.
+# (El "token por llamada" se retiró: el proveedor nunca logró que funcionara.)
 
 
 def _obtener_nodo_y_variables(conversacion_id: int):
@@ -2352,12 +2380,10 @@ def _guardar_variables_sesion(conversacion_id: int, variables: dict):
 
 
 def _reenviar_codigo_otp(conversacion_id: int) -> dict:
-    """Regenera el código OTP y lo reenvía por SMS -- botón "Reenviar código"
-    del widget. Solo funciona mientras la conversación sigue parada
-    exactamente en webchat_valida_pide_codigo (si ya avanzó, o nunca llegó
-    ahí, no hace nada). Lleva la cuenta de reenvíos en
-    variables_sesion['OTP_REENVIOS'] para habilitar la opción de llamada
-    después de LIMITE_REENVIOS_SMS_ANTES_DE_LLAMADA intentos."""
+    """Genera un código nuevo y lo reenvía por SMS -- botón "Reenviar código" del widget. Solo funciona
+    mientras la conversación sigue parada en webchat_valida_pide_codigo. Los códigos anteriores siguen
+    valiendo 10 minutos (api_handlers.registrar_codigo_otp): si el primer SMS llega tarde, igual sirve.
+    Lleva la cuenta en OTP_REENVIOS (tras api_handlers.OTP_REENVIOS_PARA_AYUDA se ofrece pedir ayuda)."""
     nodo_actual, variables = _obtener_nodo_y_variables(conversacion_id)
     if nodo_actual != "webchat_valida_pide_codigo":
         return {"ok": False, "motivo": "fuera_de_flujo"}
@@ -2368,48 +2394,109 @@ def _reenviar_codigo_otp(conversacion_id: int) -> dict:
 
     reenvios = int(variables.get("OTP_REENVIOS") or 0) + 1
     codigo = _generar_codigo_otp()
-    mensaje = f"Tu código de verificación Sanitas es: {codigo}"
-    if not enviar_sms_danaconnect(celular, mensaje):
+    texto_otp = api_handlers.texto_sms_otp(codigo, variables)
+    if not enviar_sms_danaconnect(celular, texto_otp, "otp_reenvio", conversacion_id,
+                                  texto_registro=texto_otp.replace(codigo, "••••••")):
         return {"ok": False, "motivo": "error_envio"}
 
     variables["OTP_REENVIOS"] = reenvios
+    api_handlers.registrar_codigo_otp(variables, celular, codigo)
     # Mismo shape que deja el nodo accion_api "enviar_sms_otp" -- así
     # {{ENVIO_SMS.response.codigo}} sigue funcionando igual en
     # webchat_valida_evalua_codigo cuando la persona escriba el código nuevo.
     variables["ENVIO_SMS"] = {"status": 200, "response": {"enviado": True, "codigo": codigo}}
     _guardar_variables_sesion(conversacion_id, variables)
-
-    return {
-        "ok": True,
-        "reenvios": reenvios,
-        "puede_llamar": reenvios >= LIMITE_REENVIOS_SMS_ANTES_DE_LLAMADA,
-    }
+    return {"ok": True, **api_handlers.acciones_otp(variables)}
 
 
-def _solicitar_llamada_otp(conversacion_id: int) -> dict:
-    """Pide que el código YA generado (el último enviado por SMS, el mismo
-    que la persona debe ingresar) se lea también por llamada de voz -- no
-    genera uno nuevo, para no invalidar uno que recién le esté llegando."""
+def _fijar_dominio_otp(conversacion_id: int, host) -> None:
+    """Dominio de la página donde está abierto el chat, para la línea "@dominio #código" del SMS (WebOTP)."""
+    dominio = api_handlers.dominio_otp_valido(host)
+    if not dominio or not conversacion_id:
+        return
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE conversaciones
+                   SET variables_sesion = COALESCE(variables_sesion::jsonb, '{}'::jsonb) || jsonb_build_object('OTP_DOMINIO', %s::text)
+                   WHERE id = %s AND estado = 'bot'
+                     AND COALESCE(variables_sesion::jsonb ->> 'OTP_DOMINIO', '') <> %s""",
+                (dominio, conversacion_id, dominio))
+        conn.commit()
+    except Exception:  # noqa: BLE001 — es una ayuda, no debe afectar al chat
+        conn.rollback()
+        logger.warning("No se pudo guardar el dominio del chat de %s", conversacion_id, exc_info=True)
+    finally:
+        release_connection(conn)
+
+
+# ---------------------------------------------------------------------------
+# "No me llega el código": el cliente pide que un supervisor valide su celular. Los supervisores ven la lista
+# "📱 Validaciones" y abren la conversación; ahí ya está el botón "Validar sin código" (con llamada de control).
+# ---------------------------------------------------------------------------
+VALIDACION_AYUDA_HORAS = 3   # pedidos más antiguos ya no se muestran
+
+
+def _pedir_validacion_manual(conversacion_id: int) -> dict:
     nodo_actual, variables = _obtener_nodo_y_variables(conversacion_id)
-    if nodo_actual != "webchat_valida_pide_codigo":
+    if nodo_actual != _NODO_PIDE_CODIGO:
         return {"ok": False, "motivo": "fuera_de_flujo"}
+    if int(variables.get("OTP_REENVIOS") or 0) < api_handlers.OTP_REENVIOS_PARA_AYUDA:
+        return {"ok": False, "motivo": "muy_pronto"}
+    ya = bool(variables.get("OTP_AYUDA_PEDIDA"))
+    if not ya:
+        variables["OTP_AYUDA_PEDIDA"] = datetime.now(LIMA_TZ).isoformat()
+        _guardar_variables_sesion(conversacion_id, variables)
+    return {"ok": True, "repetido": ya, **api_handlers.acciones_otp(variables)}
 
-    celular = (variables.get("CELULAR") or "").strip()
-    codigo = ((variables.get("ENVIO_SMS") or {}).get("response") or {}).get("codigo")
-    reenvios = int(variables.get("OTP_REENVIOS") or 0)
-    if not celular or not codigo:
-        return {"ok": False, "motivo": "sin_datos"}
 
-    llamadas = int(variables.get("OTP_LLAMADAS") or 0)
-    if llamadas >= MAX_LLAMADAS_OTP:
-        return {"ok": False, "motivo": "limite_llamadas"}
+def _validaciones_pendientes() -> list:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT c.id, c.variables_sesion::jsonb ->> 'CELULAR',
+                          COALESCE(NULLIF(u.nombre, ''), c.variables_sesion::jsonb ->> 'NOMBRE_USUARIO'),
+                          COALESCE(NULLIF(u.dni, ''), c.variables_sesion::jsonb ->> 'DNI'),
+                          c.variables_sesion::jsonb ->> 'OTP_AYUDA_PEDIDA', c.entrada_cola
+                   FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   WHERE c.estado = 'bot' AND c.nodo_actual = %s
+                     AND c.variables_sesion::jsonb ? 'OTP_AYUDA_PEDIDA'
+                     AND c.iniciado_en >= now() - make_interval(hours => %s)
+                   ORDER BY c.variables_sesion::jsonb ->> 'OTP_AYUDA_PEDIDA'""",
+                (_NODO_PIDE_CODIGO, VALIDACION_AYUDA_HORAS + 24))
+            filas = cur.fetchall()
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    limite = datetime.now(LIMA_TZ) - timedelta(hours=VALIDACION_AYUDA_HORAS)
+    lista = []
+    for cid, celular, nombre, dni, pedido, entrada_cola in filas:
+        try:
+            pedido_dt = datetime.fromisoformat(pedido)
+        except (TypeError, ValueError):
+            continue
+        if pedido_dt < limite:
+            continue
+        lista.append({"conversacion_id": cid, "celular": celular or "", "nombre": nombre or "Cliente",
+                      "dni": dni or "", "pedido_en": pedido_dt.isoformat(),
+                      "en_linea": cid in manager.widget_connections,
+                      "entrada_cola": entrada_cola.isoformat() if entrada_cola else None})
+    return lista
 
-    if not enviar_llamada_otp(celular, codigo):
-        return {"ok": False, "motivo": "error_llamada"}
 
-    variables["OTP_LLAMADAS"] = llamadas + 1
-    _guardar_variables_sesion(conversacion_id, variables)
-    return {"ok": True, "reenvios": reenvios}
+async def _notificar_validaciones(supervisor_id: int | None = None):
+    try:
+        lista = await asyncio.to_thread(_validaciones_pendientes)
+    except Exception:
+        logger.warning("No se pudo armar la lista de validaciones pendientes", exc_info=True)
+        return
+    evento = {"type": "validaciones_pendientes", "payload": {"lista": lista}}
+    if supervisor_id is None:
+        await manager.enviar_a_todos_supervisores(evento)
+    else:
+        await manager.enviar_a_supervisor(supervisor_id, evento)
 
 
 def _guardar_mensaje_usuario(conversacion_id: int, texto: str, respondido_a_id: int | None = None) -> int:
@@ -3152,7 +3239,12 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
     conversacion_id, estado_actual, es_nueva = await _crear_o_reanudar_async(nuevo_token)
     await manager.connect_widget(conversacion_id, websocket)
 
+    host_widget = [None]   # dominio de la página (llega en "registrar_origen"), para el SMS del código
+
     async def arrancar(conv_id: int, es_nueva_flag: bool, estado: str, forzar_pedir_datos: bool = False):
+        if es_nueva_flag and host_widget[0]:
+            # Conversación nueva en la misma conexión (reiniciar, "nueva conversación"): que conserve el dominio.
+            await asyncio.to_thread(_fijar_dominio_otp, conv_id, host_widget[0])
         if es_nueva_flag:
             datos = None if forzar_pedir_datos else await asyncio.to_thread(_obtener_datos_usuario, nuevo_token)
             if datos and datos.get("telefono") and datos.get("verificado"):
@@ -3197,15 +3289,12 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                 await _enviar_espera(conv_id, websocket)
             elif estado == "bot":
                 # Si se había quedado esperando el código SMS, los botones de
-                # "Reenviar código"/"Llamarme" no forman parte del historial:
+                # "Reenviar código"/WhatsApp no forman parte del historial:
                 # se vuelven a mandar para que no desaparezcan al reconectar.
                 nodo_actual, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conv_id)
                 if nodo_actual == "webchat_valida_pide_codigo":
-                    reenvios = int(variables.get("OTP_REENVIOS") or 0)
-                    await websocket.send_json({"type": "otp_acciones", "payload": {
-                        "otp_reenvios": reenvios,
-                        "otp_puede_llamar": reenvios >= LIMITE_REENVIOS_SMS_ANTES_DE_LLAMADA,
-                    }})
+                    await websocket.send_json({"type": "otp_acciones",
+                                               "payload": api_handlers.acciones_otp(variables)})
 
     try:
         await websocket.send_json({
@@ -3348,6 +3437,9 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     if tipo == "registrar_origen":
                         await asyncio.to_thread(
                             _registrar_origen, conversacion_id, payload.get("origen"), payload.get("pagina"))
+                        if payload.get("host"):
+                            host_widget[0] = payload.get("host")
+                            await asyncio.to_thread(_fijar_dominio_otp, conversacion_id, host_widget[0])
                         continue
 
                     if tipo == "iniciar_intencion":
@@ -3419,17 +3511,12 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                     if estado == "bot" and tipo == "reenviar_otp":
                         resultado = await asyncio.to_thread(_reenviar_codigo_otp, conversacion_id)
                         if resultado["ok"]:
-                            texto = "📲 Te reenviamos el código por SMS."
-                            if resultado["puede_llamar"]:
-                                texto += " Si sigue sin llegarte, puedes pedir que te llamemos para dictártelo."
-                            await websocket.send_json({
-                                "type": "mensaje_bot",
-                                "payload": {
-                                    "texto": texto,
-                                    "otp_reenvios": resultado["reenvios"],
-                                    "otp_puede_llamar": resultado["puede_llamar"],
-                                },
-                            })
+                            texto = "📲 Te reenviamos un código nuevo por SMS. El anterior también sigue valiendo."
+                            if resultado["otp_puede_ayuda"]:
+                                texto += (" Si sigue sin llegarte, verifica con WhatsApp o toca "
+                                          "«🙋 No me llega el código» y un asesor lo validará.")
+                            payload_r = {k: v for k, v in resultado.items() if k.startswith("otp_")}
+                            await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto, **payload_r}})
                         else:
                             motivo = resultado.get("motivo")
                             texto = ("⚠️ No pudimos reenviar el código en este momento. Inténtalo de nuevo en unos segundos."
@@ -3494,26 +3581,26 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                                                        "payload": {"motivo": "vencido"}})
                         continue
 
-                    if estado == "bot" and tipo == "solicitar_llamada_otp":
-                        resultado = await asyncio.to_thread(_solicitar_llamada_otp, conversacion_id)
-                        if resultado["ok"]:
-                            await websocket.send_json({
-                                "type": "mensaje_bot",
-                                "payload": {
-                                    "texto": "📞 Te estamos llamando para dictarte el código. "
-                                             "Contesta la llamada y escribe aquí el código que escuches.",
-                                    "otp_reenvios": resultado["reenvios"],
-                                    "otp_puede_llamar": True,
-                                },
-                            })
+                    if estado == "bot" and tipo == "pedir_validacion_manual":
+                        resultado = await asyncio.to_thread(_pedir_validacion_manual, conversacion_id)
+                        if not resultado["ok"]:
+                            texto = ("Primero reenvía el código: a veces el SMS tarda un poco."
+                                     if resultado.get("motivo") == "muy_pronto" else
+                                     "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar.")
+                            await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+                            continue
+                        payload_r = {k: v for k, v in resultado.items() if k.startswith("otp_")}
+                        if manager.supervisor_connections:
+                            texto = ("🙋 Listo, un asesor validará tu número en breve. Puede llamarte al "
+                                     f"{resultado['otp_celular'] or 'celular que registraste'} para confirmar que eres el titular. "
+                                     "Por favor no cierres el chat. Si mientras tanto te llega el SMS, escribe el código aquí.")
                         else:
-                            texto_err = ("⚠️ Ya solicitaste varias llamadas. Usa el código del SMS o verifica con WhatsApp."
-                                         if resultado.get("motivo") == "limite_llamadas" else
-                                         "⚠️ No pudimos iniciar la llamada en este momento. Inténtalo de nuevo en unos segundos.")
-                            _, variables_otp = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
-                            await websocket.send_json({"type": "mensaje_bot", "payload": {
-                                "texto": texto_err, "otp_reenvios": int(variables_otp.get("OTP_REENVIOS") or 0),
-                                "otp_puede_llamar": True}})
+                            texto = ("🙋 Recibimos tu pedido, pero en este momento no hay asesores conectados para validarlo. "
+                                     "Mientras tanto puedes verificar con WhatsApp o escribir el código si te llega el SMS.")
+                        await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto, **payload_r}})
+                        if not resultado.get("repetido"):
+                            logger.info("Conversación %s pidió validar el celular sin código", conversacion_id)
+                        await _notificar_validaciones()
                         continue
 
                     # --- Agente de IA oculto: entrada (palabra clave + lista blanca) -----------------
@@ -4097,6 +4184,71 @@ async def _guia_automatica_si_corresponde(conversacion_id, asesor_id: int):
 _ultima_plantilla: dict = {}
 
 
+# ---------------------------------------------------------------------------
+# Botón "📋 Plantilla" del asesor (SCTR): manda al cliente el enlace de Plantilla Express, para registrar a sus
+# trabajadores desde el celular en vez de llenar un Excel. Es el mismo enlace que da el bot en "Generar plantilla
+# Excel" (sofi-apis consulta_ruc2 -> response.link). Lo envía Sofi dentro de la conversación; el asesor no sale de ella.
+# ---------------------------------------------------------------------------
+def _ruc_y_celular_de_conversacion(conversacion_id: int) -> tuple:
+    """(RUC sugerido, celular): el que usó en el bot (CONSULTA_RUC / RUC / ruc_empresa), el recordado o el de su ficha."""
+    _, variables = _obtener_nodo_y_variables(conversacion_id)
+    cr = variables.get("CONSULTA_RUC") if isinstance(variables.get("CONSULTA_RUC"), dict) else {}
+    candidatos = [(cr.get("response") or {}).get("ruc"), variables.get("RUC"), variables.get("ruc_empresa"),
+                  variables.get("ruc"), variables.get("RUC_RECORDADO")]
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT u.ruc, COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR')
+                           FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id WHERE c.id = %s""",
+                        (conversacion_id,))
+            fila = cur.fetchone()
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    if fila:
+        candidatos.append(fila[0])
+    ruc = next((str(r).strip() for r in candidatos if r and re.fullmatch(r"\d{11}", str(r).strip())), "")
+    celular = "".join(ch for ch in str((fila or [None, None])[1] or variables.get("CELULAR") or "") if ch.isdigit())
+    return ruc, celular
+
+
+def _texto_plantilla_express(ruc: str, razon_social: str, link: str) -> str:
+    empresa = f"🏢 *{razon_social}* (RUC {ruc})\n\n" if razon_social else f"🏢 RUC {ruc}\n\n"
+    return ("📋 *Plantilla Express SCTR*\n" + empresa +
+            "Registra a tus trabajadores *desde tu celular*, sin llenar un Excel 👇\n" + link + "\n\n"
+            "También puedes compartir este enlace con quien tenga los datos. Cuando termines, avísanos por aquí ✅")
+
+
+async def _enviar_plantilla_express(conversacion_id: int, asesor_id: int, ruc: str) -> dict:
+    ruc = "".join(ch for ch in str(ruc or "") if ch.isdigit())
+    if not re.fullmatch(r"\d{11}", ruc):
+        return {"ok": False, "motivo": "El RUC debe tener 11 dígitos."}
+    _, celular = await asyncio.to_thread(_ruc_y_celular_de_conversacion, conversacion_id)
+    from api_handlers import consulta_ruc
+    try:
+        r = await asyncio.to_thread(consulta_ruc, {"ruc": ruc, "celular": celular}, {})
+    except Exception:
+        logger.exception("Plantilla Express: falló consulta_ruc (conversación %s)", conversacion_id)
+        return {"ok": False, "motivo": "No se pudo generar la plantilla en este momento. Intenta de nuevo."}
+    resp = (r or {}).get("response") or {}
+    link = str(resp.get("link") or "").strip()
+    if not link.startswith("http"):
+        motivo = resp.get("mensaje") or resp.get("message") or resp.get("error") or "No se pudo generar la plantilla para ese RUC."
+        logger.info("Plantilla Express sin enlace (conversación %s, RUC %s): %s", conversacion_id, ruc, str(r)[:200])
+        return {"ok": False, "motivo": str(motivo)[:200]}
+    texto = _texto_plantilla_express(ruc, str(resp.get("razon_social") or "").strip(), link)
+    await asyncio.to_thread(_guardar_mensaje_bot_texto, conversacion_id, texto)
+    await manager.enviar_a_widget(conversacion_id, {"type": "mensaje_bot", "payload": {"texto": texto}})
+    await manager.enviar_a_asesor(asesor_id, {"type": "aviso_automatico_cliente",
+                                              "payload": {"conversacion_id": conversacion_id,
+                                                          "texto": f"Plantilla Express para el RUC {ruc}"}})
+    await manager.notificar_escuchas(conversacion_id, {
+        "type": "mensaje_conversacion",
+        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "bot", "texto": texto}})
+    logger.info("Plantilla Express enviada (conversación %s, RUC %s, asesor %s)", conversacion_id, ruc, asesor_id)
+    return {"ok": True, "ruc": ruc}
+
+
 async def _enviar_plantilla_sctr(conversacion_id: int, websocket: WebSocket):
     ahora = time.time()
     if ahora - _ultima_plantilla.get(conversacion_id, 0) < 20:
@@ -4220,7 +4372,8 @@ def _enviar_sms_respuesta(accion: dict) -> bool:
     mensaje = plantilla.replace("{{ASESOR}}", asesor or "Tu asesor").replace("{{LINK}}", link)
     if "{{LINK}}" not in plantilla:
         mensaje = f"{mensaje} {link}"
-    return bool(enviar_sms_danaconnect(accion["telefono"], mensaje))
+    return bool(enviar_sms_danaconnect(accion["telefono"], mensaje, accion.get("tipo_sms") or "aviso_respuesta",
+                                       accion.get("conversacion_id")))
 
 
 # ---------------------------------------------------------------------------
@@ -4253,6 +4406,107 @@ async def _enviar_espera(conversacion_id: int, websocket=None):
     else:
         await manager.enviar_a_widget(conversacion_id, evento)
     await _invitar_actualizacion(conversacion_id, "espera", websocket)
+
+
+# ---------------------------------------------------------------------------
+# "Enviar a una opción del menú": el asesor (o el supervisor) devuelve al bot una conversación que no le
+# corresponde, directo a la opción correcta. Las opciones las arma bot_engine.opciones_para_devolver.
+# ---------------------------------------------------------------------------
+class _WidgetPorManager:
+    """Hace de "websocket" del widget para _procesar_eventos_bot cuando el disparo no viene del propio
+    cliente (lo manda por manager.enviar_a_widget; si el cliente no está conectado, lo verá en el historial)."""
+
+    def __init__(self, conversacion_id: int):
+        self.conversacion_id = conversacion_id
+
+    async def send_json(self, evento: dict):
+        await manager.enviar_a_widget(self.conversacion_id, evento)
+
+
+def _pasar_conversacion_al_bot(conversacion_id: int, codigo: str, label: str, asesor_id: int | None,
+                               supervisor_id: int | None) -> dict:
+    """Valida y deja la conversación en estado 'bot' (sin asesor ni campaña). Devuelve
+    {"ok": True, "asesor_origen_id", "texto", "estado_previo"} o {"ok": False, "motivo"}."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT asesor_id, estado FROM conversaciones WHERE id = %s FOR UPDATE", (conversacion_id,))
+            fila = cur.fetchone()
+            if fila is None:
+                conn.rollback()
+                return {"ok": False, "motivo": "La conversación no existe."}
+            asesor_origen_id, estado = fila
+            permitidos = ("asignada",) if supervisor_id is None else ("asignada", "en_cola")
+            if estado not in permitidos:
+                conn.rollback()
+                return {"ok": False, "motivo": "La conversación ya no está con un asesor ni en cola."
+                        if supervisor_id is not None else "La conversación ya no está asignada a un asesor."}
+            if supervisor_id is None and asesor_origen_id != asesor_id:
+                conn.rollback()
+                return {"ok": False, "motivo": "Esta conversación ya no está a tu cargo."}
+            quien_id = asesor_id if supervisor_id is None else supervisor_id
+            cur.execute("SELECT nombre_display FROM asesores WHERE id = %s", (quien_id,))
+            r = cur.fetchone()
+            quien = (r[0] if r else None) or ("Un supervisor" if supervisor_id is not None else "Tu asesor")
+            cur.execute(
+                """UPDATE conversaciones
+                   SET estado = 'bot', asesor_id = NULL, campana_id = NULL, entrada_cola = NULL,
+                       asignado_en = NULL, pausada_en = NULL, nodo_actual = NULL
+                   WHERE id = %s""",
+                (conversacion_id,))
+            texto = f"↩️ {quien} te derivó a la opción «{label}»."
+            cur.execute(
+                """INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                   VALUES (%s, 'bot', 'texto', %s, %s)""",
+                (conversacion_id, texto, datetime.now(LIMA_TZ)))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_connection(conn)
+    return {"ok": True, "asesor_origen_id": asesor_origen_id, "texto": texto, "estado_previo": estado}
+
+
+async def _devolver_a_opcion(conversacion_id: int, codigo: str, asesor_id: int | None = None,
+                             supervisor_id: int | None = None) -> dict:
+    try:
+        conversacion_id = int(conversacion_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "motivo": "Falta la conversación."}
+    opciones = await asyncio.to_thread(bot_engine.opciones_para_devolver, conversacion_id)
+    opcion = next((o for o in opciones if o["codigo"] == codigo), None)
+    if opcion is None:
+        return {"ok": False, "motivo": "Esa opción del menú ya no está disponible."}
+    r = await asyncio.to_thread(_pasar_conversacion_al_bot, conversacion_id, codigo, opcion["label"],
+                                asesor_id, supervisor_id)
+    if not r.get("ok"):
+        return r
+    _espera_enviada.pop(conversacion_id, None)
+    origen = r["asesor_origen_id"]
+    logger.info("Conversación %s devuelta al bot (%s) por %s", conversacion_id, codigo,
+                f"asesor {asesor_id}" if supervisor_id is None else f"supervisor {supervisor_id}")
+    if origen:
+        await manager.enviar_a_asesor(origen, {
+            "type": "conversacion_removida",
+            "payload": {"conversacion_id": conversacion_id, "motivo": "a_opcion", "nombre_destino": opcion["label"]},
+        })
+    await manager.enviar_a_widget(conversacion_id, {"type": "devuelto_al_bot", "payload": {"texto": r["texto"]}})
+    await manager.notificar_escuchas(conversacion_id, {
+        "type": "mensaje_conversacion",
+        "payload": {"conversacion_id": conversacion_id, "emisor_tipo": "bot", "texto": r["texto"]},
+    })
+    try:
+        eventos = await asyncio.to_thread(entrar_a_nodo, conversacion_id, codigo, opcion["variables"])
+        if eventos:
+            await _procesar_eventos_bot(conversacion_id, _WidgetPorManager(conversacion_id), eventos)
+    except Exception:
+        logger.exception("No se pudo arrancar la opción %s en la conversación %s", codigo, conversacion_id)
+    if origen:
+        await supervisor.notificar_cambio_asesor(origen, manager)
+    if r["estado_previo"] == "en_cola":
+        await supervisor.notificar_estado_global_a_todos(manager)   # salió de la cola
+    return {"ok": True, "label": opcion["label"]}
 
 
 # ---------------------------------------------------------------------------
@@ -4299,7 +4553,8 @@ def _avisar_turno(e: dict) -> str:
     if e.get("respondio"):
         # La asesora ya le escribió: el push de "te respondió" sale solo; aquí va el SMS de inmediato.
         ok = _enviar_sms_respuesta({"telefono": e.get("celular"), "sesion_token": e.get("sesion_token"),
-                                    "asesor": e.get("asesor")}) if e.get("celular") else False
+                                    "asesor": e.get("asesor"), "conversacion_id": cid,
+                                    "tipo_sms": "turno"}) if e.get("celular") else False
         avisos_cliente.registrar(cid, "sms", "turno_respondio", ok)
         resultado = "sms" if ok else "ninguno"
         espera_cola.marcar_enviado(cid, resultado)
@@ -4319,7 +4574,7 @@ def _avisar_turno(e: dict) -> str:
                      or MENSAJES_AUTOMATICOS["mensaje_sms_turno"]["default"])
         link = _enlace_sms(f"wcs={e['sesion_token']}")
         mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
-        ok = bool(enviar_sms_danaconnect(e["celular"], mensaje))
+        ok = bool(enviar_sms_danaconnect(e["celular"], mensaje, "turno", cid))
         avisos_cliente.registrar(cid, "sms", "turno", ok)
         if ok:
             canales.append("sms")
@@ -4411,7 +4666,7 @@ def _enviar_encuestas_sms():
     for p in pendientes:
         link = _enlace_sms(f"es={p['codigo']}", widget_url)
         mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
-        ok = bool(enviar_sms_danaconnect(p["telefono"], mensaje))
+        ok = bool(enviar_sms_danaconnect(p["telefono"], mensaje, "encuesta", p.get("conversacion_id")))
         encuesta.resultado_sms(p["encuesta_id"], ok)
         logger.info("Encuesta por SMS %s: %s", p["encuesta_id"], "enviada" if ok else "falló")
 
@@ -4872,6 +5127,95 @@ def _registrar_contacto_saliente(celular: str, tipo: str, remitente_id: int, rol
         release_connection(conn)
 
 
+# ---------------------------------------------------------------------------
+# "Buscar SMS": todos los SMS enviados a un celular (sms_enviados) y, de antes de que existiera ese registro, los que
+# quedaron anotados en otras tablas (invitaciones/enlaces/archivos, avisos al cliente, SMS manual y encuestas).
+# ---------------------------------------------------------------------------
+_TIPOS_AVISO_CLIENTE = {"turno": "turno", "turno_respondio": "turno", "sin_leer_3min": "aviso_respuesta"}
+
+
+def _buscar_sms(celular_crudo) -> dict:
+    celular = _normalizar_celular_pe(celular_crudo)
+    if not celular:
+        return {"ok": False, "motivo": "Escribe un celular válido: 9 dígitos que empiecen con 9 (ej. 987654321).",
+                "sms": []}
+    nueve = celular[-9:]
+    sms, desde_registro = [], None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            def _consulta(sql, params):
+                cur.execute("SAVEPOINT sp_sms")
+                try:
+                    cur.execute(sql, params)
+                    filas = cur.fetchall()
+                    cur.execute("RELEASE SAVEPOINT sp_sms")
+                    return filas
+                except Exception:  # noqa: BLE001 — falta esa tabla o columna: se sigue con las demás
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_sms")
+                    return None
+
+            filas = _consulta(
+                """SELECT s.enviado_en, s.tipo, s.texto, s.ok, s.error, s.conversacion_id,
+                          COALESCE(a.nombre_display, a.nombre), a.rol
+                   FROM sms_enviados s LEFT JOIN asesores a ON a.id = s.enviado_por
+                   WHERE s.celular9 = %s ORDER BY s.enviado_en DESC LIMIT 200""", (nueve,))
+            inicio = _consulta("SELECT min(enviado_en) FROM sms_enviados", ())
+            desde_registro = inicio[0][0] if inicio and inicio[0][0] else None
+            for enviado, tipo, texto, ok, error, conv, quien, rol in filas or []:
+                sms.append({"enviado_en": enviado, "tipo": tipo, "texto": texto or "", "ok": ok,
+                            "error": "No se pudo enviar" if not ok else "", "conversacion_id": conv,
+                            "enviado_por": quien or "", "rol": rol or "", "anterior": False})
+
+            # Lo de antes del registro (o todo, si aún no se corrió migracion_sms_enviados.sql): sin el texto.
+            limite = desde_registro or datetime.now(LIMA_TZ) + timedelta(days=1)
+            anteriores = []
+            for enviado, tipo, detalle, quien, rol in _consulta(
+                    """SELECT cs.enviado_en, cs.tipo, cs.detalle, COALESCE(a.nombre_display, a.nombre), cs.rol_emisor
+                       FROM contactos_salientes cs LEFT JOIN asesores a ON a.id = cs.enviado_por
+                       WHERE right(cs.celular, 9) = %s AND cs.enviado_en < %s""", (nueve, limite)) or []:
+                anteriores.append({"enviado_en": enviado, "tipo": tipo, "texto": detalle or "", "ok": True,
+                                   "conversacion_id": None, "enviado_por": quien or "", "rol": rol or ""})
+            for enviado, motivo, ok, conv in _consulta(
+                    f"""SELECT av.enviado_en, av.motivo, av.ok, av.conversacion_id
+                        FROM avisos_cliente av JOIN conversaciones c ON c.id = av.conversacion_id
+                        JOIN usuarios_webchat u ON u.id = c.usuario_id
+                        WHERE av.canal = 'sms' AND {_SQL_TEL_CONV} = %s AND av.enviado_en < %s""", (nueve, limite)) or []:
+                anteriores.append({"enviado_en": enviado, "tipo": _TIPOS_AVISO_CLIENTE.get(motivo, "aviso_respuesta"),
+                                   "texto": "", "ok": bool(ok), "conversacion_id": conv, "enviado_por": "", "rol": ""})
+            for enviado, conv, quien, rol in _consulta(
+                    f"""SELECT si.creado_en, si.conversacion_id, COALESCE(a.nombre_display, a.nombre), a.rol
+                        FROM supervisor_intervenciones si JOIN conversaciones c ON c.id = si.conversacion_id
+                        JOIN usuarios_webchat u ON u.id = c.usuario_id LEFT JOIN asesores a ON a.id = si.supervisor_id
+                        WHERE si.tipo = 'sms_saliente' AND {_SQL_TEL_CONV} = %s AND si.creado_en < %s""",
+                    (nueve, limite)) or []:
+                anteriores.append({"enviado_en": enviado, "tipo": "aviso_manual", "texto": "", "ok": True,
+                                   "conversacion_id": conv, "enviado_por": quien or "", "rol": rol or ""})
+            for enviado, conv in _consulta(
+                    """SELECT e.sms_enviado_en, e.conversacion_id FROM encuestas_satisfaccion e
+                       WHERE right(regexp_replace(COALESCE(e.sms_telefono, ''), '\\D', '', 'g'), 9) = %s
+                         AND e.sms_enviado_en IS NOT NULL AND e.sms_enviado_en < %s""", (nueve, limite)) or []:
+                anteriores.append({"enviado_en": enviado, "tipo": "encuesta", "texto": "", "ok": True,
+                                   "conversacion_id": conv, "enviado_por": "", "rol": ""})
+            for x in anteriores:
+                x.update(error="", anterior=True)
+            sms += anteriores
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    sms.sort(key=lambda x: x["enviado_en"], reverse=True)
+    for x in sms[:300]:
+        x["enviado_en"] = x["enviado_en"].isoformat() if x["enviado_en"] else None
+        # Los enlaces del SMS no se muestran: el de aviso lleva la sesión del cliente y abrirlo desde la consola
+        # le quitaría la conversación de su navegador.
+        x["texto"] = re.sub(r"https?://\S+", "🔗 [enlace]", x["texto"] or "")
+        x["tipo_texto"] = api_handlers.TIPOS_SMS.get(x["tipo"], x["tipo"])
+        if x["tipo"] in ("enlace_directo", "archivo") and x["anterior"] and x["texto"]:
+            x["texto"] = ("Hacia: " if x["tipo"] == "enlace_directo" else "Archivo: ") + x["texto"]
+    return {"ok": True, "celular": nueve, "sms": sms[:300],
+            "desde_registro": desde_registro.isoformat() if desde_registro else None}
+
+
 def _campanas_permitidas_para_sms(usuario_id: int):
     """Campañas que puede elegir al mandar un enlace directo: un asesor, las suyas; un supervisor, las de su
     alcance (None = todas)."""
@@ -4926,7 +5270,8 @@ def _enviar_sms_invitacion(celular_crudo, remitente_id: int, texto=None, campana
             enlaces_directos.borrar_enlace(token_directo)
         return {"ok": False, "motivo": f"Con el enlace el mensaje tiene {len(mensaje)} caracteres; el máximo es {SMS_INVITACION_MAX_CARACTERES}. Acórtalo un poco."}
 
-    if not enviar_sms_danaconnect(celular, mensaje):
+    if not enviar_sms_danaconnect(celular, mensaje, "enlace_directo" if token_directo else "invitacion",
+                                  enviado_por=remitente_id):
         if token_directo:
             enlaces_directos.borrar_enlace(token_directo)
         return {"ok": False, "motivo": "Danaconnect no pudo enviar el SMS. Intenta de nuevo en un momento."}
@@ -4999,7 +5344,7 @@ def _enviar_archivo_sms(celular_crudo, remitente_id: int, rol: str, ruta, nombre
     finally:
         release_connection(conn)
 
-    if not enviar_sms_danaconnect(celular, mensaje):
+    if not enviar_sms_danaconnect(celular, mensaje, "archivo", enviado_por=remitente_id):
         conn = get_connection()
         try:
             with conn.cursor() as cur:
@@ -5346,7 +5691,7 @@ def _enviar_sms_saliente(conversacion_id: int, remitente_id: int) -> dict:
     )
     mensaje = plantilla.replace("{{LINK}}", link)
 
-    if not enviar_sms_danaconnect(telefono, mensaje):
+    if not enviar_sms_danaconnect(telefono, mensaje, "aviso_manual", conversacion_id, remitente_id):
         return {"ok": False, "motivo": "Danaconnect no pudo enviar el SMS. Intenta de nuevo en un momento."}
 
     conn = get_connection()
@@ -5898,7 +6243,8 @@ async def procesar_recordatorios_receta(authorization: str = Header(None)):
     if not esperado or not secrets.compare_digest(recibido.encode(), esperado.encode()):
         raise HTTPException(status_code=401, detail="No autorizado")
     try:
-        return await asyncio.to_thread(recordatorios.procesar_pendientes, enviar_sms_danaconnect, _push_entrega)
+        return await asyncio.to_thread(recordatorios.procesar_pendientes,
+                                     functools.partial(enviar_sms_danaconnect, tipo="recordatorio_receta"), _push_entrega)
     except recordatorios.TablaNoExiste:
         raise _recordatorios_503()
 
@@ -7080,7 +7426,8 @@ async def seguimiento_enviar(mejora_id: int, request: Request, authorization: st
     claves = cuerpo.get("claves") if isinstance(cuerpo, dict) else None
     widget_url = (supervisor.obtener_configuracion("widget_url") or "").strip() or "https://sanitasperu.com/"
     r = await asyncio.to_thread(seguimiento.enviar, mejora_id, claves if isinstance(claves, list) else [],
-                                asesor_id, _base_enlaces_sms(widget_url), enviar_sms_danaconnect)
+                                asesor_id, _base_enlaces_sms(widget_url),
+                                functools.partial(enviar_sms_danaconnect, tipo="seguimiento", enviado_por=asesor_id))
     # Quien está ahora mismo en el chat con el bot lo ve al instante.
     if r.get("ok") and r.get("usuarios"):
         try:
@@ -7455,7 +7802,7 @@ async def _avisar_cliente_plan(sid: int):
     clave = "mensaje_sms_plan_listo" if listo else "mensaje_sms_plan_rechazado"
     plantilla = await asyncio.to_thread(supervisor.obtener_configuracion, clave) or MENSAJES_AUTOMATICOS[clave]["default"]
     mensaje = plantilla.replace("{{LINK}}", link) if "{{LINK}}" in plantilla else f"{plantilla} {link}"
-    ok = await asyncio.to_thread(enviar_sms_danaconnect, datos["celular"], mensaje)
+    ok = await asyncio.to_thread(enviar_sms_danaconnect, datos["celular"], mensaje, "plan", conv)
     logger.info("Plan de salud: SMS de %s a la solicitud %s: %s", "plan listo" if listo else "rechazo", sid,
                 "enviado" if ok else "falló")
 
@@ -7757,6 +8104,10 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                     "payload": {"conversacion_id": conv_id, "mensajes": _obtener_historial(conv_id)},
                 })
 
+            elif tipo == "buscar_sms":
+                r = await asyncio.to_thread(_buscar_sms, payload.get("celular"))
+                await manager.enviar_a_asesor(asesor_id, {"type": "resultados_sms", "payload": r})
+
             elif tipo == "buscar_conversaciones":
                 # Mismo buscador que tiene el supervisor (celular, DNI, nombre o código
                 # de conversación, de cualquier estado). Se exige un mínimo de 3 caracteres
@@ -7827,6 +8178,18 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                                         "texto": texto, "mensaje_id": mensaje_id, "respondido_a": None},
                         })
 
+            elif tipo in ("plantilla_express_ruc", "enviar_plantilla_express"):
+                conv_pe = payload.get("conversacion_id")
+                if not conv_pe or await asyncio.to_thread(_obtener_asesor_actual, conv_pe) != asesor_id:
+                    resultado = {"ok": False, "motivo": "Esta conversación ya no está a tu cargo."}
+                elif tipo == "plantilla_express_ruc":
+                    ruc_sugerido, _ = await asyncio.to_thread(_ruc_y_celular_de_conversacion, int(conv_pe))
+                    resultado = {"ok": True, "solo_ruc": True, "ruc": ruc_sugerido}
+                else:
+                    resultado = await _enviar_plantilla_express(int(conv_pe), asesor_id, payload.get("ruc"))
+                await manager.enviar_a_asesor(asesor_id, {"type": "plantilla_express",
+                                                          "payload": {"conversacion_id": conv_pe, **resultado}})
+
             elif tipo == "enviar_ayuda_archivos":
                 # Botón "📎 Guía" del asesor: le manda al cliente la tarjeta con las formas de adjuntar su archivo.
                 conv_guia = payload.get("conversacion_id")
@@ -7844,6 +8207,25 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 resultado = await asignacion.transferir_conversacion(
                     conversacion_id, asesor_destino_id, manager, asesor_solicitante_id=asesor_id,
                 )
+                if not resultado.get("ok"):
+                    await manager.enviar_a_asesor(asesor_id, {
+                        "type": "error_transferencia",
+                        "payload": {"conversacion_id": conversacion_id, "motivo": resultado.get("motivo")},
+                    })
+
+            elif tipo == "listar_opciones_menu":
+                # Opciones del menú a las que se puede devolver la conversación (modal "Transferir").
+                conversacion_id = payload.get("conversacion_id")
+                opciones = await asyncio.to_thread(bot_engine.opciones_para_devolver, int(conversacion_id or 0))
+                await manager.enviar_a_asesor(asesor_id, {
+                    "type": "opciones_menu",
+                    "payload": {"conversacion_id": conversacion_id,
+                                "opciones": [{"codigo": o["codigo"], "label": o["label"]} for o in opciones]},
+                })
+
+            elif tipo == "devolver_a_opcion":
+                conversacion_id = payload.get("conversacion_id")
+                resultado = await _devolver_a_opcion(conversacion_id, str(payload.get("codigo") or ""), asesor_id=asesor_id)
                 if not resultado.get("ok"):
                     await manager.enviar_a_asesor(asesor_id, {
                         "type": "error_transferencia",
@@ -8013,7 +8395,7 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
                 """
                 SELECT c.id, u.nombre, u.telefono, u.dni, c.estado, cam.nombre,
                        c.iniciado_en, c.cerrado_en, c.entrada_cola, c.asignado_en,
-                       a.nombre_display, et.nombre, """ + _SQL_ASESORES_CONV + """
+                       a.nombre_display, et.nombre, """ + _SQL_ASESORES_CONV + """, c.origen
                 FROM conversaciones c
                 JOIN usuarios_webchat u ON u.id = c.usuario_id
                 LEFT JOIN campanas cam ON cam.id = c.campana_id
@@ -8028,8 +8410,11 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
             )
             resultado = []
             for (conv_id, nombre, telefono, dni, estado, campana, iniciado_en, cerrado_en,
-                 entrada_cola, asignado_en, asesor_nombre, etiqueta, atendieron) in cur.fetchall():
+                 entrada_cola, asignado_en, asesor_nombre, etiqueta, atendieron, origen) in cur.fetchall():
                 resultado.append({
+                    # Igual que en el historial: 📤 saliente = la abrió un SMS que le mandamos; 📥 entrante = nos buscó.
+                    "direccion": "saliente" if origen in _ORIGENES_SALIENTES else "entrante",
+                    "via": _VIA_ORIGEN.get(origen),
                     "conversacion_id": conv_id,
                     "usuario_nombre": nombre or f"Usuario {conv_id}",
                     "telefono": telefono,
@@ -8159,6 +8544,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
         await supervisor.enviar_etiquetas(supervisor_id, manager, a_asesor=False)
         await supervisor.enviar_configuracion(supervisor_id, manager)
         await supervisor.enviar_respuestas_rapidas(supervisor_id, manager, a_asesor=False)
+        await _notificar_validaciones(supervisor_id)
 
         while True:
             data = await websocket.receive_json()
@@ -8200,6 +8586,13 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 r = await _validar_celular_manual(conversacion_id, supervisor_id)
                 await websocket.send_json({"type": "validacion_manual_resultado",
                                            "payload": {**r, "conversacion_id": conversacion_id}})
+                if r.get("ok"):
+                    await _notificar_validaciones()
+                continue
+
+            # Clientes que tocaron "No me llega el código" (cualquier supervisor: aún no tienen campaña).
+            if tipo == "listar_validaciones_pendientes":
+                await _notificar_validaciones(supervisor_id)
                 continue
 
             if alcance is not None:
@@ -8480,6 +8873,16 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                     },
                 })
 
+            elif tipo == "obtener_historial_usuario":
+                # 🕘 Historial del cliente desde el panel de escucha (mismo que ve el asesor).
+                historial = await asyncio.to_thread(_historial_cliente, conversacion_id)
+                await manager.enviar_a_supervisor(supervisor_id, {
+                    "type": "historial_usuario", "payload": {"conversacion_id": conversacion_id, **historial}})
+
+            elif tipo == "buscar_sms":
+                r = await asyncio.to_thread(_buscar_sms, payload.get("celular"))
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "resultados_sms", "payload": r})
+
             elif tipo == "ver_conversacion":
                 # Vista de solo lectura para una conversación encontrada en el
                 # buscador que YA está cerrada (o en bot/en_cola) — no usa el
@@ -8566,6 +8969,23 @@ async def ws_supervisor(websocket: WebSocket, token: str):
             elif tipo == "transferir_conversacion":
                 asesor_destino_id = payload.get("asesor_destino_id")
                 resultado = await asignacion.transferir_conversacion(conversacion_id, asesor_destino_id, manager)
+                if not resultado.get("ok"):
+                    await manager.enviar_a_supervisor(supervisor_id, {
+                        "type": "error_transferencia",
+                        "payload": {"conversacion_id": conversacion_id, "motivo": resultado.get("motivo")},
+                    })
+
+            elif tipo == "listar_opciones_menu":
+                opciones = await asyncio.to_thread(bot_engine.opciones_para_devolver, int(conversacion_id or 0))
+                await manager.enviar_a_supervisor(supervisor_id, {
+                    "type": "opciones_menu",
+                    "payload": {"conversacion_id": conversacion_id,
+                                "opciones": [{"codigo": o["codigo"], "label": o["label"]} for o in opciones]},
+                })
+
+            elif tipo == "devolver_a_opcion":
+                resultado = await _devolver_a_opcion(conversacion_id, str(payload.get("codigo") or ""),
+                                                     supervisor_id=supervisor_id)
                 if not resultado.get("ok"):
                     await manager.enviar_a_supervisor(supervisor_id, {
                         "type": "error_transferencia",
