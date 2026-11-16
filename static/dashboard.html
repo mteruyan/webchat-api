@@ -971,6 +971,93 @@ function renderMetodoToken(items) {
   }).join('');
 }
 
+// ---- Validación del celular: quiénes validaron, quiénes NO ingresaron y la evolución por día ----
+// Fecha en que entraron las mejoras del token (texto del SMS, códigos vigentes 10 min, WhatsApp destacado,
+// "No me llega el código"): sirve para comparar antes y después.
+const MEJORAS_TOKEN_DESDE = '2026-11-11';
+
+function barraSimple(texto, cantidad, total, color, extra) {
+  const pct = total ? Math.round(cantidad * 100 / total) : 0;
+  return `<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:3px">
+    <span>${escapaHtml(texto)}</span><span style="white-space:nowrap"><b>${cantidad}</b> <span style="color:var(--texto-suave)">(${pct}%)</span>${extra || ''}</span></div>
+    <div style="background:#E8EEF4;border-radius:6px;height:9px"><div style="width:${Math.max(pct, cantidad ? 2 : 0)}%;height:9px;border-radius:6px;background:${color}"></div></div></div>`;
+}
+
+function renderVerificacion(v, metodos) {
+  if (!v || !v.pidieron) {
+    return renderMetodoToken(metodos);
+  }
+  const pct = (a, b) => b ? Math.round(a * 1000 / b) / 10 : 0;
+  const cerrados = v.validaron + v.no_ingresaron;          // sin los que todavía están en la pantalla
+  const kpi = (n, t, color, sub) => `<div class="kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${n}</div>
+    <div class="etiqueta">${t}</div>${sub ? `<div style="font-size:11.5px;color:var(--texto-suave);margin-top:3px">${sub}</div>` : ''}</div>`;
+  const tiempo = v.mediana_seg != null
+    ? kpi(formatoDuracion(v.mediana_seg), 'Tiempo típico para validar', null, v.p90_seg != null ? `9 de cada 10 en menos de ${formatoDuracion(v.p90_seg)}` : '')
+    : '';
+
+  // Antes / después de las mejoras (solo si el rango cubre ambos lados).
+  const sumar = (filas) => filas.reduce((a, d) => ({ v: a.v + d.validaron, n: a.n + d.no_ingresaron }), { v: 0, n: 0 });
+  const antes = sumar((v.por_dia || []).filter(d => d.fecha < MEJORAS_TOKEN_DESDE));
+  const despues = sumar((v.por_dia || []).filter(d => d.fecha >= MEJORAS_TOKEN_DESDE));
+  let comparacion = '';
+  if (antes.v + antes.n > 0 && despues.v + despues.n > 0) {
+    const pa = pct(antes.n, antes.v + antes.n), pd = pct(despues.n, despues.v + despues.n);
+    const mejor = pd < pa;
+    comparacion = `<div style="margin:2px 0 14px;padding:10px 12px;border-radius:10px;background:${mejor ? '#E7F8EE' : '#FFF4E5'};font-size:13px">
+      <b>No ingresaron:</b> ${pa}% antes de las mejoras (${new Date(MEJORAS_TOKEN_DESDE + 'T12:00:00').toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })})
+      → <b>${pd}%</b> después ${mejor ? '✅' : '⚠️'}
+      <span style="color:var(--texto-suave)">· ${antes.v + antes.n} vs ${despues.v + despues.n} personas</span></div>`;
+  }
+
+  const totalMetodos = (metodos || []).reduce((a, i) => a + i.cantidad, 0);
+  const colMetodos = totalMetodos
+    ? metodos.filter(i => i.cantidad || i.metodo !== 'Llamada').map(i => barraSimple(i.metodo, i.cantidad, totalMetodos, '#0A7E8C')).join('')
+    : '<div class="vacio-panel">Sin validaciones en este período.</div>';
+  const colNo = v.no_ingresaron
+    ? v.no_ingresaron_detalle.map(i => barraSimple(i.motivo, i.cantidad, v.no_ingresaron, '#C0392B')).join('')
+      + `<div style="font-size:11.5px;color:var(--texto-suave);margin-top:6px">«Se fue sin reenviar»: no esperó o no intentó otra vía (WhatsApp / ayuda). Si baja, la pantalla del código está ayudando.</div>`
+    : '<div class="vacio-panel">Nadie se quedó sin ingresar 🎉</div>';
+
+  // Evolución por día (o semana): % que no ingresó, con marca desde las mejoras.
+  const filas = (v.por_dia || []).map(d => {
+    const tot = d.validaron + d.no_ingresaron;
+    const p = pct(d.no_ingresaron, tot);
+    const desde = d.fecha >= MEJORAS_TOKEN_DESDE;
+    const f = new Date(d.fecha + 'T12:00:00').toLocaleDateString('es-PE', { weekday: v.semanal ? undefined : 'short', day: 'numeric', month: 'short' });
+    return `<tr style="${d.fecha === MEJORAS_TOKEN_DESDE ? 'border-top:2px solid #0A7E8C' : ''}">
+      <td style="white-space:nowrap">${v.semanal ? 'Sem. ' : ''}${escapaHtml(f)}${d.fecha === MEJORAS_TOKEN_DESDE ? ' <span style="font-size:10.5px;color:#0A7E8C;font-weight:700">mejoras</span>' : ''}</td>
+      <td style="text-align:right">${d.pidieron}</td>
+      <td style="text-align:right">${d.validaron}</td>
+      <td style="text-align:right;padding-right:14px">${d.no_ingresaron}</td>
+      <td style="width:38%"><div style="display:flex;align-items:center;gap:6px">
+        <div style="flex:1;background:#E8EEF4;border-radius:5px;height:8px"><div style="width:${Math.min(p * 4, 100)}%;height:8px;border-radius:5px;background:${desde ? '#0A7E8C' : '#9AA8B6'}"></div></div>
+        <span style="font-size:12px;min-width:42px;text-align:right">${p}%</span></div></td>
+      <td style="text-align:right;color:var(--texto-suave)">${d.sin_codigo}</td>
+    </tr>`;
+  }).join('');
+  const tabla = filas ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="text-align:right;color:var(--texto-suave);font-size:12px">
+      <th style="text-align:left;font-weight:600">${v.semanal ? 'Semana' : 'Día'}</th><th>Pidieron</th><th>Validaron</th><th style="padding-right:14px">No ingresaron</th>
+      <th style="text-align:left">% no ingresó <span style="font-weight:400">(barra ×4)</span></th><th>Sin código</th>
+    </tr></thead><tbody>${filas}</tbody></table></div>` : '';
+
+  return `
+    <div class="kpis">
+      ${kpi(v.pidieron, 'Pidieron el código')}
+      ${kpi(v.validaron, 'Validaron', '#17663F', `${pct(v.validaron, cerrados)}% de los que terminaron`)}
+      ${kpi(v.no_ingresaron, 'No ingresaron', '#C0392B', `${pct(v.no_ingresaron, cerrados)}%${v.en_curso ? ` · ${v.en_curso} todavía en la pantalla` : ''}`)}
+      ${kpi(v.sin_codigo, 'Entraron sin código', null, 'su navegador ya estaba validado')}
+      ${tiempo}
+    </div>
+    ${comparacion}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:22px;margin-bottom:12px">
+      <div><div style="font-size:12.5px;font-weight:700;color:var(--texto-suave);margin-bottom:8px">CÓMO VALIDARON</div>${colMetodos}
+        ${v.ayuda_validados ? `<div style="font-size:11.5px;color:var(--texto-suave)">${v.ayuda_validados} validaron después de pedir ayuda («No me llega el código»).</div>` : ''}</div>
+      <div><div style="font-size:12.5px;font-weight:700;color:var(--texto-suave);margin-bottom:8px">LOS QUE NO INGRESARON</div>${colNo}</div>
+    </div>
+    ${tabla}`;
+}
+
 function renderEmbudo(items) {
   if (!items || !items.length || !items[0].cantidad) return '<div class="vacio-panel">Sin datos en este período.</div>';
   const base = items[0].cantidad;
@@ -1842,8 +1929,8 @@ function renderDashboard(data, desde, hasta) {
     </div>
 
     <div class="panel">
-      <h2>Cómo obtuvieron el código <span class="sub">método con el que cada persona se verificó (desde que se activó este registro)</span></h2>
-      ${renderMetodoToken(data.por_metodo_token)}
+      <h2>Validación del celular <span class="sub">quiénes validaron (y cómo), quiénes no ingresaron y su evolución; "no ingresaron" excluye a los que siguen en la pantalla del código</span></h2>
+      ${renderVerificacion(data.verificacion, data.por_metodo_token)}
     </div>
 
     <div class="panel" id="panelApp">

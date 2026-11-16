@@ -11,17 +11,21 @@ Reglas:
   persiste, al que lleve más tiempo sin recibir una.
 - La cola (conversaciones en estado='en_cola') se atiende en orden FIFO por
   entrada_cola dentro de cada campaña.
+- Además de asignarse al derivar y cuando la asesora se conecta, sale de pausa o cierra, main.py llama a
+  reintentar_cola() cada 30 s como red de seguridad.
 
 `manager` es la instancia de ConnectionManager de main.py — se pasa como parámetro
 para evitar import circular (asignacion.py no importa main.py).
 """
 
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from db import get_connection, release_connection
 import supervisor
 
 LIMA_TZ = timezone(timedelta(hours=-5))
+logger = logging.getLogger(__name__)
 
 
 def _reacciones_de(metadata) -> dict:
@@ -195,7 +199,7 @@ async def transferir_conversacion(conversacion_id: int, asesor_destino_id: int, 
             "nombre_destino": nombre_destino}
 
 
-async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict | None:
+async def intentar_asignar_conversacion(conversacion_id: int, manager, silencioso: bool = False) -> dict | None:
     """Se llama justo después de que el bot deriva una conversación (evento 'en_cola').
     Si hay asesor disponible, la asigna de inmediato y notifica por WS a ambos lados.
     Devuelve {"asesor_id":..., "nombre_display":...} si asignó, o None si quedó en cola."""
@@ -205,8 +209,14 @@ async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict |
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT campana_id FROM conversaciones WHERE id = %s", (conversacion_id,))
-            campana_id = cur.fetchone()[0]
+            # FOR UPDATE + estado: el reintento periódico (reintentar_cola) y la derivación pueden coincidir;
+            # así nunca se asigna dos veces ni se "re-asigna" una que ya tomó otra asesora o se cerró.
+            cur.execute("SELECT campana_id, estado FROM conversaciones WHERE id = %s FOR UPDATE", (conversacion_id,))
+            fila = cur.fetchone()
+            if fila is None or fila[1] != "en_cola":
+                conn.rollback()
+                return None
+            campana_id = fila[0]
 
             asesor = _buscar_mejor_asesor(cur, campana_id)
             if asesor is None:
@@ -236,7 +246,10 @@ async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict |
         release_connection(conn)
 
     if sin_asesor:
-        await supervisor.notificar_estado_global_a_todos(manager)  # entró a la cola, sin nadie disponible
+        # Desde el reintento periódico (silencioso) la cola no cambió: no se re-notifica a los supervisores cada
+        # 30 s (armar el estado global para todos es costoso).
+        if not silencioso:
+            await supervisor.notificar_estado_global_a_todos(manager)  # entró a la cola, sin nadie disponible
         return None
 
     await manager.enviar_a_widget(conversacion_id, {
@@ -257,6 +270,42 @@ async def intentar_asignar_conversacion(conversacion_id: int, manager) -> dict |
     await supervisor.notificar_cambio_asesor(asesor_id, manager)
     await supervisor.notificar_estado_global_a_todos(manager)  # salió de la cola
     return {"asesor_id": asesor_id, "nombre_display": nombre_display}
+
+
+async def reintentar_cola(manager) -> int:
+    """Red de seguridad (cada 30 s, desde main._revisar_colas): asigna las conversaciones en cola si alguna asesora
+    de su campaña puede recibir. Cubre los casos en que la asignación inmediata no llegó a correr (el cliente cerró
+    o perdió la conexión justo al derivarse) y los cupos que se liberan sin que la asesora cierre (cierre o
+    transferencia del supervisor, transferencia, envío al bot, cambio de cupo o de campañas). Devuelve cuántas asignó."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            # Solo campañas con alguna asesora que hoy puede recibir: si no hay ninguna, no se intenta nada.
+            cur.execute(
+                """SELECT c.id FROM conversaciones c
+                   WHERE c.estado = 'en_cola'
+                     AND EXISTS (
+                       SELECT 1 FROM asesor_campanas ac
+                       JOIN asesores a ON a.id = ac.asesor_id AND a.activo AND NOT a.en_pausa
+                       JOIN asesor_sesiones s ON s.asesor_id = a.id AND s.desconectado_en IS NULL
+                       WHERE ac.campana_id = c.campana_id
+                         AND (SELECT count(*) FROM conversaciones x
+                              WHERE x.asesor_id = a.id AND x.estado = 'asignada') < a.max_conversaciones_simultaneas)
+                   ORDER BY c.entrada_cola ASC
+                   LIMIT 50""")
+            ids = [r[0] for r in cur.fetchall()]
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    asignadas = 0
+    for conversacion_id in ids:
+        try:
+            if await intentar_asignar_conversacion(conversacion_id, manager, silencioso=True):
+                asignadas += 1
+                logger.info("Conversación %s asignada por el reintento de cola", conversacion_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Reintento de cola: no se pudo asignar la conversación %s", conversacion_id)
+    return asignadas
 
 
 async def asignar_manual(conversacion_id: int, asesor_id: int, manager) -> dict:

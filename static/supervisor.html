@@ -578,6 +578,39 @@
   .historial-item .estado-sms { font-weight: 600; }
   .historial-item .estado-sms.no { color: #B04A00; }
   .historial-item .estado-sms.si { color: #17663F; }
+  /* ---- Mantenimiento Petitorio (sofi_petitorio, base recetas) ---- */
+  #modalPetitorioOverlay { display: none; position: fixed; inset: 0; background: rgba(10,20,30,.4); z-index: 1003; align-items: center; justify-content: center; }
+  #modalPetitorioOverlay.activa { display: flex; }
+  #modalPetitorio { background: white; border-radius: 14px; padding: 22px; width: 620px; max-width: calc(100vw - 32px); max-height: 88vh; overflow-y: auto; display: flex; flex-direction: column; }
+  #modalPetitorio h3 { margin: 0 0 6px; font-size: 16px; }
+  #modalPetitorio .ayuda { margin: 0 0 12px; font-size: 12.5px; color: var(--texto-suave); }
+  #petFila { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  #petFila input { flex: 1; min-width: 180px; padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 13.5px; font-family: inherit; }
+  #petFiltros { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  #petFiltros button { border: 1px solid var(--borde); background: #fff; color: var(--texto); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  #petFiltros button.activo { background: var(--azul); border-color: var(--azul); color: #fff; }
+  .pet-item { border: 1px solid var(--borde); border-radius: 10px; padding: 9px 12px; margin-bottom: 6px; cursor: pointer; }
+  .pet-item:hover { background: var(--fondo); }
+  .pet-item .desc { font-weight: 600; font-size: 13.5px; }
+  .pet-item .meta { font-size: 11.5px; color: var(--texto-suave); margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .pet-tag { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+  .pet-tag.carta { background: #FFF1E0; color: #8A4B00; }
+  .pet-tag.cuida { background: #E8F1FB; color: #0A4C8C; }
+  #petAviso { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 14px; }
+  #petPie { font-size: 11.5px; color: var(--texto-suave); margin-top: 6px; }
+  #petForm { display: none; }
+  #petForm label.campo { display: block; font-size: 12px; font-weight: 600; color: var(--texto-suave); margin: 10px 0 4px; }
+  #petForm input[type=text] { width: 100%; padding: 9px 12px; border: 1px solid var(--borde); border-radius: 8px; font-size: 14px; font-family: inherit; }
+  #petForm input[type=text]:focus { outline: none; border-color: var(--azul); }
+  #petForm .contador { font-size: 11px; color: var(--texto-suave); text-align: right; margin-top: 3px; }
+  #petForm .check { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--borde); border-radius: 10px; cursor: pointer; font-size: 13.5px; }
+  #petForm .check input { width: 18px; height: 18px; }
+  #petForm .check small { display: block; color: var(--texto-suave); font-size: 11.5px; }
+  #petEstado { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  #petBotones { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+  #petHistorial { margin-top: 16px; border-top: 1px solid var(--borde); padding-top: 10px; font-size: 12px; color: var(--texto-suave); }
+  #petHistorial .h-item { margin-bottom: 6px; }
+  #petHistorial b { color: var(--texto); }
 </style>
 <link rel="icon" type="image/png" href="/static/imagenes/sofi-cara-chica.png">
 <style id="sofi-css">
@@ -740,7 +773,7 @@ body.sofi th { font-weight: 700; color: var(--texto-suave); }
 /* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
 body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
 body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
-body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnUsuariosSofi, body.sofi #barraConectado #btnCampanas { display: none !important; }
+body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnUsuariosSofi, body.sofi #barraConectado #btnPetitorio, body.sofi #barraConectado #btnCampanas { display: none !important; }
 body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
 body.sofi-conectado #barraConectado:not(.activa) { }
 body.sofi { word-spacing: .06em; }
@@ -908,7 +941,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
   </div>
   <nav class="sofi-nav" aria-label="Menú principal">
     <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b><button type="button" class="nav-toggle" id="navToggle" aria-expanded="true" aria-label="Reducir barra lateral" title="Reducir barra lateral"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></button></div>
-    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Equipo en vivo</span></a><a href="#" data-click="btnCola"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Sin asignar</span></a><a href="#" data-click="btnAsesoresAdmin"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg><span>Asesores</span></a><a href="#" data-click="btnCampanas" class="solo-maximo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg><span>Campañas</span></a><a href="#" data-click="btnEtiquetas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13 13 20a2 2 0 0 1-2.8 0L3 12.8V3h9.8L20 10.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span>Etiquetas</span></a><a href="#" data-click="btnRespuestasRapidas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span>Respuestas rápidas</span></a><a href="#" data-click="btnHorarios"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Horarios</span></a><a href="#" data-click="btnReporte"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 17v-3"/><path d="M12 17v-5"/><path d="M15 17v-2"/></svg><span>Reporte</span></a><a href="#" data-click="btnUsuariosSofi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Usuarios</span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnBuscarSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 6h4"/><path d="M9.5 11h5M9.5 14h3"/></svg><span>Buscar SMS</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Equipo en vivo</span></a><a href="#" data-click="btnCola"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg><span>Sin asignar</span></a><a href="#" data-click="btnAsesoresAdmin"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg><span>Asesores</span></a><a href="#" data-click="btnCampanas" class="solo-maximo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h3l5 4V6L7 10H4a1 1 0 0 0-1 1z"/><path d="M16 8.5a5 5 0 0 1 0 7"/><path d="M19 5.5a9 9 0 0 1 0 13"/></svg><span>Campañas</span></a><a href="#" data-click="btnEtiquetas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13 13 20a2 2 0 0 1-2.8 0L3 12.8V3h9.8L20 10.2a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span>Etiquetas</span></a><a href="#" data-click="btnRespuestasRapidas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span>Respuestas rápidas</span></a><a href="#" data-click="btnHorarios"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Horarios</span></a><a href="#" data-click="btnReporte"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 17v-3"/><path d="M12 17v-5"/><path d="M15 17v-2"/></svg><span>Reporte</span></a><a href="#" data-click="btnUsuariosSofi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Usuarios</span></a><a href="#" data-click="btnPetitorio"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 20.5 3.5 13.5a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7z"/><path d="m8.5 8.5 7 7"/></svg><span>Petitorio</span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnBuscarSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 6h4"/><path d="M9.5 11h5M9.5 14h3"/></svg><span>Buscar SMS</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
     <div class="nav-seccion">Ir a</div>
     <div class="nav-links"><a href="/asesor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><span>Asesor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a><a href="/dashboard" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
     <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Supervisor</small></div></div>
@@ -920,6 +953,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <span class="estado" id="estadoTexto">Conectando...</span>
     <button class="gris chico" id="btnRefrescarTablero" title="Actualizar">🔄 Actualizar</button>
     <button class="gris chico" id="btnUsuariosSofi" title="Mantenimiento de datos personales de pacientes (tabla sofi_usuarios)">👤 Usuarios</button>
+    <button class="gris chico" id="btnPetitorio" title="Agregar o modificar medicamentos del petitorio">💊 Petitorio</button>
     <button class="gris chico" id="btnBuscar">🔎 Buscar</button>
     <button class="gris chico" id="btnBuscarSms" title="Ver los SMS enviados a un celular">📲 Buscar SMS</button>
     <button class="gris chico" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
@@ -1144,6 +1178,44 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         </div>
       </div>
       <button class="gris" id="btnCerrarModalUsuarios" type="button" style="margin-top:14px;">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="modalPetitorioOverlay">
+    <div id="modalPetitorio">
+      <h3>💊 Mantenimiento Petitorio</h3>
+      <p class="ayuda">Medicamentos del petitorio (tabla sofi_petitorio). Puedes agregar y modificar; no se borra nada. Cada cambio queda registrado con tu usuario.</p>
+      <div id="petLista">
+        <div id="petFila">
+          <input id="petInput" placeholder="Buscar medicamento (ej. amoxi 500)" autocomplete="off" />
+          <button id="btnPetBuscar" type="button">Buscar</button>
+          <button id="btnPetNuevo" type="button">➕ Nuevo</button>
+        </div>
+        <div id="petFiltros" role="group" aria-label="Filtrar">
+          <button type="button" data-pf="todos" class="activo">Todos</button>
+          <button type="button" data-pf="carta">🛡️ Carta de garantía</button>
+          <button type="button" data-pf="cuida">🩺 CUIDA</button>
+          <button type="button" data-pf="ninguno">Sin requisitos</button>
+        </div>
+        <div id="petResultados"></div>
+        <div id="petAviso">Cargando…</div>
+        <div id="petPie"></div>
+      </div>
+      <div id="petForm">
+        <div style="font-weight:700;font-size:14px" id="petFormTitulo">Nuevo medicamento</div>
+        <label class="campo" for="petDescripcion">Descripción</label>
+        <input type="text" id="petDescripcion" maxlength="100" autocomplete="off" placeholder="Ej. AMOXICILINA 500 MG TABLETA" />
+        <div class="contador" id="petContador">0 / 100</div>
+        <label class="check"><input type="checkbox" id="petCarta" /><span>Requiere carta de garantía<small>El medicamento necesita carta de garantía para cubrirse.</small></span></label>
+        <label class="check"><input type="checkbox" id="petCuida" /><span>Requiere CUIDA<small>El medicamento está sujeto al programa CUIDA.</small></span></label>
+        <div id="petEstado"></div>
+        <div id="petBotones">
+          <button class="gris" id="btnPetVolver" type="button">← Volver a la lista</button>
+          <button id="btnPetGuardar" type="button">Guardar</button>
+        </div>
+        <div id="petHistorial"></div>
+      </div>
+      <button class="gris" id="btnPetCerrar" type="button" style="margin-top:14px;align-self:flex-end">Cerrar</button>
     </div>
   </div>
 
@@ -2120,6 +2192,8 @@ function conectarWs() {
       else { const ent = confirmarSinCid(p.conversacion_id); if (ent) quitarPendienteEscucha(ent.cid); }
     } else if (data.type === 'lista_asesores') {
       renderListaAsesoresTransferir(p.asesores || []);
+    } else if (data.type === 'petitorio_lista' || data.type === 'petitorio_guardado' || data.type === 'petitorio_historial') {
+      window.petitorioRecibir(data.type, p);
     } else if (data.type === 'validaciones_pendientes') {
       recibirValidacionesPendientes(p.lista);
     } else if (data.type === 'opciones_menu') {
@@ -3484,6 +3558,120 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
 })();
 
 
+
+// ---- Mantenimiento Petitorio (tabla sofi_petitorio de la base "recetas") ----
+(function iniciarPetitorio() {
+  const overlay = document.getElementById('modalPetitorioOverlay');
+  const lista = document.getElementById('petLista'), form = document.getElementById('petForm');
+  const input = document.getElementById('petInput'), aviso = document.getElementById('petAviso');
+  const desc = document.getElementById('petDescripcion'), carta = document.getElementById('petCarta'), cuida = document.getElementById('petCuida');
+  const estado = document.getElementById('petEstado'), btnGuardar = document.getElementById('btnPetGuardar');
+  let filtro = 'todos', actual = null;   // actual: medicamento en edición (null = nuevo)
+  const enviarWs = (type, payload) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { aviso.textContent = 'Sin conexión con el servidor.'; aviso.style.display = 'block'; return false; }
+    ws.send(JSON.stringify({ type, payload })); return true;
+  };
+  const mostrarEstado = (t, ok) => { estado.textContent = t; estado.style.color = ok ? '#197A54' : '#C0392B'; };
+
+  function buscar() {
+    aviso.textContent = 'Buscando…'; aviso.style.display = 'block';
+    enviarWs('petitorio_listar', { query: input.value.trim(), filtro });
+  }
+  function verLista(recargar) {
+    form.style.display = 'none'; lista.style.display = 'block';
+    if (recargar) buscar();
+  }
+  function verForm(item) {
+    actual = item || null;
+    document.getElementById('petFormTitulo').textContent = item ? `Editar medicamento #${item.id}` : 'Nuevo medicamento';
+    desc.value = item ? item.descripcion : (input.value.trim() || '');
+    carta.checked = !!(item && item.requiere_carta_garantia);
+    cuida.checked = !!(item && item.requiere_cuida);
+    document.getElementById('petContador').textContent = `${desc.value.length} / 100`;
+    mostrarEstado('', true);
+    btnGuardar.disabled = false;
+    const hist = document.getElementById('petHistorial');
+    hist.innerHTML = item ? `Creado: ${escapeHtml(item.creado || '—')} · Última modificación: ${escapeHtml(item.actualizado || '—')}` : '';
+    lista.style.display = 'none'; form.style.display = 'block';
+    setTimeout(() => desc.focus(), 50);
+    if (item) enviarWs('petitorio_historial', { id: item.id });
+  }
+
+  document.getElementById('btnPetitorio').onclick = () => {
+    overlay.classList.add('activa');
+    verLista(true);
+    setTimeout(() => input.focus(), 50);
+  };
+  document.getElementById('btnPetCerrar').onclick = () => overlay.classList.remove('activa');
+  document.getElementById('btnPetBuscar').onclick = buscar;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') buscar(); });
+  document.getElementById('btnPetNuevo').onclick = () => verForm(null);
+  document.getElementById('btnPetVolver').onclick = () => verLista(false);
+  document.querySelectorAll('#petFiltros [data-pf]').forEach(b => b.onclick = () => {
+    filtro = b.dataset.pf;
+    document.querySelectorAll('#petFiltros [data-pf]').forEach(x => x.classList.toggle('activo', x === b));
+    buscar();
+  });
+  desc.addEventListener('input', () => { document.getElementById('petContador').textContent = `${desc.value.length} / 100`; });
+  btnGuardar.onclick = () => {
+    const d = desc.value.replace(/\s+/g, ' ').trim();
+    if (d.length < 3) { mostrarEstado('Escribe la descripción (al menos 3 caracteres).', false); return; }
+    btnGuardar.disabled = true;
+    mostrarEstado('Guardando…', true);
+    if (!enviarWs('petitorio_guardar', { id: actual ? actual.id : null, descripcion: d,
+                                         requiere_carta_garantia: carta.checked, requiere_cuida: cuida.checked })) btnGuardar.disabled = false;
+  };
+
+  window.petitorioRecibir = (tipo, p) => {
+    if (tipo === 'petitorio_lista') {
+      const cont = document.getElementById('petResultados');
+      cont.innerHTML = '';
+      if (!p.ok) { aviso.textContent = p.motivo || 'No se pudo leer el petitorio.'; aviso.style.display = 'block'; return; }
+      const r = p.resumen || {};
+      const etiquetas = { todos: `Todos (${r.total ?? '…'})`, carta: `🛡️ Carta de garantía (${r.carta ?? '…'})`, cuida: `🩺 CUIDA (${r.cuida ?? '…'})` };
+      document.querySelectorAll('#petFiltros [data-pf]').forEach(b => { if (etiquetas[b.dataset.pf]) b.textContent = etiquetas[b.dataset.pf]; });
+      aviso.style.display = p.items.length ? 'none' : 'block';
+      if (!p.items.length) aviso.textContent = p.query ? `No hay medicamentos que coincidan con «${p.query}». Puedes agregarlo con ➕ Nuevo.` : 'No hay medicamentos con ese filtro.';
+      p.items.forEach(it => {
+        const div = document.createElement('div');
+        div.className = 'pet-item';
+        div.innerHTML = `<div class="desc">${escapeHtml(it.descripcion)}</div>
+          <div class="meta">${it.requiere_carta_garantia ? '<span class="pet-tag carta">🛡️ Carta de garantía</span>' : ''}
+            ${it.requiere_cuida ? '<span class="pet-tag cuida">🩺 CUIDA</span>' : ''}
+            <span>#${it.id}${it.actualizado ? ' · modificado ' + escapeHtml(it.actualizado) : ''}</span></div>`;
+        div.onclick = () => verForm(it);
+        cont.appendChild(div);
+      });
+      document.getElementById('petPie').textContent = p.total > p.items.length
+        ? `Mostrando ${p.items.length} de ${p.total}. Escribe una palabra para encontrar el resto.`
+        : (p.total ? `${p.total} medicamento${p.total === 1 ? '' : 's'}.` : '');
+    } else if (tipo === 'petitorio_guardado') {
+      btnGuardar.disabled = false;
+      if (!p.ok) { mostrarEstado(p.motivo || 'No se pudo guardar.', false); return; }
+      if (p.sin_cambios) { mostrarEstado('No hay cambios que guardar.', true); return; }
+      mostrarEstado(p.creado ? '✅ Medicamento agregado al petitorio.' : '✅ Cambios guardados.', true);
+      actual = p.item;
+      document.getElementById('petFormTitulo').textContent = `Editar medicamento #${p.item.id}`;
+      enviarWs('petitorio_historial', { id: p.item.id });
+      if (p.creado) input.value = p.item.descripcion;
+    } else if (tipo === 'petitorio_historial') {
+      if (!actual || String(p.petitorio_id) !== String(actual.id)) return;
+      const hist = document.getElementById('petHistorial');
+      const nombres = { descripcion: 'descripción', requiere_carta_garantia: 'carta de garantía', requiere_cuida: 'CUIDA' };
+      const valor = (v) => v === true ? 'sí' : v === false ? 'no' : `«${v}»`;
+      let html = `Creado: ${escapeHtml(actual.creado || '—')} · Última modificación: ${escapeHtml(actual.actualizado || '—')}`;
+      if ((p.cambios || []).length) {
+        html += '<div style="margin:8px 0 4px;font-weight:700">Cambios registrados</div>' + p.cambios.map(c => {
+          const det = c.accion === 'crear' ? 'lo agregó'
+            : Object.keys(nombres).filter(k => c.antes && c.despues && c.antes[k] !== c.despues[k])
+                .map(k => `${nombres[k]}: ${escapeHtml(valor(c.antes[k]))} → ${escapeHtml(valor(c.despues[k]))}`).join(' · ');
+          return `<div class="h-item">${escapeHtml(c.fecha)} — <b>${escapeHtml(c.quien)}</b> ${det}</div>`;
+        }).join('');
+      }
+      hist.innerHTML = html;
+    }
+  };
+})();
 
 // ---- Mantenimiento de usuarios (tabla sofi_usuarios) ----------------------
 (function iniciarMantenimientoUsuarios() {
@@ -5007,7 +5195,7 @@ window.sofi2fa = function (data, urlBase) {
   /* Los atajos que el escritorio deja en la barra lateral, aquí vuelven a la barra */
   body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
   body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
-  body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi,
+  body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi, body.sofi #barraConectado #btnPetitorio,
   body.sofi #barraConectado #btnReporte, body.sofi #barraConectado #btnCampanas { display: inline-flex !important; align-items: center; }
   body.sofi #barraConectado button, body.sofi #barraConectado .chico { min-height: 38px; padding: 0 12px; font-size: 13px; }
   body.sofi-conectado #sofiBurger { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1.5px solid var(--borde, #E1E8EF); background: #fff; border-radius: 12px; font-size: 20px; line-height: 1; padding: 0; color: var(--marino, #0B2A4A); cursor: pointer; }

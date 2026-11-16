@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # los picos; 20 + 3 deja margen y sigue lejos del máximo de la instancia (revisar con SHOW max_connections;).
 _MAX_WEBCHAT = 20
 _MAX_SOFI = 3
+_MAX_RECETAS = 2   # solo "Mantenimiento Petitorio" (supervisor): pocas operaciones, a mano
 # Si el pool está lleno se espera a que se libere una conexión. En un hilo de trabajo se puede esperar
 # (no frena a nadie más); en el hilo principal del servidor (el que atiende los WebSockets y todas las
 # peticiones async) esperar congela TODO el servicio, así que ahí se espera muy poco y se falla rápido.
@@ -141,7 +142,8 @@ def release_connection(conn):
 def estado_pools() -> str:
     """Conexiones en uso / máximo de cada pool (para los logs de diagnóstico)."""
     partes = []
-    for nombre, p, maximo in (("webchat", _pool, _MAX_WEBCHAT), ("sofi", _pool_sofi, _MAX_SOFI)):
+    for nombre, p, maximo in (("webchat", _pool, _MAX_WEBCHAT), ("sofi", _pool_sofi, _MAX_SOFI),
+                              ("recetas", _pool_recetas, _MAX_RECETAS)):
         if p is not None:
             partes.append(f"{nombre} {len(getattr(p, '_used', {}))}/{maximo}")
     return ", ".join(partes) or "sin pools abiertos"
@@ -178,3 +180,30 @@ def get_connection_sofi():
 def release_connection_sofi(conn):
     if _pool_sofi and conn:
         _devolver(_pool_sofi, conn)
+
+
+# Tercer pool, hacia la base "recetas" -- MISMA instancia Cloud SQL y mismo usuario (recetas_user). Ahí vive
+# sofi_petitorio (medicamentos del petitorio), que el supervisor mantiene desde "Mantenimiento Petitorio"
+# (petitorio.py). Se crea recién la primera vez que se usa.
+_pool_recetas = None
+
+
+def get_connection_recetas():
+    global _pool_recetas
+    if _pool_recetas is None:
+        with _pool_lock:
+            if _pool_recetas is None:
+                _pool_recetas = pool.ThreadedConnectionPool(
+                    1, _MAX_RECETAS,
+                    host=f"/cloudsql/{os.environ['INSTANCE_CONNECTION_NAME']}",
+                    dbname=os.environ.get("RECETAS_DB_NAME", "recetas"),
+                    user=os.environ["DB_USER"],
+                    password=os.environ["DB_PASSWORD"],
+                    **_OPCIONES,
+                )
+    return _tomar(_pool_recetas, "recetas")
+
+
+def release_connection_recetas(conn):
+    if _pool_recetas and conn:
+        _devolver(_pool_recetas, conn)

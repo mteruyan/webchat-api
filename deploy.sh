@@ -26,6 +26,11 @@
 #
 # ALLOWED_ORIGINS: solo los dominios de Sanitas (marketeru.pe, que se usó para pruebas, ya se retiró).
 
+# PRUEBA DE VIDA (--liveness-probe, 13/11): sin ella Cloud Run solo reinicia el contenedor si el proceso TERMINA;
+# si queda vivo pero colgado (sin responder), sigue así indefinidamente. Consulta /vivo cada 20 s y, tras 3 fallas
+# seguidas (~1 min), lo reinicia. /vivo no toca la base (ver main.py). La caída del 13/11 fue OTRA cosa (Cloud Run
+# retiró la instancia sana y, con max-instances=1, no pudo levantar el reemplazo mientras duraban los WebSockets):
+# eso lo resuelve _vigilar_drenaje en main.py.
 # UNA SOLA INSTANCIA (--max-instances=1, --concurrency=1000: el máximo de Cloud Run). OJO: el 30/10 el "Rate exceeded."
 # NO fue por falta de cupo (el pico real de la semana fue ~85 conexiones): el servidor se congeló, las peticiones se
 # acumularon sin terminar y llenaron los 400. Ver el vigía en main.py ("Vigía" en Cloud Logging).
@@ -47,4 +52,5 @@ gcloud run deploy webchat-api --source . \
   --add-cloudsql-instances=sanitas-recetas-prod:us-central1:sanitas-recetas-db \
   --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483" \
   --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest,VAPID_PRIVATE_KEY=webchat-vapid-private:latest \
+  --liveness-probe=httpGet.path=/vivo,periodSeconds=20,timeoutSeconds=5,failureThreshold=3 \
   --min-instances=1 --max-instances=1 --concurrency=1000 --memory=1Gi --cpu=1 --no-cpu-throttling --timeout=3600 --allow-unauthenticated

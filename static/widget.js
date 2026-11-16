@@ -723,6 +723,13 @@
     }
     .pie .emoji-panel button:hover { background: ${TOKENS.fondo}; }
     .pie.grabando .emoji-btn { display: none; }
+    /* 🏠 Volver al menú principal: con el bot ocupa el lugar de 😊 (emojis no sirven con el bot y así la caja de
+       texto no se achica); con un asesor vuelve 😊 y la casita se oculta ("menú" no corta la atención). */
+    .pie .ir-menu { display: none; background: ${TOKENS.burbujaBot}; color: ${TOKENS.azul}; font-size: 18px; }
+    .pie.modo-bot .ir-menu { display: flex; }
+    .pie.modo-bot .emoji-btn, .pie.modo-bot .emoji-panel { display: none; }
+    .pie.grabando .ir-menu { display: none; }
+    .pie.modo-bot textarea.texto-input { padding-left: 13px; padding-right: 13px; }
     .pie textarea.texto-input {
       flex: 1; border: 1px solid ${TOKENS.borde}; border-radius: 20px; padding: 10px 16px;
       font-size: calc(14px + var(--fs, 0px)); font-family: inherit; outline: none;
@@ -944,6 +951,7 @@
             </svg>
           </button>
         </div>
+        <button class="ir-menu" type="button" aria-label="Volver al menú principal" title="Volver al menú principal">🏠</button>
         <button class="emoji-btn" type="button" aria-label="Emojis" title="Emojis">😊</button>
         <div class="emoji-panel"></div>
         <textarea class="texto-input" rows="1" placeholder="Escribe un mensaje..." disabled></textarea>
@@ -4272,6 +4280,13 @@
         case "historial_previo":
           mostrarHistorialPrevio(p);
           break;
+        case "celular_verificado":
+          // Historial portable (como WhatsApp): recién validado el celular, se traen enseguida sus conversaciones
+          // anteriores, también las de otros equipos donde validó el mismo número, y se muestran arriba.
+          resetPrevio();
+          $cuerpo.querySelectorAll(".sep-fin, .sep-actual, .cargando-previo").forEach((n) => n.remove());
+          setTimeout(pedirHistorialPrevio, 300);
+          break;
         case "resultado_busqueda":
           mostrarResultadosBusqueda(p);
           break;
@@ -4542,6 +4557,21 @@
   // ---------------------------------------------------------------------
   // Envío de texto
   // ---------------------------------------------------------------------
+  root.querySelector(".ir-menu").addEventListener("click", () => {
+    if ($textoInput.disabled || atendidoPorAsesor || esperandoAsesor) return;
+    agregarMensaje("🏠 Menú principal", "usuario");
+    enviar({ type: "mensaje_usuario", payload: { texto: "menu" } });
+    $textoInput.value = "";
+    cancelarRespuesta();
+    actualizarIconoEnviar();
+  });
+  // El ancho de la caja cambia al maximizar, al girar el celular o con el tamaño de letra: se elige el texto que cabe.
+  if ("ResizeObserver" in window) {
+    try { new ResizeObserver(() => actualizarModoMenu()).observe($textoInput); } catch (e) { /* nada */ }
+  } else {
+    window.addEventListener("resize", () => actualizarModoMenu());
+  }
+
   function enviarTexto() {
     const texto = $textoInput.value.trim();
     if (!texto) return;
@@ -4567,7 +4597,42 @@
     <line x1="8" y1="23" x2="16" y2="23"/>
   </svg>`;
 
+  // Pista en la caja de texto: mientras atiende el bot, recuerda que "menú" vuelve al inicio (también la 🏠).
+  // Se usa el texto más largo que entre en una línea (el ancho cambia con el equipo, el tamaño de letra y al maximizar).
+  const PLACEHOLDER_NORMAL = "Escribe un mensaje...";
+  const PLACEHOLDERS_BOT = [
+    "Escribe o pon «menú» para volver al inicio",
+    "Escribe o pon «menú» para el inicio",
+    "Escribe o «menú» para el inicio",
+    "Escribe «menú» para volver al inicio",
+    "«menú» para volver al inicio",
+    "«menú» vuelve al inicio",
+    "«menú»: inicio",
+  ];
+  let medidorTexto = null;
+  function anchoTexto(texto, fuente) {
+    try {
+      medidorTexto = medidorTexto || document.createElement("canvas").getContext("2d");
+      medidorTexto.font = fuente;
+      return medidorTexto.measureText(texto).width;
+    } catch (e) { return texto.length * 7.5; }
+  }
+  function placeholderBot() {
+    const cs = getComputedStyle($textoInput);
+    const disponible = $textoInput.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0) - 6;
+    if (!(disponible > 0)) return PLACEHOLDERS_BOT[PLACEHOLDERS_BOT.length - 1];
+    const fuente = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return PLACEHOLDERS_BOT.find((t) => anchoTexto(t, fuente) <= disponible) || PLACEHOLDERS_BOT[PLACEHOLDERS_BOT.length - 1];
+  }
+  function actualizarModoMenu() {
+    const conBot = !atendidoPorAsesor && !esperandoAsesor;
+    $pie.classList.toggle("modo-bot", conBot);
+    const texto = conBot ? placeholderBot() : PLACEHOLDER_NORMAL;
+    if ($textoInput.placeholder !== texto) $textoInput.placeholder = texto;
+  }
+
   function actualizarIconoEnviar() {
+    actualizarModoMenu();
     if (grabandoAudio) return;
     const hayTexto = $textoInput.value.trim().length > 0;
     if (!hayTexto && !atendidoPorAsesor) {

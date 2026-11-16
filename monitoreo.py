@@ -30,6 +30,10 @@ _ventana = {"peticiones": 0, "errores_5xx": 0, "latencias": [], "memoria_max": 0
 _MAX_LATENCIAS = 20000
 _ultimo = {"memoria_mb": None, "cpu_pct": None, "cpu_t": None, "cpu_reloj": None, "fuente_memoria": None}
 _aviso_migracion = False
+# Última petición HTTP que llegó desde afuera (Cloud Run), sin contar /vivo ni /health ni las del propio servidor.
+# La usa main._vigilar_drenaje para notar que Cloud Run dejó de mandarle tráfico a esta instancia.
+ULTIMA_PETICION_EXTERNA = [time.monotonic()]
+_RUTAS_INTERNAS = ("/vivo", "/health")
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +49,9 @@ class MedidorPeticiones:
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
             return await self.app(scope, receive, send)
+        cliente = (scope.get("client") or ("", 0))[0]
+        if scope.get("path") not in _RUTAS_INTERNAS and cliente not in ("127.0.0.1", "::1"):
+            ULTIMA_PETICION_EXTERNA[0] = time.monotonic()
         inicio = time.perf_counter()
         estado = {"codigo": 500}
 

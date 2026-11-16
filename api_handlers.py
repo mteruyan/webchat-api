@@ -14,6 +14,7 @@ import random
 import re
 import unicodedata
 import string
+import threading
 import time
 from datetime import datetime, timezone, timedelta
 from urllib.parse import quote
@@ -1119,7 +1120,13 @@ TIPOS_SMS = {
 _sms_sin_tabla_avisado = False
 
 
-def _registrar_sms(celular, texto, ok, error, tipo, conversacion_id, enviado_por):
+def _registrar_sms(*args):
+    """En un hilo aparte: el envío del código ocurre DENTRO de la transacción del bot (con una conexión del pool
+    tomada); pedir otra conexión ahí mismo y esperar el INSERT alargaba ese turno y presionaba el pool."""
+    threading.Thread(target=_registrar_sms_ahora, args=args, daemon=True, name="registro-sms").start()
+
+
+def _registrar_sms_ahora(celular, texto, ok, error, tipo, conversacion_id, enviado_por):
     """Nunca interrumpe el envío: si falta la tabla, avisa una vez en el log."""
     global _sms_sin_tabla_avisado
     digitos = "".join(ch for ch in str(celular or "") if ch.isdigit())
@@ -1162,13 +1169,25 @@ def enviar_sms_danaconnect(celular: str, mensaje: str, tipo: str = "otro", conve
         "Authorization": os.environ["DANACONNECT_AUTH"],
     }
     # Queda registrado (ok o falló) para "Buscar SMS"; texto_registro permite guardar el código enmascarado.
-    try:
-        resp = requests.post(DANACONNECT_URL, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        logger.error("Error al enviar SMS a %s: %s", celular, e)
-        _registrar_sms(celular, texto_registro or mensaje, False, str(e), tipo, conversacion_id, enviado_por)
-        return False
+    # Danaconnect a veces responde 404/5xx sueltos (nov-2026: ~2-3% de los códigos, repartidos en el día, sin
+    # caída): el código se reintenta UNA vez, solo si Danaconnect respondió con error (rápido). Si no responde
+    # (timeout), NO se reintenta: el código se manda dentro del turno del bot, con una conexión de la base tomada,
+    # y esperar el doble podía agotar conexiones e hilos y poner lento todo el chat. Timeout corto para el código.
+    es_codigo = tipo in ("otp", "otp_reenvio")
+    intentos = 2 if es_codigo else 1
+    for intento in range(1, intentos + 1):
+        try:
+            resp = requests.post(DANACONNECT_URL, json=payload, headers=headers, timeout=12 if es_codigo else 30)
+            resp.raise_for_status()
+            break
+        except requests.RequestException as e:
+            if intento < intentos and isinstance(e, requests.HTTPError):
+                logger.warning("SMS a %s falló (%s); se reintenta", celular, e)
+                time.sleep(0.5)
+                continue
+            logger.error("Error al enviar SMS a %s: %s", celular, e)
+            _registrar_sms(celular, texto_registro or mensaje, False, str(e), tipo, conversacion_id, enviado_por)
+            return False
     _registrar_sms(celular, texto_registro or mensaje, True, None, tipo, conversacion_id, enviado_por)
     return True
 
@@ -1189,12 +1208,18 @@ def dominio_otp_valido(host) -> str:
     return host if len(host) <= 80 and _DOMINIOS_OTP.match(host) else ""
 
 
+# El SMS del código debe caber en UN solo segmento: sin tildes ni ñ (alfabeto GSM, hasta 160 caracteres). Con
+# una tilde el SMS pasa a Unicode y el límite baja a 70; el texto de nov-2026 (104 caracteres, con tildes y la
+# línea "@dominio #código") salía en 2 partes y subió el % de personas a las que no les llegaba. Por eso la línea
+# de WebOTP queda apagada (OTP_LINEA_WEBOTP) hasta probarla con el proveedor.
+OTP_LINEA_WEBOTP = False
+
+
 def texto_sms_otp(codigo: str, variables: dict | None = None) -> str:
-    """El código va primero (se lee en la vista previa de la notificación sin abrir el SMS)."""
-    texto = f"{codigo} es tu código de verificación de Sanitas. No lo compartas con nadie."
-    dominio = dominio_otp_valido((variables or {}).get("OTP_DOMINIO"))
+    texto = f"Sanitas: tu codigo de verificacion es {codigo}. No lo compartas con nadie."
+    dominio = dominio_otp_valido((variables or {}).get("OTP_DOMINIO")) if OTP_LINEA_WEBOTP else ""
     if dominio:
-        texto += f"\n\n@{dominio} #{codigo}"
+        texto += f"\n@{dominio} #{codigo}"
     return texto
 
 

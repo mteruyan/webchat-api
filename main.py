@@ -53,6 +53,7 @@ import auth
 import reportes
 import supervisor
 import usuarios_sofi
+import petitorio
 import totp
 import recordatorios
 import push
@@ -89,6 +90,16 @@ app.add_middleware(
 )
 # Cuenta peticiones, errores 5xx y demoras para la vista «Rendimiento» del dashboard (monitoreo.py).
 app.add_middleware(monitoreo.MedidorPeticiones)
+
+
+@app.get("/vivo")
+async def vivo():
+    """Prueba de vida (liveness probe de Cloud Run, ver deploy.sh). Corre en el event loop y NO toca la base:
+    si responde, el servidor está atendiendo. Si deja de responder varias veces seguidas (loop congelado,
+    servidor sin aceptar conexiones), Cloud Run reinicia el contenedor solo. Que la base falle no reinicia
+    nada: eso no se arregla reiniciando y cortaría todos los WebSockets.
+    Devuelve el id de esta instancia: _vigilar_drenaje lo usa para saber si Cloud Run le sigue mandando tráfico."""
+    return {"status": "ok", "instancia": monitoreo.INSTANCIA}
 
 
 @app.get("/health")
@@ -1119,7 +1130,19 @@ def ver_archivo_widget(conversacion_id: int, ruta: str, sesion_token: str):
                 (conversacion_id, sesion_token),
             )
             if cur.fetchone() is None:
-                raise HTTPException(status_code=403, detail="No autorizado")
+                # Historial portable: una conversación de otro equipo con el mismo celular verificado (mismas reglas
+                # que lo que el widget le muestra: _alcance_busqueda).
+                alcance = _alcance_busqueda(cur, sesion_token, 0)
+                permitido = False
+                if alcance and alcance[1]:
+                    cur.execute(
+                        """SELECT 1 FROM conversaciones c
+                           JOIN unnest(%s::bigint[], %s::timestamptz[]) AS d(uid, desde) ON d.uid = c.usuario_id
+                           WHERE c.id = %s AND COALESCE(c.cerrado_en, now()) >= d.desde""",
+                        (alcance[2], alcance[3], conversacion_id))
+                    permitido = cur.fetchone() is not None
+                if not permitido:
+                    raise HTTPException(status_code=403, detail="No autorizado")
     finally:
         release_connection(conn)
 
@@ -1496,24 +1519,48 @@ async def _notificar_escuchas_mensajes_nuevos(conversacion_id: int, desde_id: in
 async def _procesar_eventos_bot(conversacion_id: int, websocket: WebSocket, eventos: list):
     """Manda los eventos del bot al widget y, si alguno es 'en_cola', dispara
     el intento de asignación inmediata."""
-    if any(e.get("type") == "_celular_verificado" for e in eventos or []):
+    verifico = any(e.get("type") == "_celular_verificado" for e in eventos or [])
+    if verifico:
         # Al final de este turno: invitación a actualizar celular/correo en la landing de Sanitas.
         _lanzar_tarea(_invitar_actualizacion(conversacion_id, "celular", websocket, espera_seg=1.5))
+    # Si el widget se desconecta a mitad (cerró la pestaña, el celular pasó a segundo plano), igual se sigue: lo
+    # importante es que la asignación de un "en_cola" corra. Antes el error del envío cortaba aquí y la conversación
+    # quedaba "Sin asignar" aunque hubiera asesoras libres. El cliente verá todo en el historial al volver.
+    widget_vivo = True
+
+    async def _enviar(ev):
+        nonlocal widget_vivo
+        if not widget_vivo:
+            return
+        try:
+            await websocket.send_json(ev)
+        except Exception:  # noqa: BLE001
+            widget_vivo = False
+            logger.info("Widget de la conversación %s desconectado mientras el bot respondía", conversacion_id)
+
     for evento in eventos:
         if evento.get("type") == "_plan_solicitud":
             _lanzar_tarea(_plan_asignar_y_avisar())   # solicitud de plan nueva: al backoffice
             continue
         if str(evento.get("type") or "").startswith("_"):
             continue  # evento interno del motor (p. ej. "_celular_verificado"): no es para el widget
-        await websocket.send_json(evento)
+        await _enviar(evento)
         if evento.get("type") == "en_cola":
             asignado = await asignacion.intentar_asignar_conversacion(conversacion_id, manager)
             if asignado is None:
                 # Nadie disponible: queda esperando. Se le tranquiliza sobre cerrar la ventana.
                 texto = (await asyncio.to_thread(supervisor.obtener_configuracion, "mensaje_en_cola_guardado")
                          or MENSAJES_AUTOMATICOS["mensaje_en_cola_guardado"]["default"])
-                await websocket.send_json({"type": "aviso_cola", "payload": {"texto": texto}})
-            await _enviar_espera(conversacion_id, websocket)   # en cola o ya en la bandeja de la asesora
+                await _enviar({"type": "aviso_cola", "payload": {"texto": texto}})
+            if widget_vivo:
+                try:
+                    await _enviar_espera(conversacion_id, websocket)   # en cola o ya en la bandeja de la asesora
+                except Exception:  # noqa: BLE001
+                    widget_vivo = False
+    if verifico:
+        # Historial portable: recién verificado, el widget trae enseguida sus conversaciones anteriores (también
+        # las de otros equipos con el mismo celular) y las muestra arriba de la actual.
+        await _enviar({"type": "celular_verificado", "payload": {}})
 
 
 def _obtener_historial(conversacion_id: int) -> list:
@@ -1600,16 +1647,32 @@ def _sin_tildes(texto: str) -> str:
 
 
 def _alcance_busqueda(cur, sesion_token: str, conversacion_actual: int):
-    """(usuario_id, verificado, desde) del dueño de la sesión, o None."""
-    cur.execute("SELECT id, verificado_en IS NOT NULL AND telefono IS NOT NULL, historial_desde "
+    """(usuario_id, verificado, ids, desdes) del dueño de la sesión, o None.
+
+    El historial es PORTABLE entre equipos, como en WhatsApp: con el celular verificado en este navegador, incluye
+    las conversaciones de TODOS los navegadores donde se verificó ese mismo celular (últimos HISTORIAL_PREVIO_DIAS
+    días). Cada navegador respeta su propia fecha de corte 'historial_desde' (lo anterior a un "No soy yo" era de
+    otra persona). Sin verificar: solo la conversación actual. ids/desdes van juntos (mismo orden) para usarlos en
+    SQL con unnest(%s::bigint[], %s::timestamptz[]) AS d(uid, desde)."""
+    cur.execute("SELECT id, verificado_en IS NOT NULL AND telefono IS NOT NULL, historial_desde, telefono "
                 "FROM usuarios_webchat WHERE sesion_token = %s", (sesion_token,))
     fila = cur.fetchone()
     if not fila:
         return None
-    desde = datetime.now(LIMA_TZ) - timedelta(days=HISTORIAL_PREVIO_DIAS)
-    if fila[2]:
-        desde = max(desde, fila[2])
-    return fila[0], bool(fila[1]), desde
+    usuario_id, verificado, corte, telefono = fila
+    tope = datetime.now(LIMA_TZ) - timedelta(days=HISTORIAL_PREVIO_DIAS)
+    ids, desdes = [usuario_id], [max(tope, corte) if corte else tope]
+    nueve = re.sub(r"\D", "", str(telefono or ""))[-9:]
+    if verificado and len(nueve) == 9:
+        cur.execute(
+            """SELECT id, historial_desde FROM usuarios_webchat
+               WHERE id <> %s AND verificado_en IS NOT NULL AND telefono IS NOT NULL
+                 AND right(regexp_replace(telefono, '[^0-9]', '', 'g'), 9) = %s
+               ORDER BY verificado_en DESC LIMIT 30""", (usuario_id, nueve))
+        for uid, c in cur.fetchall():
+            ids.append(uid)
+            desdes.append(max(tope, c) if c else tope)
+    return usuario_id, bool(verificado), ids, desdes
 
 
 def _buscar_en_historial(sesion_token: str, conversacion_actual: int, consulta) -> dict:
@@ -1626,19 +1689,19 @@ def _buscar_en_historial(sesion_token: str, conversacion_actual: int, consulta) 
             if not alcance:
                 conn.rollback()
                 return r
-            usuario_id, verificado, desde = alcance
+            usuario_id, verificado, ids, desdes = alcance
             r["alcance"] = "todo" if verificado else "actual"
             cur.execute(
                 f"""SELECT m.id, m.conversacion_id, m.emisor_tipo, m.contenido, m.metadata, m.enviado_en, cam.nombre
                     FROM mensajes m
                     JOIN conversaciones c ON c.id = m.conversacion_id
+                    JOIN unnest(%s::bigint[], %s::timestamptz[]) AS d(uid, desde) ON d.uid = c.usuario_id
                     LEFT JOIN campanas cam ON cam.id = c.campana_id
-                    WHERE c.usuario_id = %s
-                      AND (c.id = %s OR (%s AND m.enviado_en >= %s))
+                    WHERE (c.id = %s OR (%s AND m.enviado_en >= d.desde))
                       AND m.tipo_contenido = 'texto' AND m.emisor_tipo IN ('usuario', 'asesor', 'bot')
                       AND {_SIN_TILDES_SQL.format('m.contenido')} LIKE %s ESCAPE '\\'
                     ORDER BY m.id DESC LIMIT %s""",
-                (usuario_id, conversacion_actual, verificado, desde, patron, BUSQUEDA_MAX_RESULTADOS + 10))
+                (ids, desdes, conversacion_actual, verificado, patron, BUSQUEDA_MAX_RESULTADOS + 10))
             filas = cur.fetchall()
         conn.rollback()
     except Exception:
@@ -1678,20 +1741,20 @@ def _archivos_del_historial(sesion_token: str, conversacion_actual: int) -> dict
             if not alcance:
                 conn.rollback()
                 return r
-            usuario_id, verificado, desde = alcance
+            usuario_id, verificado, ids, desdes = alcance
             r["alcance"] = "todo" if verificado else "actual"
             cur.execute(
                 """SELECT m.id, m.conversacion_id, m.emisor_tipo, m.contenido, m.metadata, m.enviado_en, cam.nombre,
                           a.nombre_display
                    FROM mensajes m
                    JOIN conversaciones c ON c.id = m.conversacion_id
+                   JOIN unnest(%s::bigint[], %s::timestamptz[]) AS d(uid, desde) ON d.uid = c.usuario_id
                    LEFT JOIN campanas cam ON cam.id = c.campana_id
                    LEFT JOIN asesores a ON a.id = m.emisor_id AND m.emisor_tipo IN ('asesor', 'supervisor')
-                   WHERE c.usuario_id = %s
-                     AND (c.id = %s OR (%s AND m.enviado_en >= %s))
+                   WHERE (c.id = %s OR (%s AND m.enviado_en >= d.desde))
                      AND m.tipo_contenido = 'archivo' AND m.contenido LIKE 'webchat/%%'
                    ORDER BY m.id DESC LIMIT %s""",
-                (usuario_id, conversacion_actual, verificado, desde, ARCHIVOS_MAX + 20))
+                (ids, desdes, conversacion_actual, verificado, ARCHIVOS_MAX + 20))
             filas = cur.fetchall()
             nombres = _nombres_de_archivos(cur, [f[3] for f in filas])
         conn.rollback()
@@ -1727,12 +1790,13 @@ def _contexto_de_mensaje(sesion_token: str, conversacion_actual: int, mensaje_id
             if not alcance:
                 conn.rollback()
                 return {"ok": False}
-            usuario_id, verificado, desde = alcance
+            usuario_id, verificado, ids, desdes = alcance
             cur.execute("""SELECT c.id, c.iniciado_en, cam.nombre FROM mensajes m
                            JOIN conversaciones c ON c.id = m.conversacion_id
+                           JOIN unnest(%s::bigint[], %s::timestamptz[]) AS d(uid, desde) ON d.uid = c.usuario_id
                            LEFT JOIN campanas cam ON cam.id = c.campana_id
-                           WHERE m.id = %s AND c.usuario_id = %s AND (c.id = %s OR (%s AND m.enviado_en >= %s))""",
-                        (mid, usuario_id, conversacion_actual, verificado, desde))
+                           WHERE m.id = %s AND (c.id = %s OR (%s AND m.enviado_en >= d.desde))""",
+                        (ids, desdes, mid, conversacion_actual, verificado))
             conv = cur.fetchone()
             if not conv:
                 conn.rollback()
@@ -1766,40 +1830,35 @@ def _contexto_de_mensaje(sesion_token: str, conversacion_actual: int, mensaje_id
 
 
 def _historial_previo(sesion_token: str, conversacion_actual: int, antes_de_id) -> dict:
-    """Mensajes de conversaciones ANTERIORES de este mismo navegador (hasta 90 días, en bloques),
-    del más reciente hacia atrás. Solo si el celular está verificado; respeta la fecha de corte
-    'historial_desde' (se fija al usar "No soy yo / Cambiar mis datos")."""
+    """Mensajes de conversaciones ANTERIORES de este celular (hasta 90 días, en bloques), del más reciente hacia
+    atrás: de este navegador y de los otros equipos donde se verificó el mismo número (ver _alcance_busqueda).
+    Solo si el celular está verificado; respeta la fecha de corte 'historial_desde' de cada navegador."""
     vacio = {"disponible": False, "mensajes": [], "conversaciones": {}, "hay_mas": False}
     try:
         antes = int(antes_de_id) if antes_de_id not in (None, "", 0) else None
     except (TypeError, ValueError):
         antes = None
-    ahora = datetime.now(LIMA_TZ)
-    desde_tope = ahora - timedelta(days=HISTORIAL_PREVIO_DIAS)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, verificado_en IS NOT NULL AND telefono IS NOT NULL, historial_desde "
-                "FROM usuarios_webchat WHERE sesion_token = %s", (sesion_token,))
-            fila = cur.fetchone()
-            if not fila or not fila[1]:
+            alcance = _alcance_busqueda(cur, sesion_token, conversacion_actual)
+            if not alcance or not alcance[1]:
                 conn.rollback()
                 return vacio
-            usuario_id, _, corte = fila
-            desde = max(desde_tope, corte) if corte else desde_tope
+            _, _, ids, desdes = alcance
             cur.execute(
                 """SELECT m.id, m.conversacion_id, m.emisor_tipo, m.tipo_contenido, m.contenido,
                           m.metadata, m.enviado_en, c.iniciado_en, c.cerrado_en, cam.nombre
                    FROM mensajes m
                    JOIN conversaciones c ON c.id = m.conversacion_id
+                   JOIN unnest(%s::bigint[], %s::timestamptz[]) AS d(uid, desde) ON d.uid = c.usuario_id
                    LEFT JOIN campanas cam ON cam.id = c.campana_id
-                   WHERE c.usuario_id = %s AND c.id <> %s
+                   WHERE c.id <> %s
                      AND (%s::bigint IS NULL OR m.id < %s::bigint)
-                     AND m.enviado_en >= %s
+                     AND m.enviado_en >= d.desde
                      AND m.tipo_contenido IN ('texto', 'archivo', 'boton_click')
                    ORDER BY m.id DESC LIMIT %s""",
-                (usuario_id, conversacion_actual, antes, antes, desde, HISTORIAL_PREVIO_BLOQUE + 1),
+                (ids, desdes, conversacion_actual, antes, antes, HISTORIAL_PREVIO_BLOQUE + 1),
             )
             filas = cur.fetchall()
         conn.rollback()
@@ -4587,7 +4646,12 @@ def _avisar_turno(e: dict) -> str:
 async def _revisar_colas():
     """Cada 30 s: actualiza la posición y espera estimada en el widget de quienes esperan (en cola o en la bandeja de
     su asesora sin primera respuesta; solo si cambió) y avisa a quienes pidieron "Avísame" cuando les queda 1
-    persona antes (o de inmediato si la asesora ya les respondió)."""
+    persona antes (o de inmediato si la asesora ya les respondió). Antes, la red de seguridad de la asignación:
+    si quedó alguna en cola con una asesora de su campaña libre, se le asigna (asignacion.reintentar_cola)."""
+    try:
+        await asignacion.reintentar_cola(manager)
+    except Exception:  # noqa: BLE001
+        logger.exception("Falló el reintento de asignación de la cola")
     lista = await asyncio.to_thread(espera_cola.estado_colas, _umbral_aviso_cola())
     vigentes = set()
     for e in lista:
@@ -4819,6 +4883,130 @@ def _ws_abiertos() -> tuple:
         return 0, 0, 0
 
 
+# Autoprueba HTTP: el vigía mira el event loop y los hilos, pero no si el servidor sigue ACEPTANDO conexiones HTTP.
+# Este hilo se llama a sí mismo por HTTP, como lo haría Cloud Run: si /vivo no responde AUTOPRUEBA_FALLAS veces
+# seguidas, termina el proceso y Cloud Run levanta otro. Complementa la liveness probe de deploy.sh. (No cubre el
+# caso del 13/11, en que el servidor estaba sano y Cloud Run lo retiró: eso lo cubre _vigilar_drenaje.)
+AUTOPRUEBA_CADA_SEG = 20
+AUTOPRUEBA_TIMEOUT_SEG = 8
+AUTOPRUEBA_FALLAS = 4          # ~80-110 s sin responder
+AUTOPRUEBA_ESPERA_INICIAL_SEG = 90
+
+
+def _autoprueba_http():
+    import urllib.request
+    url = f"http://127.0.0.1:{os.environ.get('PORT', '8080')}/vivo"
+    time.sleep(AUTOPRUEBA_ESPERA_INICIAL_SEG)
+    fallas = 0
+    while True:
+        inicio = time.monotonic()
+        try:
+            with urllib.request.urlopen(url, timeout=AUTOPRUEBA_TIMEOUT_SEG) as r:
+                r.read()
+            if fallas:
+                logger.warning("Autoprueba HTTP: /vivo responde otra vez (tras %d fallas)", fallas)
+            fallas = 0
+            demora = time.monotonic() - inicio
+            if demora > 3:
+                logger.warning("Autoprueba HTTP: /vivo tardó %.1f s. %s", demora, _resumen_conexiones())
+        except Exception as e:  # noqa: BLE001
+            fallas += 1
+            logger.warning("Autoprueba HTTP: /vivo no respondió (%d/%d): %s. %s. Hilos: %s",
+                           fallas, AUTOPRUEBA_FALLAS, e, _resumen_conexiones(), _hilos_ocupados())
+            if fallas >= AUTOPRUEBA_FALLAS:
+                logger.critical("Autoprueba HTTP: el servidor no atiende peticiones; se termina el proceso para que "
+                                "Cloud Run lo reinicie. %s", _resumen_conexiones())
+                for h in logging.getLogger().handlers:
+                    with contextlib.suppress(Exception):
+                        h.flush()
+                with contextlib.suppress(Exception):
+                    monitoreo.registrar_evento_rapido("reinicio_autoprueba", f"{fallas} fallas seguidas de /vivo")
+                os._exit(1)
+        time.sleep(AUTOPRUEBA_CADA_SEG)
+
+
+# Drenaje (causa de la caída del 13/11, 13:17-14:03): Cloud Run decidió retirar la instancia (mantenimiento de su
+# infraestructura; el servidor estaba sano: CPU 2 %, memoria 357 MB, base libre). Dejó de mandarle peticiones nuevas
+# pero no la apaga hasta que terminen las que tiene abiertas, y los WebSockets duran hasta 1 hora (--timeout=3600).
+# Con --max-instances=1 no puede levantar el reemplazo mientras tanto: todo lo nuevo recibió 429 "waiting too long for
+# an available instance". (El reemplazo de esa revisión arrancó a las 14:17:27, justo cuando el último WebSocket de
+# las 13:17:26 cumplió 3601 s.) Como la instancia está sana, ni el vigía ni /vivo lo notan.
+# Señal: hay consolas conectadas (piden /consola/version cada 60 s) pero no llega NINGUNA petición de afuera en
+# DRENAJE_SIN_PETICIONES_SEG. Entonces se termina el proceso: los clientes se reconectan y Cloud Run levanta la
+# instancia nueva al instante. También aplica a la revisión vieja tras un deploy.
+DRENAJE_SIN_PETICIONES_SEG = 180
+DRENAJE_REVISAR_CADA_SEG = 15
+DRENAJE_ARRANQUE_MIN_SEG = 300
+DRENAJE_CONFIRMAR_INTENTOS = 3
+DRENAJE_CONFIRMAR_TIMEOUT_SEG = 20
+
+
+def _confirmar_drenaje() -> tuple:
+    """Pregunta a /vivo por la dirección PÚBLICA (pasa por Cloud Run, como un cliente). Con una sola instancia la
+    respuesta debe venir de esta misma. (True, motivo) si Cloud Run ya no nos manda tráfico: responde otra instancia,
+    o rechaza / no responde (429, 5xx, timeout) en todos los intentos. (False, motivo) si llegó a esta instancia,
+    o si no se pudo comprobar por un problema de red propio (ante la duda, no se reinicia)."""
+    import urllib.error
+    import urllib.request
+    fallas = []
+    for intento in range(DRENAJE_CONFIRMAR_INTENTOS):
+        url = f"{_URL_PUBLICA}/vivo?d={uuid.uuid4().hex[:8]}"
+        try:
+            with urllib.request.urlopen(url, timeout=DRENAJE_CONFIRMAR_TIMEOUT_SEG) as r:
+                datos = json.loads(r.read().decode("utf-8") or "{}")
+            otra = datos.get("instancia")
+            if otra == monitoreo.INSTANCIA:
+                return False, "Cloud Run sigue enviando tráfico a esta instancia"
+            if otra:
+                return True, f"Cloud Run ya envía el tráfico a otra instancia ({otra})"
+            fallas.append("respuesta sin instancia")
+        except urllib.error.HTTPError as e:
+            fallas.append(f"HTTP {e.code}")
+        except (TimeoutError, OSError) as e:
+            # Timeout = Cloud Run no consigue instancia; error de DNS/conexión = problema de red propio (no cuenta).
+            if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
+                fallas.append("sin respuesta")
+            else:
+                return False, f"no se pudo comprobar ({e})"
+        time.sleep(3)
+    return True, "Cloud Run no la atiende: " + ", ".join(fallas)
+
+
+def _vigilar_drenaje():
+    inicio = time.monotonic()
+    proxima_confirmacion = 0.0
+    while True:
+        time.sleep(DRENAJE_REVISAR_CADA_SEG)
+        try:
+            ahora = time.monotonic()
+            if ahora - inicio < DRENAJE_ARRANQUE_MIN_SEG or ahora < proxima_confirmacion:
+                continue
+            _, asesores, supervisores = _ws_abiertos()
+            silencio = ahora - monitoreo.ULTIMA_PETICION_EXTERNA[0]
+            if (asesores + supervisores) == 0 or silencio <= DRENAJE_SIN_PETICIONES_SEG:
+                continue
+            # 14/11 08:56: el silencio solo NO basta: con pocas consolas y todas en segundo plano (pestaña oculta,
+            # celular bloqueado) el navegador deja de pedir /consola/version y se reinició sin motivo. Se confirma
+            # preguntándole a Cloud Run por la dirección pública.
+            drenada, motivo = _confirmar_drenaje()
+            if not drenada:
+                logger.info("Drenaje: %.0f s sin peticiones con %d consolas, pero no es drenaje (%s). Sigue normal.",
+                            silencio, asesores + supervisores, motivo)
+                proxima_confirmacion = time.monotonic() + DRENAJE_SIN_PETICIONES_SEG
+                continue
+            logger.critical("Drenaje: hace %.0f s que Cloud Run no manda peticiones a esta instancia (%s). Se termina "
+                            "el proceso para que los clientes se reconecten a la instancia nueva. %s",
+                            silencio, motivo, _resumen_conexiones())
+            for h in logging.getLogger().handlers:
+                with contextlib.suppress(Exception):
+                    h.flush()
+            with contextlib.suppress(Exception):
+                monitoreo.registrar_evento_rapido("reinicio_drenaje", f"{silencio:.0f} s sin peticiones; {motivo}")
+            os._exit(0)
+        except Exception:  # noqa: BLE001
+            logger.exception("Drenaje: no se pudo revisar")
+
+
 def _vigia():
     episodio_inicio = None
     episodio_hilos = None
@@ -4891,6 +5079,8 @@ def _iniciar_vigia():
     asyncio.create_task(_latir_loop())
     asyncio.create_task(_latir_hilos())
     threading.Thread(target=_vigia, name="vigia", daemon=True).start()
+    threading.Thread(target=_autoprueba_http, name="autoprueba", daemon=True).start()
+    threading.Thread(target=_vigilar_drenaje, name="drenaje", daemon=True).start()
 
 
 def _cerrar_conversacion(conversacion_id: int, etiqueta_cierre_id, cerrado_por: str = "asesor"):
@@ -6694,6 +6884,85 @@ def _categoria_conversacion(estado, cerrado_por, nodo, motivo, sin_escribir=Fals
     return "Cerrada", f"Cerrada por {cerrado_por} sin etiqueta"
 
 
+# Validación del celular (pantalla del código): cuántos pidieron el código, cuántos validaron, cuántos NO
+# ingresaron (y en qué quedaron: sin reenviar, reenviando, pidiendo ayuda), cuántos entraron sin código porque
+# su navegador ya estaba validado, cuánto tardan en validar y la evolución por día (para ver el efecto de las
+# mejoras del token del 11/11/2026). Una conversación todavía en la pantalla del código (< 30 min) va aparte.
+_VERIF_EN_CURSO_MIN = 30
+
+
+def _estadisticas_verificacion(cur, fecha_desde, fecha_hasta) -> dict | None:
+    base = """
+        WITH base AS (
+          SELECT c.id, c.iniciado_en, c.estado, c.nodo_actual, c.variables_sesion::jsonb AS v,
+                 bool_or(h.hito = 'pidio_codigo') AS pidio,
+                 bool_or(h.hito = 'verificado') AS verif,
+                 bool_or(h.hito = 'reconocido') AS recon,
+                 min(h.creado_en) FILTER (WHERE h.hito = 'pidio_codigo') AS t_pidio,
+                 min(h.creado_en) FILTER (WHERE h.hito = 'verificado') AS t_verif
+          FROM conversaciones c JOIN conversacion_hitos h ON h.conversacion_id = c.id
+          WHERE c.iniciado_en >= %(desde)s AND c.iniciado_en < %(hasta)s
+            AND h.hito IN ('pidio_codigo', 'verificado', 'reconocido')
+          GROUP BY c.id),
+        b AS (
+          SELECT *, (pidio AND NOT verif AND estado = 'bot' AND nodo_actual = 'webchat_valida_pide_codigo'
+                     AND t_pidio > now() - make_interval(mins => %(en_curso)s)) AS en_curso,
+                    CASE WHEN v ->> 'OTP_REENVIOS' ~ '^[0-9]{1,4}$' THEN (v ->> 'OTP_REENVIOS')::int ELSE 0 END AS reenvios,
+                    (v ? 'OTP_AYUDA_PEDIDA') AS ayuda
+          FROM base)
+    """
+    params = {"desde": fecha_desde, "hasta": fecha_hasta, "en_curso": _VERIF_EN_CURSO_MIN}
+    try:
+        cur.execute("SAVEPOINT sp_verif")
+        cur.execute(base + """
+            SELECT count(*) FILTER (WHERE pidio),
+                   count(*) FILTER (WHERE pidio AND verif),
+                   count(*) FILTER (WHERE pidio AND NOT verif AND NOT en_curso),
+                   count(*) FILTER (WHERE en_curso),
+                   count(*) FILTER (WHERE recon AND NOT pidio),
+                   count(*) FILTER (WHERE pidio AND NOT verif AND NOT en_curso AND NOT ayuda AND reenvios = 0),
+                   count(*) FILTER (WHERE pidio AND NOT verif AND NOT en_curso AND NOT ayuda AND reenvios = 1),
+                   count(*) FILTER (WHERE pidio AND NOT verif AND NOT en_curso AND NOT ayuda AND reenvios >= 2),
+                   count(*) FILTER (WHERE pidio AND NOT verif AND NOT en_curso AND ayuda),
+                   count(*) FILTER (WHERE pidio AND verif AND ayuda),
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM t_verif - t_pidio))
+                     FILTER (WHERE pidio AND verif AND t_verif >= t_pidio),
+                   percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM t_verif - t_pidio))
+                     FILTER (WHERE pidio AND verif AND t_verif >= t_pidio)
+            FROM b""", params)
+        (pidieron, validaron, no_ingresaron, en_curso, sin_codigo, nr0, nr1, nr2, n_ayuda, v_ayuda,
+         mediana, p90) = cur.fetchone()
+        semanal = (fecha_hasta - fecha_desde).days > 62
+        cur.execute(base + f"""
+            SELECT date_trunc('{"week" if semanal else "day"}', iniciado_en AT TIME ZONE 'America/Lima')::date AS dia,
+                   count(*) FILTER (WHERE pidio),
+                   count(*) FILTER (WHERE pidio AND verif),
+                   count(*) FILTER (WHERE pidio AND NOT verif AND NOT en_curso),
+                   count(*) FILTER (WHERE recon AND NOT pidio)
+            FROM b GROUP BY 1 ORDER BY 1""", params)
+        por_dia = [{"fecha": d.isoformat(), "pidieron": p, "validaron": vv, "no_ingresaron": n, "sin_codigo": sc}
+                   for d, p, vv, n, sc in cur.fetchall()]
+        cur.execute("RELEASE SAVEPOINT sp_verif")
+    except Exception:  # noqa: BLE001 — falta la tabla de hitos
+        cur.execute("ROLLBACK TO SAVEPOINT sp_verif")
+        logger.warning("Dashboard: no se pudo calcular la validación del celular", exc_info=True)
+        return None
+    return {
+        "pidieron": pidieron, "validaron": validaron, "no_ingresaron": no_ingresaron, "en_curso": en_curso,
+        "sin_codigo": sin_codigo,
+        "no_ingresaron_detalle": [
+            {"motivo": "Se fue sin reenviar el código", "cantidad": nr0},
+            {"motivo": "Reenvió 1 vez y se fue", "cantidad": nr1},
+            {"motivo": "Reenvió 2 o más veces y se fue", "cantidad": nr2},
+            {"motivo": "Pidió ayuda («No me llega el código») y no lo validaron", "cantidad": n_ayuda},
+        ],
+        "ayuda_validados": v_ayuda,
+        "mediana_seg": round(mediana) if mediana is not None else None,
+        "p90_seg": round(p90) if p90 is not None else None,
+        "por_dia": por_dia, "semanal": semanal,
+    }
+
+
 def _detalle_conversaciones(cur, desde, hasta, condicion: str):
     """Agrupa las conversaciones que cumplen `condicion` (SQL fijo, no viene
     del usuario) por categoría legible, y por paso exacto del bot."""
@@ -7022,6 +7291,8 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_metodo")
 
+            verificacion = _estadisticas_verificacion(cur, fecha_desde, fecha_hasta)
+
             sin_cerrar_detalle, sin_cerrar_pasos = _detalle_conversaciones(
                 cur, fecha_desde, fecha_hasta, "c.etiqueta_cierre_id IS NULL")
             sin_opcion_detalle, sin_opcion_pasos = _detalle_conversaciones(
@@ -7232,6 +7503,7 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
         "por_origen": por_origen,
         "por_intencion": por_intencion,
         "por_metodo_token": por_metodo_token,
+        "verificacion": verificacion,
         "por_pagina": por_pagina,
     }
 
@@ -7822,7 +8094,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
     """
     asesor_id = auth.decodificar_token(token)
     if asesor_id is None:
-        await websocket.close(code=4401)  # token inválido o expirado
+        await _rechazar_ws(websocket, 4401)  # token inválido o expirado
         return
 
     await manager.connect_asesor(asesor_id, websocket)
@@ -8515,12 +8787,21 @@ async def _payload_permisos_supervisor(supervisor_id: int, alcance) -> dict:
     return {"type": "permisos_supervisor", "payload": p}
 
 
+async def _rechazar_ws(websocket: WebSocket, codigo: int):
+    """Acepta y cierra con el código: cerrar ANTES de aceptar se convierte en un 403 del handshake y el navegador
+    solo ve "1006", así que la consola no sabía que su sesión expiró y reintentaba para siempre (13/11: una consola
+    con el token vencido reconectaba ~20 veces por minuto). Con 4401/4403 la consola deja de reintentar."""
+    with contextlib.suppress(Exception):
+        await websocket.accept()
+        await websocket.close(code=codigo)
+
+
 @app.websocket("/ws/supervisor")
 async def ws_supervisor(websocket: WebSocket, token: str):
     """wss://.../ws/supervisor?token=<jwt de un usuario con rol='supervisor'>"""
     supervisor_id = auth.decodificar_token(token)
     if supervisor_id is None:
-        await websocket.close(code=4401)
+        await _rechazar_ws(websocket, 4401)
         return
 
     conn = get_connection()
@@ -8532,7 +8813,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
         release_connection(conn)
 
     if row is None or row[0] != "supervisor":
-        await websocket.close(code=4403)  # autenticado, pero no es supervisor
+        await _rechazar_ws(websocket, 4403)  # autenticado, pero no es supervisor
         return
 
     alcance = supervisor.obtener_alcance(supervisor_id)
@@ -9016,6 +9297,23 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                         "type": "error_asignacion_manual",
                         "payload": {"conversacion_id": conversacion_id, "motivo": resultado.get("motivo")},
                     })
+
+            elif tipo == "petitorio_listar":
+                # Mantenimiento Petitorio (sofi_petitorio, base "recetas"): cualquier supervisor.
+                try:
+                    r = await asyncio.to_thread(petitorio.listar, payload.get("query"), payload.get("filtro"))
+                except Exception:
+                    logger.exception("Petitorio: no se pudo listar")
+                    r = {"ok": False, "motivo": "No se pudo leer el petitorio. Intenta de nuevo en un momento."}
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "petitorio_lista", "payload": r})
+
+            elif tipo == "petitorio_guardar":
+                r = await asyncio.to_thread(petitorio.guardar, payload, supervisor_id)
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "petitorio_guardado", "payload": r})
+
+            elif tipo == "petitorio_historial":
+                r = await asyncio.to_thread(petitorio.historial, payload.get("id"))
+                await manager.enviar_a_supervisor(supervisor_id, {"type": "petitorio_historial", "payload": r})
 
             elif tipo == "buscar_usuarios_sofi":
                 # Mantenimiento de pacientes (sofi_usuarios): solo supervisor.
