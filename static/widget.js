@@ -521,6 +521,9 @@
     .otp-ayuda.pedida { background: #EEF4FB; border: 1px solid #D3E2F3; border-radius: 12px; padding: 8px 10px; color: ${TOKENS.texto}; }
     .opciones button.otp-wa { background: #25D366; border-color: #25D366; color: white; font-weight: 700; }
     .opciones button.otp-wa:hover { background: #1EBE5B; }
+    .opciones button.otp-sin-codigo { flex-basis: 100%; background: #E8730C; border-color: #E8730C; color: white; font-weight: 700; padding: 9px 14px; }
+    .opciones button.otp-sin-codigo:hover { background: #C9620A; }
+    .opciones button.otp-sin-codigo:disabled { opacity: .7; cursor: default; }
     .no-soy-yo {
       display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
       padding: 5px 12px; font-size: 12px; color: ${TOKENS.textoSuave};
@@ -3756,7 +3759,7 @@
     const ayuda = document.createElement("div");
     ayuda.className = "otp-ayuda" + (p.otp_ayuda_pedida ? " pedida" : "");
     ayuda.innerHTML = p.otp_ayuda_pedida
-      ? "🙋 Un asesor validará tu número en breve. No cierres el chat; si te llega el SMS, escribe el código aquí."
+      ? "🙋 Si el código sigue sin llegar, toca «No me llega el código» para continuar."
       : (p.otp_celular ? `Lo enviamos al <b>${escaparHtmlOtp(p.otp_celular)}</b>. ` : "")
         + "Si no lo ves en unos segundos, revisa <b>Spam / Mensajes no deseados</b> (Android) "
         + "o <b>Remitentes desconocidos</b> (iPhone).";
@@ -3813,12 +3816,15 @@
     };
     cont.appendChild(btnCambiarCelular);
 
-    // Tras varios reenvíos: que un asesor lo valide (lo ven los supervisores en "📱 Validaciones").
-    if (p.otp_puede_ayuda && !p.otp_ayuda_pedida) {
+    // Tras 2 reenvíos: "No me llega el código" -> sigue SIN validar el celular (nov-2026, antes esperaba a que un
+    // supervisor lo validara y casi nunca pasaba). Destacado en naranja y a lo ancho para que se vea.
+    if (p.otp_puede_ayuda) {
       const btnAyuda = document.createElement("button");
-      btnAyuda.textContent = "🙋 No me llega el código";
+      btnAyuda.className = "otp-sin-codigo";
+      btnAyuda.textContent = "🙋 No me llega el código, continuar";
       btnAyuda.onclick = () => {
         btnAyuda.disabled = true;
+        btnAyuda.textContent = "Un momento…";
         agregarMensaje("🙋 No me llega el código", "usuario");
         enviar({ type: "pedir_validacion_manual", payload: {} });
       };
@@ -4326,6 +4332,14 @@
           break;
         case "verificacion_whatsapp_completada":
           waCompletado();
+          break;
+        case "otp_sin_verificar":
+          // Siguió sin el código: se cierran la tarjeta de WhatsApp (si estaba) y los botones del código.
+          waDetenerTimers();
+          waCodigoActual = null;
+          if (waCard) { waCard.remove(); waCard = null; }
+          waBotonVisible = false;
+          quitarAccionesOtp();
           break;
         case "verificacion_whatsapp_error":
           if (p.motivo === "demasiados") waVencido("Generaste muchos códigos seguidos. Espera unos minutos o usa el código del SMS.");

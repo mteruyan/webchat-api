@@ -24,6 +24,10 @@
 # Mismo formato (51XXXXXXXXX separados por comas, celulares ya verificados por SMS en el webchat).
 # Para apagarlo sin desplegar: UPDATE bot_menus SET activo = FALSE WHERE codigo = 'mad_inicio';
 #
+# SINIESTRALIDAD (siniestralidad.py): DANACONNECT_SINIESTRALIDAD_CONV es el ID de la conversation de EMAIL en Danaconnect
+# que manda el enlace para firmar la autorizacion (variables EMAIL, NOMBRE, URL, VENCE). Vacio = el envio por correo
+# queda deshabilitado en la consola (el enlace por chat funciona igual). Cuando tengas el ID: ...;DANACONNECT_SINIESTRALIDAD_CONV=123456
+#
 # ALLOWED_ORIGINS: solo los dominios de Sanitas (marketeru.pe, que se usó para pruebas, ya se retiró).
 
 # PRUEBA DE VIDA (--liveness-probe, 13/11): sin ella Cloud Run solo reinicia el contenedor si el proceso TERMINA;
@@ -50,7 +54,7 @@
 gcloud run deploy webchat-api --source . \
   --project=sanitas-recetas-prod --region=us-central1 \
   --add-cloudsql-instances=sanitas-recetas-prod:us-central1:sanitas-recetas-db \
-  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483" \
+  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483;DANACONNECT_SINIESTRALIDAD_CONV=" \
   --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest,VAPID_PRIVATE_KEY=webchat-vapid-private:latest \
   --liveness-probe=httpGet.path=/vivo,periodSeconds=20,timeoutSeconds=5,failureThreshold=3 \
   --min-instances=1 --max-instances=1 --concurrency=1000 --memory=1Gi --cpu=1 --no-cpu-throttling --timeout=3600 --allow-unauthenticated

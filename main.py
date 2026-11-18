@@ -67,6 +67,7 @@ import archivos_cliente
 import seguimiento
 import avisos_cliente
 import planes
+import siniestralidad
 
 LIMA_TZ = timezone(timedelta(hours=-5))
 
@@ -690,6 +691,22 @@ def _subir_a_bucket(bucket_nombre: str, nombre_archivo: str, contenido: bytes, c
             _gcs_cliente_firmas = storage.Client()
         cliente = _gcs_cliente_firmas
     cliente.bucket(bucket_nombre).blob(nombre_archivo).upload_from_string(contenido, content_type=content_type)
+
+
+def _descargar_de_bucket(nombre_archivo: str) -> bytes:
+    """Descarga un objeto del bucket del webchat (llamada de red: usar fuera del hilo principal)."""
+    with _gcs_lock:
+        global _gcs_cliente_firmas
+        if _gcs_cliente_firmas is None:
+            _gcs_cliente_firmas = storage.Client()
+        cliente = _gcs_cliente_firmas
+    return cliente.bucket(os.environ["GCS_BUCKET"]).blob(nombre_archivo).download_as_bytes()
+
+
+# Autorización de siniestralidad (siniestralidad.py): guarda y lee sus archivos en el mismo bucket.
+siniestralidad.SUBIR = lambda ruta, contenido, tipo: _subir_a_bucket(os.environ["GCS_BUCKET"], ruta, contenido, tipo)
+siniestralidad.DESCARGAR = _descargar_de_bucket
+siniestralidad.URL_PUBLICA = _URL_PUBLICA
 
 
 # Documentos de oficina permitidos en /upload: extensión -> content-type
@@ -2201,9 +2218,8 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
                 await asyncio.to_thread(encuesta.marcar_entregada, datos_encuesta["encuesta_id"])
     except Exception:
         logger.warning("No se pudo enviar la encuesta de la conversación %s", conversacion_id, exc_info=True)
-    # Invitación a actualizar datos: si hay encuesta, después de que la responda u omita (no compiten).
-    if conversacion_id in manager.widget_connections and not datos_encuesta:
-        _lanzar_tarea(_invitar_actualizacion(conversacion_id, "cierre", espera_seg=2))
+    # (Nov-2026: se retiró la invitación a actualizar datos al cerrar: se cruzaba con la encuesta. Queda al
+    #  validar el celular ("celular") y durante la espera ("espera").)
 
     # El conteo "Atendidas hoy" de la cabecera del asesor sube con cada cierre.
     asesor_de_la_conversacion = _obtener_asesor_actual(conversacion_id)
@@ -3278,6 +3294,57 @@ async def _validar_celular_manual(conversacion_id, supervisor_id: int) -> dict:
     return {"ok": True, "celular": pendiente["celular"]}
 
 
+async def _continuar_sin_verificar(conversacion_id: int, websocket) -> bool:
+    """"No me llega el código": el cliente sigue con el menú como si hubiera validado, pero sin verificar su celular
+    (bot_engine: OTP_METODO = "sin_verificar" -> hito metodo_sin_verificar, sin verificado_en). Mismo mecanismo que
+    la validación de un supervisor: se le pasa al bot un código vigente en nombre del cliente."""
+    nodo_actual, variables = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+    if nodo_actual != _NODO_PIDE_CODIGO:
+        return False
+    codigo = _generar_codigo_otp()
+    variables["ENVIO_SMS"] = {"status": 200, "response": {"enviado": True, "codigo": codigo}}
+    variables["OTP_METODO"] = "sin_verificar"
+    await asyncio.to_thread(_guardar_variables_sesion, conversacion_id, variables)
+    desde_mensaje_id = await asyncio.to_thread(_ultimo_mensaje_id, conversacion_id)
+    eventos = await asyncio.to_thread(recibir_entrada_usuario, conversacion_id, texto=codigo)
+    nodo_despues, _ = await asyncio.to_thread(_obtener_nodo_y_variables, conversacion_id)
+    if nodo_despues == _NODO_PIDE_CODIGO:
+        logger.warning("Conversación %s: no se pudo continuar sin verificar", conversacion_id)
+        return False
+    texto = ("👍 Continuemos sin el código. Como no pudimos validar tu celular, si necesitas información de tu "
+             "póliza un asesor podría pedirte algunos datos para confirmar tu identidad.")
+
+    def _registrar():
+        # El "código" que se le pasó al bot no lo escribió el cliente: se reemplaza por el aviso (el asesor lo ve
+        # en el historial y sabe que el celular NO está verificado).
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE mensajes SET emisor_tipo = 'bot', contenido = %s, metadata = %s
+                       WHERE id = (SELECT MIN(id) FROM mensajes WHERE conversacion_id = %s AND id > %s
+                                     AND emisor_tipo = 'usuario' AND contenido = %s)""",
+                    ("⚠️ Celular SIN verificar (no le llegó el código). " + texto,
+                     json.dumps({"sin_verificar": True}), conversacion_id, desde_mensaje_id, codigo))
+            conn.commit()
+        except Exception:  # noqa: BLE001
+            conn.rollback()
+            logger.warning("No se pudo registrar el ingreso sin verificar de %s", conversacion_id, exc_info=True)
+        finally:
+            release_connection(conn)
+
+    await asyncio.to_thread(_registrar)
+    logger.info("Conversación %s sigue SIN verificar el celular (no le llegó el código)", conversacion_id)
+    try:
+        await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
+        await websocket.send_json({"type": "otp_sin_verificar", "payload": {}})
+        await _procesar_eventos_bot(conversacion_id, websocket, eventos)
+    except Exception:  # noqa: BLE001
+        logger.warning("Se continuó sin verificar, pero no se pudo avisar al widget (%s)", conversacion_id, exc_info=True)
+    await _notificar_escuchas_mensajes_nuevos(conversacion_id, desde_mensaje_id)
+    return True
+
+
 def _celular_verificado_en(eventos) -> str | None:
     for e in eventos or []:
         if e.get("type") == "_celular_verificado":
@@ -3535,14 +3602,10 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                                                    "payload": {**r, "encuesta_id": payload.get("encuesta_id")}})
                         if r.get("ok"):
                             _tarea_de_fondo(_despues_de_encuesta(int(payload.get("encuesta_id"))))
-                            if conversacion_id:
-                                _lanzar_tarea(_invitar_actualizacion(conversacion_id, "cierre", websocket, espera_seg=1.5))
                         continue
 
                     if tipo == "omitir_encuesta":
                         await asyncio.to_thread(encuesta.omitir, payload.get("encuesta_id"), nuevo_token)
-                        if conversacion_id:
-                            _lanzar_tarea(_invitar_actualizacion(conversacion_id, "cierre", websocket, espera_seg=0.5))
                         continue
 
                     if tipo == "actualizacion_datos_evento":
@@ -3573,7 +3636,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                             texto = "📲 Te reenviamos un código nuevo por SMS. El anterior también sigue valiendo."
                             if resultado["otp_puede_ayuda"]:
                                 texto += (" Si sigue sin llegarte, verifica con WhatsApp o toca "
-                                          "«🙋 No me llega el código» y un asesor lo validará.")
+                                          "«🙋 No me llega el código, continuar».")
                             payload_r = {k: v for k, v in resultado.items() if k.startswith("otp_")}
                             await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto, **payload_r}})
                         else:
@@ -3641,6 +3704,8 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         continue
 
                     if estado == "bot" and tipo == "pedir_validacion_manual":
+                        # "🙋 No me llega el código" (tras 2 reenvíos): desde nov-2026 sigue SIN validar el celular
+                        # ("acto de fe"), en vez de esperar a que un supervisor lo valide (nadie lo veía a tiempo).
                         resultado = await asyncio.to_thread(_pedir_validacion_manual, conversacion_id)
                         if not resultado["ok"]:
                             texto = ("Primero reenvía el código: a veces el SMS tarda un poco."
@@ -3648,18 +3713,10 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                                      "⚠️ Ocurrió un error. Escribe 'menu' para reiniciar.")
                             await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto}})
                             continue
-                        payload_r = {k: v for k, v in resultado.items() if k.startswith("otp_")}
-                        if manager.supervisor_connections:
-                            texto = ("🙋 Listo, un asesor validará tu número en breve. Puede llamarte al "
-                                     f"{resultado['otp_celular'] or 'celular que registraste'} para confirmar que eres el titular. "
-                                     "Por favor no cierres el chat. Si mientras tanto te llega el SMS, escribe el código aquí.")
-                        else:
-                            texto = ("🙋 Recibimos tu pedido, pero en este momento no hay asesores conectados para validarlo. "
-                                     "Mientras tanto puedes verificar con WhatsApp o escribir el código si te llega el SMS.")
-                        await websocket.send_json({"type": "mensaje_bot", "payload": {"texto": texto, **payload_r}})
-                        if not resultado.get("repetido"):
-                            logger.info("Conversación %s pidió validar el celular sin código", conversacion_id)
-                        await _notificar_validaciones()
+                        if not await _continuar_sin_verificar(conversacion_id, websocket):
+                            await websocket.send_json({"type": "mensaje_bot", "payload": {
+                                "texto": "⚠️ No pudimos continuar en este momento. Escribe el código si te llega "
+                                         "o inténtalo de nuevo en unos segundos."}})
                         continue
 
                     # --- Agente de IA oculto: entrada (palabra clave + lista blanca) -----------------
@@ -6896,13 +6953,13 @@ def _estadisticas_verificacion(cur, fecha_desde, fecha_hasta) -> dict | None:
         WITH base AS (
           SELECT c.id, c.iniciado_en, c.estado, c.nodo_actual, c.variables_sesion::jsonb AS v,
                  bool_or(h.hito = 'pidio_codigo') AS pidio,
-                 bool_or(h.hito = 'verificado') AS verif,
+                 bool_or(h.hito IN ('verificado', 'metodo_sin_verificar')) AS verif,   -- pasó la pantalla del código
                  bool_or(h.hito = 'reconocido') AS recon,
                  min(h.creado_en) FILTER (WHERE h.hito = 'pidio_codigo') AS t_pidio,
                  min(h.creado_en) FILTER (WHERE h.hito = 'verificado') AS t_verif
           FROM conversaciones c JOIN conversacion_hitos h ON h.conversacion_id = c.id
           WHERE c.iniciado_en >= %(desde)s AND c.iniciado_en < %(hasta)s
-            AND h.hito IN ('pidio_codigo', 'verificado', 'reconocido')
+            AND h.hito IN ('pidio_codigo', 'verificado', 'metodo_sin_verificar', 'reconocido')
           GROUP BY c.id),
         b AS (
           SELECT *, (pidio AND NOT verif AND estado = 'bot' AND nodo_actual = 'webchat_valida_pide_codigo'
@@ -7275,7 +7332,7 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
                     """SELECT h.hito, COUNT(*) FROM conversacion_hitos h
                        JOIN conversaciones c ON c.id = h.conversacion_id
                        WHERE h.hito IN ('metodo_sms', 'metodo_sms_reenviado', 'metodo_llamada', 'metodo_whatsapp',
-                                        'metodo_supervisor')
+                                        'metodo_supervisor', 'metodo_sin_verificar')
                          AND c.iniciado_en >= %s AND c.iniciado_en < %s
                        GROUP BY h.hito""",
                     (fecha_desde, fecha_hasta),
@@ -7286,7 +7343,8 @@ def estadisticas_dashboard(desde: str, hasta: str, campana_id: int | None = None
                     {"metodo": etiqueta, "cantidad": cuentas.get(clave, 0)}
                     for clave, etiqueta in (("sms", "SMS (primer envío)"), ("sms_reenviado", "SMS reenviado"),
                                             ("llamada", "Llamada"), ("whatsapp", "WhatsApp"),
-                                            ("supervisor", "Validado por supervisor"))
+                                            ("supervisor", "Validado por supervisor"),
+                                            ("sin_verificar", "Sin código («No me llega», entró sin validar)"))
                 ]
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_metodo")
@@ -7559,6 +7617,153 @@ async def encuesta_sms_responder(codigo: str, request: Request):
 def encuesta_sms_omitir(codigo: str, request: Request):
     _limitar_push(request, "encuesta_sms_resp", 10, 60)
     return encuesta.omitir_por_sms(codigo)
+
+
+# ---------------------------------------------------------------------------
+# Autorización de entrega de reporte de siniestralidad (siniestralidad.py): página pública del cliente
+# (enlace único que envía el asesor), foto del documento, datos y firma.
+# ---------------------------------------------------------------------------
+_MAX_FOTO_DOCUMENTO = 15 * 1024 * 1024
+_MAX_FIRMA = 2 * 1024 * 1024
+
+
+def _headers_siniestralidad() -> dict:
+    return {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex, nofollow",
+        "Referrer-Policy": "no-referrer",          # el token va en la URL: que no salga a otros sitios
+        "Content-Security-Policy": (
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; "
+            "base-uri 'self'; form-action 'self'; frame-ancestors 'none'"),
+    }
+
+
+def _ip_de(request: Request) -> str:
+    return (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",")[0].strip()
+
+
+@app.get("/siniestralidad/{token}")
+def siniestralidad_pagina(token: str, request: Request):
+    _limitar_push(request, "sin_pagina", 30, 60)
+    return FileResponse("static/siniestralidad.html", media_type="text/html; charset=utf-8",
+                        headers=_headers_siniestralidad())
+
+
+@app.get("/siniestralidad/{token}/datos")
+async def siniestralidad_datos(token: str, request: Request):
+    _limitar_push(request, "sin_datos", 30, 60)
+    r = await asyncio.to_thread(siniestralidad.datos_cliente, token)
+    return JSONResponse(r["body"], status_code=r["status"], headers={"Cache-Control": "no-store"})
+
+
+@app.post("/siniestralidad/{token}/documento")
+async def siniestralidad_documento(token: str, request: Request, lado: str = Form(...),
+                                   file: UploadFile = File(...)):
+    _limitar_push(request, "sin_documento", 12, 60)
+    contenido = await file.read()
+    if not contenido or len(contenido) > _MAX_FOTO_DOCUMENTO:
+        return JSONResponse({"ok": False, "motivo": "La foto pesa demasiado (máximo 15 MB)."}, status_code=400)
+    norm = await asyncio.to_thread(_normalizar_imagen, contenido, file.content_type or "", file.filename or "")
+    if norm is None:
+        return JSONResponse({"ok": False, "motivo": "El archivo no es una foto. Sube una imagen de tu documento."},
+                            status_code=400)
+    contenido, extension, tipo = norm
+    if extension not in ("jpg", "jpeg", "png", "webp"):
+        return JSONResponse({"ok": False, "motivo": "Formato de imagen no admitido. Toma la foto de nuevo."},
+                            status_code=400)
+    r = await asyncio.to_thread(siniestralidad.guardar_documento, token, lado, contenido, extension, tipo)
+    return JSONResponse(r["body"], status_code=r["status"])
+
+
+@app.post("/siniestralidad/{token}/leer")
+async def siniestralidad_leer(token: str, request: Request):
+    _limitar_push(request, "sin_leer", 12, 60)
+    r = await asyncio.to_thread(siniestralidad.leer_guardado, token)
+    return JSONResponse(r["body"], status_code=r["status"])
+
+
+@app.post("/siniestralidad/{token}/firmar")
+async def siniestralidad_firmar(token: str, request: Request, datos: str = Form(...),
+                                firma: UploadFile = File(...)):
+    _limitar_push(request, "sin_firmar", 6, 60)
+    try:
+        formulario = json.loads(datos)
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "motivo": "Datos inválidos."}, status_code=400)
+    firma_png = await firma.read(_MAX_FIRMA + 1)
+    if len(firma_png) > _MAX_FIRMA:
+        return JSONResponse({"ok": False, "motivo": "La firma es demasiado grande."}, status_code=400)
+    r = await asyncio.to_thread(siniestralidad.firmar, token, formulario, firma_png, _ip_de(request),
+                                request.headers.get("user-agent") or "")
+    if r.get("entrega"):
+        try:
+            await _entregar_siniestralidad(r["entrega"])
+        except Exception:  # noqa: BLE001 — ya quedó firmado y guardado; el aviso en vivo es lo de menos
+            logger.warning("siniestralidad: no se pudo avisar la firma en vivo", exc_info=True)
+    return JSONResponse(r["body"], status_code=r["status"])
+
+
+async def _entregar_siniestralidad(e: dict):
+    """El PDF firmado llega a la consola: como archivo del cliente en la conversación (si sigue abierta) y como
+    aviso al asesor que lo pidió (y al que la tiene ahora, si es otro)."""
+    conv = e.get("conversacion_id")
+    if e.get("mensaje_id") and conv:
+        actual = e.get("asesor_actual")
+        if actual and e.get("estado_conv") == "asignada":
+            await manager.enviar_a_asesor(actual, {
+                "type": "archivo_usuario",
+                "payload": {"conversacion_id": conv, "ruta": e["ruta_pdf"], "mensaje_id": e["mensaje_id"],
+                            "respondido_a": None}})
+        await manager.notificar_escuchas(conv, {
+            "type": "mensaje_conversacion",
+            "payload": {"conversacion_id": conv, "emisor_tipo": "usuario", "texto": "📎 Autorización de siniestralidad firmada",
+                        "ruta": e["ruta_pdf"], "mensaje_id": e["mensaje_id"]}})
+        if e.get("texto_cliente"):
+            await manager.enviar_a_widget(conv, {"type": "mensaje_bot", "payload": {"texto": e["texto_cliente"]}})
+    aviso = {k: e.get(k) for k in ("solicitud_id", "conversacion_id", "ruta_pdf", "nombre_pdf", "nombre", "contrato",
+                                   "n_documento", "dependientes", "firmado", "alerta", "estado_conv")}
+    aviso["en_conversacion"] = bool(e.get("mensaje_id")) and e.get("estado_conv") == "asignada"
+    for asesor in {e.get("asesor_id"), e.get("asesor_actual") if e.get("estado_conv") == "asignada" else None} - {None}:
+        with contextlib.suppress(Exception):
+            await manager.enviar_a_asesor(asesor, {"type": "siniestralidad_firmada", "payload": aviso})
+
+
+async def _siniestralidad_asesor(tipo: str, payload: dict, asesor_id: int) -> dict:
+    """Acciones del botón "📄 Siniestr." de la consola del asesor."""
+    if tipo == "siniestralidad_abrir":
+        bandeja = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
+        return {"accion": "abrir", "ok": True, "correo_configurado": siniestralidad.correo_configurado(),
+                "conversacion_id": payload.get("conversacion_id"), "bandeja": bandeja,
+                "vigencia_horas": siniestralidad.VIGENCIA_HORAS}
+    if tipo == "siniestralidad_anular":
+        ok = await asyncio.to_thread(siniestralidad.anular, asesor_id, payload.get("id"))
+        bandeja = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
+        return {"accion": "anular", "ok": ok, "bandeja": bandeja,
+                "motivo": "" if ok else "Ese enlace ya no se puede anular."}
+    # siniestralidad_enviar
+    conv = payload.get("conversacion_id")
+    try:
+        conv = int(conv)
+    except (TypeError, ValueError):
+        return {"accion": "enviar", "ok": False, "motivo": "Abre la conversación del cliente."}
+    if await asyncio.to_thread(_obtener_asesor_actual, conv) != asesor_id:
+        return {"accion": "enviar", "ok": False, "motivo": "Esta conversación ya no está a tu cargo."}
+    r = await asyncio.to_thread(siniestralidad.crear_solicitud, conv, asesor_id, payload)
+    if r.get("ok") and r.get("por_chat"):
+        texto = siniestralidad.texto_chat(r["url"], r["vence"])
+        await asyncio.to_thread(_guardar_mensaje_bot_texto, conv, texto)
+        await manager.enviar_a_widget(conv, {"type": "mensaje_bot", "payload": {"texto": texto}})
+        await manager.notificar_escuchas(conv, {
+            "type": "mensaje_conversacion",
+            "payload": {"conversacion_id": conv, "emisor_tipo": "bot", "texto": texto}})
+        await manager.enviar_a_asesor(asesor_id, {"type": "aviso_automatico_cliente",
+                                                  "payload": {"conversacion_id": conv,
+                                                              "texto": "Enlace de autorización de siniestralidad"}})
+    if r.get("ok"):
+        r["bandeja"] = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
+    return dict(r, accion="enviar", conversacion_id=conv)
 
 
 @app.get("/dashboard/rendimiento")
@@ -8461,6 +8666,10 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                     resultado = await _enviar_plantilla_express(int(conv_pe), asesor_id, payload.get("ruc"))
                 await manager.enviar_a_asesor(asesor_id, {"type": "plantilla_express",
                                                           "payload": {"conversacion_id": conv_pe, **resultado}})
+
+            elif tipo in ("siniestralidad_abrir", "siniestralidad_enviar", "siniestralidad_anular"):
+                resultado = await _siniestralidad_asesor(tipo, payload if isinstance(payload, dict) else {}, asesor_id)
+                await manager.enviar_a_asesor(asesor_id, {"type": "siniestralidad", "payload": resultado})
 
             elif tipo == "enviar_ayuda_archivos":
                 # Botón "📎 Guía" del asesor: le manda al cliente la tarjeta con las formas de adjuntar su archivo.

@@ -834,7 +834,8 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones de este usuario">🕘 Histor.</button>
         <button class="chico gris" id="btnArchivosEmpresa" title="Archivos de la empresa (por RUC): lo que envió el cliente y los que guardaste para su próxima renovación">📁 Archivos</button>
         <button class="chico gris" id="btnGuiaArchivos" title="Enviarle al cliente la guía con las formas de adjuntar su archivo (desde el celular, la computadora o WhatsApp)">📎 Guía</button>
-        <button class="chico gris" id="btnPlantillaExpress" title="SCTR: enviarle al cliente el enlace de Plantilla Express para registrar a sus trabajadores desde el celular, sin llenar un Excel">📋 Plantilla</button></div>
+        <button class="chico gris" id="btnPlantillaExpress" title="SCTR: enviarle al cliente el enlace de Plantilla Express para registrar a sus trabajadores desde el celular, sin llenar un Excel">📋 Plantilla</button>
+        <button class="chico gris" id="btnSiniestralidad" title="Enviarle al cliente el enlace para firmar la autorización de entrega de su reporte de siniestralidad (foto del DNI, datos y firma, sin imprimir nada)">📄 Siniestr.</button></div>
       </div>
       <div id="notaClienteBanner">
         <span class="nota-cliente-icono">📝</span>
@@ -2595,6 +2596,12 @@ function conectarWs() {
       case 'plantilla_express':
         resultadoPlantillaExpress(p);
         break;
+      case 'siniestralidad':
+        resultadoSiniestralidad(p);
+        break;
+      case 'siniestralidad_firmada':
+        siniestralidadFirmada(p);
+        break;
       case 'aviso_automatico_cliente':
         agregarMensaje(p.conversacion_id, `🤖 Aviso automático enviado al cliente: "${p.texto}"`, 'bot');
         break;
@@ -3140,6 +3147,181 @@ function resultadoPlantillaExpress(p) {
   }
 }
 document.getElementById('btnPlantillaExpress').onclick = abrirPlantillaExpress;
+
+// ---- 📄 Autorización de siniestralidad: enlace para que el cliente suba su DNI, complete datos y firme ----
+const ESTADOS_SINIESTRALIDAD = {
+  enviado: ['Enviado', '#4A5B70', '#EEF2F6'], abierto: ['Abierto', '#8A5A00', '#FFF4DE'],
+  firmado: ['Firmado', '#197A54', '#E3F5EC'], vencido: ['Vencido', '#8A97A6', '#F1F3F5'],
+  anulado: ['Anulado', '#8A97A6', '#F1F3F5']
+};
+function abrirSiniestralidad() {
+  if (activaId === null) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  let caja = document.getElementById('modalSiniestralidad');
+  const campo = 'display:block;width:100%;margin:4px 0 8px;padding:9px 11px;border:1px solid #C9D6E4;border-radius:8px;font-size:14px;box-sizing:border-box;font-family:inherit';
+  if (!caja) {
+    caja = document.createElement('div');
+    caja.id = 'modalSiniestralidad';
+    caja.style.cssText = 'position:fixed;inset:0;background:rgba(10,30,50,.45);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;';
+    caja.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;max-height:92vh;overflow-y:auto;padding:18px 18px 16px;position:relative;box-shadow:0 20px 50px rgba(10,30,50,.3)">
+      <button type="button" id="sinCerrar" aria-label="Cerrar" style="position:absolute;top:8px;right:10px;border:0;background:none;font-size:20px;cursor:pointer;color:#4A5B70">×</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 Autorización de siniestralidad</div>
+      <div style="font-size:12.5px;color:#4A5B70;margin-bottom:12px">El cliente recibe un enlace (vence en <span id="sinVigencia">48</span> h) para subir la foto de su DNI, completar sus datos y firmar desde el celular. El PDF firmado te llega a esta conversación.</div>
+      <label style="font-size:12.5px;font-weight:600">N° de contrato del plan de salud *</label>
+      <input id="sinContrato" maxlength="30" autocomplete="off" style="${campo}">
+      <label style="font-size:12.5px;font-weight:600">Correo del cliente</label>
+      <input id="sinCorreo" type="email" maxlength="120" autocomplete="off" placeholder="cliente@correo.com" style="${campo}">
+      <label style="font-size:12.5px;font-weight:600">Nombres y apellidos <span style="font-weight:400;color:#6B7A8A">(opcional, el cliente los confirma)</span></label>
+      <input id="sinNombre" maxlength="120" autocomplete="off" style="${campo}">
+      <div style="display:flex;gap:8px">
+        <div style="flex:0 0 38%"><label style="font-size:12.5px;font-weight:600">Documento</label>
+          <select id="sinTipo" style="${campo};background:#fff"><option value="DNI">DNI</option><option value="CE">CE</option><option value="OTRO">Otro</option></select></div>
+        <div style="flex:1"><label style="font-size:12.5px;font-weight:600">Número <span style="font-weight:400;color:#6B7A8A">(opcional)</span></label>
+          <input id="sinNumero" maxlength="20" autocomplete="off" style="${campo}"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin:4px 0 10px;font-size:13px">
+        <label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="sinPorChat" checked> Enviar el enlace en este chat</label>
+        <label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="sinPorCorreo"> Enviar el enlace por correo</label>
+        <div id="sinNotaCorreo" style="font-size:11.5px;color:#8A5A00;display:none">El envío por correo aún no está configurado (falta la plantilla de Danaconnect). Por ahora, envíalo en el chat.</div>
+      </div>
+      <div id="sinEstado" style="font-size:12.5px;min-height:18px;margin-bottom:8px;white-space:pre-line"></div>
+      <div id="sinEnlace" style="display:none;margin-bottom:10px;font-size:12px;background:#F4F7FA;border-radius:8px;padding:8px 10px;word-break:break-all"></div>
+      <button type="button" id="sinEnviar" style="width:100%;border:0;border-radius:9px;background:#0A4C8C;color:#fff;font-weight:700;padding:10px;font-size:14px;cursor:pointer">Enviar enlace al cliente</button>
+      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">Mis solicitudes (últimos 15 días)</div>
+      <div id="sinBandeja" style="font-size:12.5px;color:#4A5B70">Cargando…</div>
+    </div>`;
+    document.body.appendChild(caja);
+    const cerrar = () => { caja.style.display = 'none'; };
+    caja.addEventListener('click', (e) => { if (e.target === caja) cerrar(); });
+    document.getElementById('sinCerrar').onclick = cerrar;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && caja.style.display !== 'none') cerrar(); });
+    document.getElementById('sinEnviar').onclick = () => {
+      const estado = document.getElementById('sinEstado');
+      const contrato = document.getElementById('sinContrato').value.trim();
+      const correo = document.getElementById('sinCorreo').value.trim();
+      const porChat = document.getElementById('sinPorChat').checked;
+      const porCorreo = document.getElementById('sinPorCorreo').checked;
+      const error = (m) => { estado.style.color = '#C0392B'; estado.textContent = m; };
+      if (!contrato) return error('Escribe el N° de contrato.');
+      if (!porChat && !porCorreo) return error('Elige al menos un medio de envío.');
+      if (porCorreo && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(correo)) return error('Escribe un correo válido.');
+      if (correo && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(correo)) return error('El correo no es válido.');
+      if (!ws || ws.readyState !== WebSocket.OPEN) return error('Sin conexión con el servidor.');
+      const btn = document.getElementById('sinEnviar');
+      btn.disabled = true; btn.textContent = 'Enviando...';
+      estado.style.color = '#4A5B70'; estado.textContent = '';
+      document.getElementById('sinEnlace').style.display = 'none';
+      ws.send(JSON.stringify({ type: 'siniestralidad_enviar', payload: {
+        conversacion_id: Number(caja.dataset.conv), contrato, correo,
+        nombre: document.getElementById('sinNombre').value.trim(),
+        tipo_documento: document.getElementById('sinTipo').value,
+        n_documento: document.getElementById('sinNumero').value.trim(),
+        por_chat: porChat, por_correo: porCorreo } }));
+    };
+  }
+  const c = conversaciones[activaId] || {};
+  caja.dataset.conv = String(activaId);
+  const nombre = String(c.resumen_usuario || '');
+  document.getElementById('sinContrato').value = '';
+  document.getElementById('sinCorreo').value = '';
+  document.getElementById('sinNombre').value = /^usuario\s/i.test(nombre) ? '' : nombre;
+  document.getElementById('sinTipo').value = 'DNI';
+  document.getElementById('sinNumero').value = /^\d{8}$/.test(String(c.dni || '')) ? c.dni : '';
+  document.getElementById('sinEstado').textContent = '';
+  document.getElementById('sinEnlace').style.display = 'none';
+  const btn = document.getElementById('sinEnviar');
+  btn.disabled = false; btn.textContent = 'Enviar enlace al cliente';
+  document.getElementById('sinBandeja').textContent = 'Cargando…';
+  caja.style.display = 'flex';
+  setTimeout(() => document.getElementById('sinContrato').focus(), 50);
+  ws.send(JSON.stringify({ type: 'siniestralidad_abrir', payload: { conversacion_id: Number(activaId) } }));
+}
+function pintarBandejaSiniestralidad(lista) {
+  const cont = document.getElementById('sinBandeja');
+  if (!cont) return;
+  if (!lista || !lista.length) { cont.textContent = 'Aún no has enviado solicitudes.'; return; }
+  cont.innerHTML = lista.map((s) => {
+    const e = ESTADOS_SINIESTRALIDAD[s.estado] || [s.estado, '#4A5B70', '#EEF2F6'];
+    const chip = `<span style="font-size:11px;font-weight:700;color:${e[1]};background:${e[2]};border-radius:10px;padding:2px 8px">${escapeHtml(e[0])}</span>`;
+    const detalle = s.estado === 'firmado' ? `Firmado ${escapeHtml(s.firmado)}${s.dependientes ? ` · ${s.dependientes} dependiente(s)` : ''}`
+      : (s.estado === 'abierto' ? `Abierto ${escapeHtml(s.abierto)} · vence ${escapeHtml(s.vence)}`
+      : (s.estado === 'enviado' ? `Enviado ${escapeHtml(s.creado)} · vence ${escapeHtml(s.vence)}` : `Enviado ${escapeHtml(s.creado)}`));
+    const medios = [s.por_chat ? 'chat' : '', s.por_correo ? ('correo' + (s.correo_ok === false ? ' ⚠️ falló' : '')) : ''].filter(Boolean).join(' + ');
+    const acciones = s.estado === 'firmado' && s.ruta_pdf
+      ? `<a href="${urlArchivo(s.ruta_pdf)}" target="_blank" rel="noopener" style="color:#0A4C8C;font-weight:700;text-decoration:none">📄 Ver PDF</a>`
+      : ((s.estado === 'enviado' || s.estado === 'abierto')
+        ? `<button type="button" data-anular="${s.id}" style="border:0;background:none;color:#C0392B;cursor:pointer;font-size:12px;padding:0">Anular</button>` : '');
+    return `<div style="display:flex;gap:8px;align-items:flex-start;justify-content:space-between;padding:7px 0;border-top:1px solid #EEF2F6">
+      <div style="min-width:0"><div style="font-weight:600;color:#1F2D3D">${escapeHtml(s.nombre || ('Conversación ' + s.conversacion_id))} ${chip}</div>
+      <div>Contrato ${escapeHtml(s.contrato)}${medios ? ' · ' + escapeHtml(medios) : ''}</div><div>${detalle}</div></div>
+      <div style="flex-shrink:0;padding-top:2px">${acciones}</div></div>`;
+  }).join('');
+  cont.querySelectorAll('[data-anular]').forEach((b) => {
+    b.onclick = () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      b.disabled = true;
+      ws.send(JSON.stringify({ type: 'siniestralidad_anular', payload: { id: Number(b.dataset.anular) } }));
+    };
+  });
+}
+function resultadoSiniestralidad(p) {
+  const caja = document.getElementById('modalSiniestralidad');
+  if (!caja) return;
+  if (p.bandeja) pintarBandejaSiniestralidad(p.bandeja);
+  if (p.accion === 'abrir') {
+    if (p.vigencia_horas) document.getElementById('sinVigencia').textContent = p.vigencia_horas;
+    const porCorreo = document.getElementById('sinPorCorreo');
+    porCorreo.disabled = !p.correo_configurado;
+    porCorreo.checked = !!p.correo_configurado;
+    document.getElementById('sinNotaCorreo').style.display = p.correo_configurado ? 'none' : 'block';
+    return;
+  }
+  const estado = document.getElementById('sinEstado');
+  if (p.accion === 'anular') {
+    if (!p.ok) { estado.style.color = '#C0392B'; estado.textContent = '⚠️ ' + (p.motivo || 'No se pudo anular.'); }
+    return;
+  }
+  if (p.accion !== 'enviar' || caja.dataset.conv !== String(p.conversacion_id)) return;
+  const btn = document.getElementById('sinEnviar');
+  btn.disabled = false; btn.textContent = 'Enviar enlace al cliente';
+  if (!p.ok) { estado.style.color = '#C0392B'; estado.textContent = '⚠️ ' + (p.motivo || 'No se pudo enviar.'); return; }
+  const medios = [p.por_chat ? 'en el chat' : '', p.por_correo && p.correo_ok ? 'por correo a ' + p.correo : ''].filter(Boolean).join(' y ');
+  estado.style.color = p.aviso ? '#8A5A00' : '#197A54';
+  estado.textContent = (medios ? '✅ Enlace enviado ' + medios + '. Vence el ' + p.vence + '.' : '') + (p.aviso ? '\n⚠️ ' + p.aviso : '');
+  const enlace = document.getElementById('sinEnlace');
+  enlace.innerHTML = `${escapeHtml(p.url)} <button type="button" id="sinCopiar" style="margin-left:6px;border:1px solid #C9D6E4;background:#fff;border-radius:6px;font-size:11.5px;padding:2px 8px;cursor:pointer">Copiar</button>`;
+  enlace.style.display = 'block';
+  document.getElementById('sinCopiar').onclick = () => {
+    (navigator.clipboard ? navigator.clipboard.writeText(p.url) : Promise.reject()).then(
+      () => { document.getElementById('sinCopiar').textContent = 'Copiado ✓'; }, () => {});
+  };
+}
+function siniestralidadFirmada(p) {
+  const texto = `✍️ ${p.nombre || 'El cliente'} firmó la autorización de siniestralidad (contrato ${p.contrato}).`;
+  if (p.en_conversacion && conversaciones[p.conversacion_id]) {
+    agregarMensaje(p.conversacion_id, texto + (p.alerta ? '\n⚠️ ' + p.alerta : ''), 'bot');
+  }
+  let aviso = document.getElementById('avisoSiniestralidad');
+  if (!aviso) {
+    aviso = document.createElement('div');
+    aviso.id = 'avisoSiniestralidad';
+    aviso.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:9100;max-width:360px;background:#fff;border:1px solid #C9D6E4;border-left:4px solid #197A54;border-radius:10px;box-shadow:0 12px 30px rgba(10,30,50,.2);padding:12px 34px 12px 14px;font-size:13px;color:#1F2D3D';
+    document.body.appendChild(aviso);
+  }
+  const extra = p.en_conversacion ? 'El PDF ya está en la conversación.'
+    : 'La conversación ya no está abierta en tu consola; abre el PDF desde aquí o desde 📄 Siniestr.';
+  aviso.innerHTML = `<button type="button" aria-label="Cerrar" style="position:absolute;top:6px;right:8px;border:0;background:none;font-size:17px;cursor:pointer;color:#4A5B70">×</button>
+    <div style="font-weight:700;margin-bottom:4px">${escapeHtml(texto)}</div>
+    <div style="color:#4A5B70;margin-bottom:6px">${escapeHtml(extra)}</div>
+    ${p.alerta ? `<div style="color:#8A5A00;margin-bottom:6px">⚠️ ${escapeHtml(p.alerta)}</div>` : ''}
+    <a href="${urlArchivo(p.ruta_pdf)}" target="_blank" rel="noopener" style="color:#0A4C8C;font-weight:700;text-decoration:none">📄 Ver PDF firmado</a>`;
+  aviso.querySelector('button').onclick = () => aviso.remove();
+  const caja = document.getElementById('modalSiniestralidad');
+  if (caja && caja.style.display !== 'none' && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'siniestralidad_abrir', payload: { conversacion_id: Number(caja.dataset.conv) } }));
+  }
+}
+document.getElementById('btnSiniestralidad').onclick = abrirSiniestralidad;
 
 document.getElementById('btnGuiaArchivos').onclick = () => {
   if (!activaId || !ws || ws.readyState !== WebSocket.OPEN) return;

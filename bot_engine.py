@@ -646,7 +646,14 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             else:
                 resultado = handler(parametros, variables) if handler else {"status": 500, "response": {}}
             variables[accion_config["variable_respuesta"]] = resultado
-            if accion_config.get("api") == "validar_sms_otp" and resultado.get("status") == 200:
+            if (accion_config.get("api") == "validar_sms_otp" and resultado.get("status") == 200
+                    and variables.get("OTP_METODO") == "sin_verificar"):
+                # "No me llega el código" (nov-2026, "acto de fe"): sigue el flujo como si hubiera validado, pero el
+                # celular NO queda verificado: no se marca verificado_en, no se une a otra conversación abierta ni
+                # se muestra el historial de otros navegadores (eso exige haber recibido el código).
+                _hito(cur, conversacion_id, "metodo_sin_verificar", nodo["codigo"])
+                variables["CELULAR_SIN_VERIFICAR"] = True
+            elif accion_config.get("api") == "validar_sms_otp" and resultado.get("status") == 200:
                 # Código SMS correcto: este celular queda verificado para este navegador.
                 _hito(cur, conversacion_id, "verificado", nodo["codigo"])
                 # Cómo obtuvo el código: whatsapp > llamada > sms reenviado > sms directo.

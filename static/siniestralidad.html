@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Autorización de reporte de siniestralidad - Sanitas Perú</title>
+<style>
+:root {
+  --teal: #00A9B7;
+  --teal-dark: #007A87;
+  --navy: #003654;
+  --bg: #F4F7F9;
+  --white: #FFFFFF;
+  --gray: #6B7A82;
+  --border: #DCE4E8;
+  --danger: #D64545;
+  --warn-bg: #FFF6E5;
+  --warn: #8A5A00;
+  --success: #2E9E5B;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg); color: var(--navy); margin: 0; padding: 0;
+}
+.topbar {
+  background: linear-gradient(135deg, var(--navy), var(--teal-dark));
+  color: white; padding: 14px 18px 16px;
+}
+.topbar .marca { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.topbar .logo { background: white; border-radius: 8px; padding: 5px 9px; display: inline-flex; }
+.topbar .logo img { height: 26px; width: auto; display: block; }
+.topbar h1 { margin: 12px 0 0; font-size: 17px; font-weight: 700; line-height: 1.3; }
+.topbar .progreso { font-size: 12px; opacity: 0.88; margin-top: 4px; }
+.pasos { display: flex; gap: 6px; margin-top: 10px; }
+.pasos span { flex: 1; height: 4px; border-radius: 4px; background: rgba(255,255,255,.3); }
+.pasos span.hecho { background: white; }
+.contenedor { max-width: 640px; margin: 0 auto; padding: 16px; padding-bottom: 100px; }
+.card {
+  background: var(--white); border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px; margin-bottom: 16px;
+}
+.card h2 { font-size: 15px; color: var(--navy); margin: 0 0 4px; }
+.card .subtitulo { font-size: 13px; color: var(--gray); margin-bottom: 14px; line-height: 1.45; }
+label {
+  display: block; font-size: 12px; font-weight: 600; color: var(--gray);
+  margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.3px;
+}
+input[type="text"], input[type="email"], select {
+  width: 100%; padding: 11px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 16px; background: var(--white); color: var(--navy); font-family: inherit;
+}
+input[readonly] { background: #F0F4F6; color: var(--gray); }
+input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 0; border-color: var(--teal); }
+.fila2 { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
+.pantalla { display: none; }
+.pantalla.activa { display: block; }
+button, .btn {
+  background: var(--teal); color: white; border: none; padding: 13px 20px; min-height: 46px;
+  border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; font-family: inherit;
+}
+button:hover { background: var(--teal-dark); }
+button:disabled { background: #B7C6CC; cursor: not-allowed; }
+.btn-secundario { background: transparent; color: var(--teal-dark); border: 1px solid var(--teal); }
+.btn-secundario:hover { background: #E8F7F8; }
+.btn-chico { width: auto; padding: 8px 14px; min-height: 38px; font-size: 13px; }
+.barra-botones {
+  position: fixed; bottom: 0; left: 0; right: 0; background: white;
+  border-top: 1px solid var(--border); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 10px;
+}
+.barra-botones .interno { max-width: 640px; margin: 0 auto; width: 100%; display: flex; gap: 10px; }
+.barra-botones button { flex: 1; }
+.barra-botones #btnAtras { flex: 0 0 34%; }
+.mensaje { padding: 12px 14px; border-radius: 8px; font-size: 13.5px; margin-bottom: 12px; display: none; line-height: 1.45; }
+.mensaje.error { background: #FBE9E7; color: var(--danger); display: block; }
+.mensaje.aviso { background: var(--warn-bg); color: var(--warn); display: block; }
+.mensaje.exito { background: #E7F6EC; color: var(--success); display: block; }
+
+/* Paso 1: fotos del documento */
+.foto-caja {
+  border: 2px dashed var(--border); border-radius: 10px; padding: 14px; text-align: center;
+  margin-top: 6px; background: #FAFCFD;
+}
+.foto-caja.lista { border-style: solid; border-color: var(--teal); background: #F2FBFC; }
+.foto-caja img { max-width: 100%; max-height: 200px; border-radius: 6px; display: none; margin: 0 auto 10px; }
+.foto-caja.lista img { display: block; }
+.foto-caja .icono { font-size: 30px; line-height: 1; margin-bottom: 6px; }
+.foto-caja .estado { font-size: 13px; color: var(--gray); margin-top: 8px; min-height: 18px; }
+.foto-caja.lista .icono, .foto-caja.lista .ayuda { display: none; }
+.foto-caja .ayuda { font-size: 13px; color: var(--gray); margin-bottom: 10px; }
+.foto-caja input[type="file"] { display: none; }
+.consejos { font-size: 12.5px; color: var(--gray); margin: 10px 0 0; padding-left: 18px; line-height: 1.6; }
+
+/* Paso 2: dependientes */
+.check-linea { display: flex; gap: 10px; align-items: flex-start; margin: 16px 0 4px; font-size: 14px; line-height: 1.4; cursor: pointer; }
+.check-linea input { width: 20px; height: 20px; margin: 0; flex-shrink: 0; accent-color: var(--teal); }
+#bloqueDependientes { display: none; margin-top: 6px; }
+.dependiente { border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px 12px; margin-top: 10px; position: relative; }
+.dependiente .quitar {
+  position: absolute; top: 6px; right: 6px; width: 30px; min-height: 30px; height: 30px; padding: 0;
+  background: transparent; color: var(--gray); font-size: 18px; border-radius: 50%;
+}
+.dependiente .quitar:hover { background: #F0F4F6; }
+.dependiente .titulo-dep { font-size: 12.5px; font-weight: 700; color: var(--teal-dark); margin-top: 8px; }
+
+/* Paso 3: texto y firma */
+.texto-legal {
+  font-size: 13px; color: #33424A; text-align: left; line-height: 1.55;
+  border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; background: #FCFDFD;
+}
+.texto-legal p { margin: 0 0 10px; }
+.texto-legal p:last-child { margin-bottom: 0; }
+.texto-legal b { color: var(--navy); }
+.texto-legal .ley { max-height: 160px; overflow-y: auto; font-size: 12px; }
+.texto-legal table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; font-size: 12.5px; }
+.texto-legal td, .texto-legal th { border: 1px solid var(--border); padding: 5px 7px; text-align: left; }
+.texto-legal th { background: #EEF3F6; }
+.firma-caja { position: relative; }
+canvas#firmaCanvas {
+  border: 2px dashed var(--border); border-radius: 8px; width: 100%; height: 180px; touch-action: none;
+  background: white; display: block;
+}
+.firma-caja .guia {
+  position: absolute; left: 16px; right: 16px; bottom: 38px; border-top: 1px solid #CBD6DC;
+  pointer-events: none;
+}
+.firma-caja .placeholder {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #A9B6BD; font-size: 14px; pointer-events: none;
+}
+.firma-acciones { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+/* Estados finales */
+.final { text-align: center; padding: 32px 18px; }
+.final .grande { font-size: 46px; line-height: 1; margin-bottom: 12px; }
+.final h2 { font-size: 19px; margin: 0 0 8px; }
+.final p { font-size: 14px; color: var(--gray); line-height: 1.5; margin: 0 0 6px; }
+.cargando { text-align: center; color: var(--gray); padding: 40px 0; font-size: 14px; }
+.girar { display: inline-block; width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--teal);
+         border-radius: 50%; animation: girar 0.9s linear infinite; vertical-align: middle; }
+@keyframes girar { to { transform: rotate(360deg); } }
+@media (max-width: 380px) { .fila2 { grid-template-columns: 1fr; gap: 0; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="marca">
+    <span class="logo"><img src="/static/imagenes/logo-sanitas.png" alt="Sanitas"></span>
+  </div>
+  <h1>Autorización de entrega de reporte de siniestralidad</h1>
+  <div class="progreso" id="textoProgreso">Cargando…</div>
+  <div class="pasos" id="barraPasos"><span></span><span></span><span></span></div>
+</div>
+
+<div class="contenedor">
+  <div class="mensaje" id="mensajeGlobal" role="alert"></div>
+
+  <div class="cargando" id="pantallaCargando"><span class="girar"></span>&nbsp; Cargando tu formulario…</div>
+
+  <!-- ═══════════ PASO 1: DOCUMENTO ═══════════ -->
+  <div class="pantalla" id="paso1">
+    <div class="card">
+      <h2>1. Foto de tu documento de identidad</h2>
+      <div class="subtitulo">Sube una foto de tu DNI (o carné de extranjería). La usamos para completar tus datos y se adjunta a tu autorización.</div>
+
+      <label>Parte de adelante (obligatoria)</label>
+      <div class="foto-caja" id="cajaAnverso">
+        <img id="imgAnverso" alt="Foto de la parte de adelante del documento">
+        <div class="icono">🪪</div>
+        <div class="ayuda">Donde está tu foto y tu número de documento.</div>
+        <button type="button" class="btn-chico" id="btnAnverso">📷 Tomar o elegir foto</button>
+        <input type="file" id="fileAnverso" accept="image/*">
+        <div class="estado" id="estadoAnverso"></div>
+      </div>
+
+      <label>Parte de atrás (opcional)</label>
+      <div class="foto-caja" id="cajaReverso">
+        <img id="imgReverso" alt="Foto de la parte de atrás del documento">
+        <div class="icono">🔄</div>
+        <div class="ayuda">Si quieres, agrega también la parte de atrás.</div>
+        <button type="button" class="btn-chico btn-secundario" id="btnReverso">📷 Tomar o elegir foto</button>
+        <input type="file" id="fileReverso" accept="image/*">
+        <div class="estado" id="estadoReverso"></div>
+      </div>
+
+      <ul class="consejos">
+        <li>Pon el documento sobre una mesa, con buena luz y sin reflejos.</li>
+        <li>Que se vea completo y se puedan leer los datos.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ═══════════ PASO 2: DATOS ═══════════ -->
+  <div class="pantalla" id="paso2">
+    <div class="card">
+      <h2>2. Revisa y completa tus datos</h2>
+      <div class="subtitulo">Corrige lo que no esté bien. Estos datos van en tu autorización.</div>
+
+      <label for="inNombre">Nombres y apellidos</label>
+      <input type="text" id="inNombre" autocomplete="name" maxlength="120">
+
+      <div class="fila2">
+        <div>
+          <label for="inTipo">Documento</label>
+          <select id="inTipo">
+            <option value="DNI">DNI</option>
+            <option value="CE">Carné de extranjería</option>
+            <option value="OTRO">Otro</option>
+          </select>
+        </div>
+        <div>
+          <label for="inNumero">Número</label>
+          <input type="text" id="inNumero" inputmode="numeric" maxlength="20" autocomplete="off">
+        </div>
+      </div>
+
+      <label for="inContrato">N° de contrato del plan de salud</label>
+      <input type="text" id="inContrato" readonly>
+
+      <label for="inCorreo">Correo donde recibirás tu reporte</label>
+      <input type="email" id="inCorreo" autocomplete="email" maxlength="120" inputmode="email">
+
+      <label for="inCiudad">Ciudad</label>
+      <input type="text" id="inCiudad" maxlength="40" value="Lima" autocomplete="address-level2">
+
+      <label class="check-linea" style="text-transform:none;letter-spacing:0;color:var(--navy);font-weight:500;font-size:14px;">
+        <input type="checkbox" id="chkDependientes">
+        <span>También quiero el reporte de mis <b>dependientes menores de edad</b>.</span>
+      </label>
+      <div id="bloqueDependientes">
+        <label for="inParentesco">Parentesco contigo</label>
+        <input type="text" id="inParentesco" maxlength="40" list="listaParentesco" placeholder="Ej.: hijos">
+        <datalist id="listaParentesco"><option value="hijos"><option value="hijo"><option value="hija"></datalist>
+        <div id="listaDependientes"></div>
+        <button type="button" class="btn-secundario btn-chico" id="btnAgregarDep" style="margin-top:10px;">➕ Agregar dependiente</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ PASO 3: FIRMA ═══════════ -->
+  <div class="pantalla" id="paso3">
+    <div class="card">
+      <h2>3. Lee y firma tu autorización</h2>
+      <div class="subtitulo">Así quedará el documento que firmas.</div>
+      <div class="texto-legal" id="textoAutorizacion"></div>
+
+      <label class="check-linea" style="text-transform:none;letter-spacing:0;color:var(--navy);font-weight:500;font-size:13.5px;">
+        <input type="checkbox" id="chkAcepto">
+        <span>Leí la autorización y la Ley N° 29733 de Protección de Datos Personales, y autorizo a Sanitas Perú S.A. EPS a entregarme mi reporte de siniestralidad.</span>
+      </label>
+
+      <label>Tu firma</label>
+      <div class="firma-caja">
+        <canvas id="firmaCanvas" aria-label="Recuadro para firmar"></canvas>
+        <div class="guia"></div>
+        <div class="placeholder" id="firmaPlaceholder">Firma aquí con tu dedo o el mouse</div>
+      </div>
+      <div class="firma-acciones">
+        <button type="button" class="btn-secundario btn-chico" id="btnLimpiar">Borrar firma</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ FINALES ═══════════ -->
+  <div class="pantalla" id="pantallaExito">
+    <div class="card final">
+      <div class="grande">✅</div>
+      <h2>¡Listo! Recibimos tu autorización</h2>
+      <p>Tu asesor ya la tiene y te enviará tu reporte de siniestralidad a <b id="correoFinal"></b>.</p>
+      <p>Ya puedes cerrar esta página.</p>
+    </div>
+  </div>
+
+  <div class="pantalla" id="pantallaNoDisponible">
+    <div class="card final">
+      <div class="grande" id="iconoNoDisponible">⏰</div>
+      <h2 id="tituloNoDisponible">Este enlace ya no está disponible</h2>
+      <p id="textoNoDisponible"></p>
+    </div>
+  </div>
+</div>
+
+<div class="barra-botones" id="barraBotones" style="display:none;">
+  <div class="interno">
+    <button type="button" class="btn-secundario" id="btnAtras">Atrás</button>
+    <button type="button" id="btnSiguiente">Continuar</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var partes = location.pathname.split('/').filter(Boolean);
+  var token = partes[1] || '';
+  var base = '/siniestralidad/' + encodeURIComponent(token);
+  var info = null;            // datos del servidor
+  var paso = 1;
+  var subido = { anverso: false, reverso: false };
+  var subiendo = { anverso: false, reverso: false };
+  var maxDep = 5;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function mensaje(texto, tipo) {
+    var m = $('mensajeGlobal');
+    m.className = 'mensaje' + (texto ? ' ' + (tipo || 'error') : '');
+    m.textContent = texto || '';
+    if (texto) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function noDisponible(d) {
+    var estado = (d && d.estado) || '';
+    $('pantallaCargando').style.display = 'none';
+    $('barraBotones').style.display = 'none';
+    $('barraPasos').style.display = 'none';
+    $('textoProgreso').textContent = '';
+    ['paso1', 'paso2', 'paso3'].forEach(function (id) { $(id).classList.remove('activa'); });
+    $('iconoNoDisponible').textContent = estado === 'firmado' ? '✅' : (estado === 'vencido' ? '⏰' : '🔗');
+    $('tituloNoDisponible').textContent = estado === 'firmado' ? 'Ya firmaste esta autorización'
+      : (estado === 'vencido' ? 'Este enlace venció' : 'Este enlace no está disponible');
+    $('textoNoDisponible').textContent = (d && d.motivo) || 'Pídele un enlace nuevo a tu asesor por el webchat.';
+    $('pantallaNoDisponible').classList.add('activa');
+  }
+
+  // ---------- Navegación ----------
+  function irA(n) {
+    paso = n;
+    mensaje('');
+    ['paso1', 'paso2', 'paso3'].forEach(function (id, i) { $(id).classList.toggle('activa', i + 1 === n); });
+    var marcas = $('barraPasos').children;
+    for (var i = 0; i < marcas.length; i++) marcas[i].classList.toggle('hecho', i < n);
+    $('textoProgreso').textContent = 'Paso ' + n + ' de 3' + (info && info.vence ? ' · El enlace vence el ' + info.vence : '');
+    $('btnAtras').style.visibility = n === 1 ? 'hidden' : 'visible';
+    $('btnSiguiente').textContent = n === 3 ? '✍️ Firmar y enviar' : 'Continuar';
+    if (n === 3) { armarTexto(); setTimeout(ajustarCanvas, 30); }
+    actualizarBoton();
+    window.scrollTo(0, 0);
+  }
+
+  function actualizarBoton() {
+    var b = $('btnSiguiente');
+    if (paso === 1) b.disabled = !subido.anverso || subiendo.anverso || subiendo.reverso;
+    else if (paso === 3) b.disabled = !(haFirmado && $('chkAcepto').checked) || enviando;
+    else b.disabled = false;
+  }
+
+  $('btnAtras').onclick = function () { if (paso > 1) irA(paso - 1); };
+  $('btnSiguiente').onclick = function () {
+    if (paso === 1) { irA(2); return; }
+    if (paso === 2) {
+      var error = validarDatos();
+      if (error) { mensaje(error); return; }
+      irA(3);
+      return;
+    }
+    enviar();
+  };
+
+  // ---------- Carga inicial ----------
+  fetchLimite(base + '/datos', { cache: 'no-store' }, 30).then(function (x) {
+    if (!x.r.ok || !x.d.ok) { noDisponible(x.d); return; }
+    info = x.d;
+    maxDep = info.max_dependientes || 5;
+    $('inNombre').value = info.nombre || '';
+    $('inTipo').value = info.tipo_documento || 'DNI';
+    $('inNumero').value = info.n_documento || '';
+    $('inContrato').value = info.contrato || '';
+    $('inCorreo').value = info.correo || '';
+    if (info.dni_anverso) marcarSubido('anverso', null, 'Ya subiste esta foto. Puedes cambiarla si quieres.');
+    if (info.dni_reverso) marcarSubido('reverso', null, 'Ya subiste esta foto.');
+    if (info.ocr) aplicarOcr(info.ocr, false);
+    $('pantallaCargando').style.display = 'none';
+    $('barraBotones').style.display = 'flex';
+    irA(1);
+  }).catch(function () {
+    $('pantallaCargando').style.display = 'none';
+    mensaje('No pudimos cargar tu formulario. Revisa tu conexión y vuelve a abrir el enlace.');
+  });
+
+  // ---------- Paso 1: fotos ----------
+  function marcarSubido(lado, url, texto) {
+    var L = lado === 'anverso' ? 'Anverso' : 'Reverso';
+    subido[lado] = true;
+    $('caja' + L).classList.add('lista');
+    if (url) $('img' + L).src = url;
+    $('btn' + L).textContent = '🔁 Cambiar foto';
+    $('estado' + L).textContent = texto || '✓ Foto guardada';
+    actualizarBoton();
+  }
+
+  function comprimir(archivo) {
+    // Fotos de celular de 4-12 MB: se reducen a 2000 px (JPEG) para que suban rápido. Si el navegador no puede
+    // leerla (p. ej. HEIC en Android), se manda tal cual y el servidor la convierte.
+    return new Promise(function (resolver) {
+      if (!/^image\/(jpeg|png|webp)$/i.test(archivo.type || '')) { resolver(archivo); return; }
+      var url = URL.createObjectURL(archivo);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var max = 2000, w = img.naturalWidth, h = img.naturalHeight;
+          var esc = Math.min(1, max / Math.max(w, h));
+          if (esc === 1 && archivo.size < 2.5 * 1024 * 1024) { URL.revokeObjectURL(url); resolver(archivo); return; }
+          var c = document.createElement('canvas');
+          c.width = Math.round(w * esc); c.height = Math.round(h * esc);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          URL.revokeObjectURL(url);
+          c.toBlob(function (b) { resolver(b && b.size ? b : archivo); }, 'image/jpeg', 0.88);
+        } catch (e) { URL.revokeObjectURL(url); resolver(archivo); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolver(archivo); };
+      img.src = url;
+    });
+  }
+
+  // fetch con tiempo límite: con mala señal, que no quede "pensando" para siempre.
+  function fetchLimite(url, opciones, segundos) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var t = ctrl ? setTimeout(function () { ctrl.abort(); }, segundos * 1000) : null;
+    if (ctrl) opciones.signal = ctrl.signal;
+    return fetch(url, opciones).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) { if (t) clearTimeout(t); return { r: r, d: d }; });
+    }, function (e) { if (t) clearTimeout(t); throw e; });
+  }
+
+  var lecturaId = 0;
+  function subir(lado, archivo) {
+    var L = lado === 'anverso' ? 'Anverso' : 'Reverso';
+    if (!archivo) return;
+    mensaje('');
+    subiendo[lado] = true;
+    actualizarBoton();
+    $('btn' + L).disabled = true;
+    $('estado' + L).innerHTML = '<span class="girar" style="width:16px;height:16px;border-width:2px"></span>&nbsp; Subiendo la foto…';
+    var vista = URL.createObjectURL(archivo);
+    comprimir(archivo).then(function (blob) {
+      var fd = new FormData();
+      fd.append('lado', lado);
+      fd.append('file', blob, (archivo.name || 'documento').replace(/\.[^.]*$/, '') + (blob.type === 'image/jpeg' ? '.jpg' : ''));
+      return fetchLimite(base + '/documento', { method: 'POST', body: fd }, 120);
+    }).then(function (x) {
+      subiendo[lado] = false;
+      $('btn' + L).disabled = false;
+      if (x.r.status === 404 || x.r.status === 409 || x.r.status === 410) { noDisponible(x.d); return; }
+      if (!x.r.ok || !x.d.ok) {
+        $('estado' + L).textContent = '';
+        mensaje((x.d && x.d.motivo) || 'No pudimos subir la foto. Intenta de nuevo.');
+        actualizarBoton();
+        return;
+      }
+      marcarSubido(lado, vista, '✓ Foto guardada');
+      if (lado === 'anverso') leerDocumento();
+    }).catch(function (e) {
+      subiendo[lado] = false;
+      $('btn' + L).disabled = false;
+      $('estado' + L).textContent = '';
+      mensaje(e && e.name === 'AbortError'
+        ? 'La foto está tardando demasiado en subir. Revisa tu señal o conéctate a WiFi e intenta de nuevo.'
+        : 'No pudimos subir la foto. Revisa tu conexión e intenta de nuevo.');
+      actualizarBoton();
+    });
+  }
+
+  // La lectura del documento va APARTE y no bloquea: la foto ya quedó guardada y se puede continuar.
+  function leerDocumento() {
+    var mio = ++lecturaId;
+    $('estadoAnverso').innerHTML = '✓ Foto guardada · <span class="girar" style="width:12px;height:12px;border-width:2px"></span>&nbsp; leyendo tus datos…';
+    fetchLimite(base + '/leer', { method: 'POST' }, 35).then(function (x) {
+      if (mio !== lecturaId) return;
+      var ocr = (x.d && x.d.ocr) || {};
+      if (!x.r.ok || !x.d.ok || !ocr || (!ocr.nombre && !ocr.numero && ocr.es_documento !== false)) {
+        $('estadoAnverso').textContent = '✓ Foto guardada. Completa tus datos en el siguiente paso.';
+        return;
+      }
+      aplicarOcr(ocr, paso === 1);
+      if (ocr.es_documento === false || ocr.legible === false) {
+        $('estadoAnverso').textContent = '✓ Foto guardada';
+        mensaje('La foto no parece un documento de identidad legible. Te recomendamos tomarla de nuevo, con buena luz y el documento completo.', 'aviso');
+      } else if (x.d.aviso_no_coincide) {
+        $('estadoAnverso').textContent = '✓ Foto guardada';
+        mensaje(x.d.aviso_no_coincide, 'aviso');
+      } else {
+        $('estadoAnverso').textContent = '✓ Foto guardada. Leímos tus datos; revísalos en el siguiente paso.';
+      }
+    }).catch(function () {
+      if (mio !== lecturaId) return;
+      $('estadoAnverso').textContent = '✓ Foto guardada. Completa tus datos en el siguiente paso.';
+    });
+  }
+
+  function aplicarOcr(ocr, forzar) {
+    if (!ocr) return;
+    if (ocr.nombre && (forzar || !$('inNombre').value)) $('inNombre').value = ocr.nombre;
+    if (ocr.numero && (forzar || !$('inNumero').value) && ocr.es_documento !== false) {
+      $('inNumero').value = ocr.numero;
+      if (ocr.tipo) $('inTipo').value = ocr.tipo;
+    }
+  }
+
+  ['Anverso', 'Reverso'].forEach(function (L) {
+    $('btn' + L).onclick = function () { $('file' + L).click(); };
+    $('file' + L).onchange = function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) subir(L.toLowerCase(), f);
+    };
+  });
+
+  // ---------- Paso 2: datos ----------
+  function filaDependiente(n, nombre, doc) {
+    var div = document.createElement('div');
+    div.className = 'dependiente';
+    div.innerHTML = '<div class="titulo-dep">Dependiente</div>' +
+      '<button type="button" class="quitar" aria-label="Quitar dependiente">×</button>' +
+      '<label>Nombres y apellidos</label><input type="text" class="dep-nombre" maxlength="120">' +
+      '<label>N° de documento de identidad</label><input type="text" class="dep-doc" maxlength="20" inputmode="numeric">';
+    div.querySelector('.dep-nombre').value = nombre || '';
+    div.querySelector('.dep-doc').value = doc || '';
+    div.querySelector('.quitar').onclick = function () { div.remove(); numerarDependientes(); };
+    return div;
+  }
+  function numerarDependientes() {
+    var filas = $('listaDependientes').querySelectorAll('.dependiente');
+    filas.forEach(function (f, i) { f.querySelector('.titulo-dep').textContent = 'Dependiente ' + (i + 1); });
+    $('btnAgregarDep').style.display = filas.length >= maxDep ? 'none' : '';
+  }
+  $('btnAgregarDep').onclick = function () {
+    if ($('listaDependientes').children.length >= maxDep) return;
+    var f = filaDependiente();
+    $('listaDependientes').appendChild(f);
+    numerarDependientes();
+    f.querySelector('.dep-nombre').focus();
+  };
+  $('chkDependientes').onchange = function () {
+    var si = this.checked;
+    $('bloqueDependientes').style.display = si ? 'block' : 'none';
+    if (si && !$('listaDependientes').children.length) $('btnAgregarDep').onclick();
+  };
+  $('inNumero').addEventListener('input', function () {
+    if ($('inTipo').value === 'DNI') this.value = this.value.replace(/\D/g, '').slice(0, 8);
+  });
+
+  function leerDatos() {
+    var deps = [];
+    if ($('chkDependientes').checked) {
+      $('listaDependientes').querySelectorAll('.dependiente').forEach(function (f) {
+        var n = f.querySelector('.dep-nombre').value.trim(), d = f.querySelector('.dep-doc').value.trim();
+        if (n || d) deps.push({ nombre: n, n_documento: d });
+      });
+    }
+    return {
+      ciudad: $('inCiudad').value.trim(),
+      nombre: $('inNombre').value.trim().replace(/\s+/g, ' '),
+      tipo_documento: $('inTipo').value,
+      n_documento: $('inNumero').value.trim().replace(/[\s.\-]/g, ''),
+      correo: $('inCorreo').value.trim(),
+      con_dependientes: $('chkDependientes').checked,
+      parentesco: $('inParentesco').value.trim(),
+      dependientes: deps
+    };
+  }
+
+  function validarDatos() {
+    var d = leerDatos();
+    if (d.nombre.split(' ').length < 2 || d.nombre.length < 5) return 'Escribe tus nombres y apellidos completos.';
+    if (d.tipo_documento === 'DNI' && !/^\d{8}$/.test(d.n_documento)) return 'El DNI debe tener 8 dígitos.';
+    if (d.tipo_documento !== 'DNI' && !/^[A-Za-z0-9]{5,20}$/.test(d.n_documento)) return 'Revisa el número de tu documento.';
+    if (!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(d.correo)) return 'Escribe un correo válido para recibir tu reporte.';
+    if (d.ciudad.length < 2) return 'Escribe tu ciudad.';
+    if (d.con_dependientes) {
+      if (d.parentesco.length < 2) return 'Indica el parentesco de tus dependientes (por ejemplo: hijos).';
+      if (!d.dependientes.length) return 'Agrega al menos un dependiente o desmarca la opción.';
+      for (var i = 0; i < d.dependientes.length; i++) {
+        var x = d.dependientes[i];
+        if (x.nombre.split(/\s+/).length < 2) return 'Escribe nombres y apellidos completos del dependiente ' + (i + 1) + '.';
+        if (!/^[A-Za-z0-9]{5,20}$/.test(x.n_documento.replace(/[\s.\-]/g, ''))) return 'Revisa el N° de documento del dependiente ' + (i + 1) + '.';
+      }
+    }
+    return '';
+  }
+
+  // ---------- Paso 3: texto y firma ----------
+  var MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function armarTexto() {
+    var d = leerDatos(), hoy = new Date();
+    var marca = function (t) { return d.tipo_documento === t ? '(X)' : '( )'; };
+    var h = '<p style="text-align:right">' + esc(d.ciudad) + ', ' + hoy.getDate() + ' de ' + MESES[hoy.getMonth()] + ' del ' + hoy.getFullYear() + '</p>' +
+      '<p>Señores,<br><b>SANITAS PERÚ S.A. EPS PRESENTE.-</b></p>' +
+      '<p>Yo, <b>' + esc(d.nombre.toUpperCase()) + '</b> identificado/a con documento de identidad ' + marca('DNI') + ' DNI, ' +
+      marca('CE') + ' CE, ' + marca('OTRO') + ' Otro N° <b>' + esc(d.n_documento.toUpperCase()) + '</b> solicito a la compañía Sanitas Perú S.A. EPS ' +
+      'hacerme entrega de mi reporte de siniestralidad correspondiente al Plan de Salud con contrato N° <b>' + esc(info.contrato) + '</b>.</p>' +
+      '<p>Asimismo dejo constancia y autorizo la remisión de mi constancia de siniestralidad al correo electrónico <b>' + esc(d.correo.toLowerCase()) +
+      '</b> para mantener una copia del mismo por no poder recogerlo de forma física.</p>';
+    if (d.con_dependientes && d.dependientes.length) {
+      h += '<p>Asimismo requiero que me hagan entrega de los reportes de siniestralidad de mis dependientes menores de edad con grado de parentesco de <b>' +
+        esc(d.parentesco.toLowerCase()) + '</b> respecto de mi persona y de los cuales se indican sus datos personales y se adjuntan los documentos de identidad en señal de autorización:</p>' +
+        '<table><tr><th>Nombres y apellidos</th><th>N° documento</th></tr>' +
+        d.dependientes.map(function (x) { return '<tr><td>' + esc(x.nombre.toUpperCase()) + '</td><td>' + esc(x.n_documento.toUpperCase()) + '</td></tr>'; }).join('') +
+        '</table>';
+    }
+    h += '<div class="ley"><p><b>Ley N° 29733.- Ley de Protección de Datos Personales</b></p>' +
+      '<p>De conformidad en lo establecido en la Ley N° 29733.- Ley de Protección de Datos Personales y su Reglamento, quienes suscriben el presente documento ' +
+      'quedan informados y dan su conocimiento libre, previo, expreso, inequívoco e informado a Sanitas Perú S.A. EPS, para la transferencia (entrega) sin ' +
+      'limitación alguna de su información personal de salud consistente en el detalle de atenciones y diagnósticos médicos, o a quien el titular designe. ' +
+      'La información que será entregada será aquella que obre en el poder de Sanitas Perú SA EPS desde el inicio de vigencia de la póliza hasta la emisión ' +
+      'del presente documento.</p></div>';
+    $('textoAutorizacion').innerHTML = h;
+  }
+
+  var canvas = $('firmaCanvas'), ctx = canvas.getContext('2d');
+  var dibujando = false, haFirmado = false, enviando = false, anchoCanvas = 0;
+  function ajustarCanvas() {
+    var rect = canvas.getBoundingClientRect();
+    if (!rect.width || Math.round(rect.width) === anchoCanvas) return;   // la barra del navegador al hacer scroll no borra la firma
+    anchoCanvas = Math.round(rect.width);
+    var ratio = Math.max(window.devicePixelRatio || 1, 1);
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(rect.height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0B1F33';
+    haFirmado = false;
+    $('firmaPlaceholder').style.display = '';
+    actualizarBoton();
+  }
+  window.addEventListener('resize', ajustarCanvas);
+  function pos(e) {
+    var r = canvas.getBoundingClientRect();
+    var p = e.touches && e.touches.length ? e.touches[0] : e;
+    return { x: p.clientX - r.left, y: p.clientY - r.top };
+  }
+  function inicio(e) {
+    e.preventDefault();
+    dibujando = true;
+    var p = pos(e);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.1, p.y + 0.1); ctx.stroke();
+    $('firmaPlaceholder').style.display = 'none';
+  }
+  function trazo(e) {
+    if (!dibujando) return;
+    e.preventDefault();
+    var p = pos(e);
+    ctx.lineTo(p.x, p.y); ctx.stroke();
+    if (!haFirmado) { haFirmado = true; actualizarBoton(); }
+  }
+  function fin() { dibujando = false; }
+  canvas.addEventListener('mousedown', inicio);
+  canvas.addEventListener('mousemove', trazo);
+  window.addEventListener('mouseup', fin);
+  canvas.addEventListener('touchstart', inicio, { passive: false });
+  canvas.addEventListener('touchmove', trazo, { passive: false });
+  canvas.addEventListener('touchend', fin);
+  $('btnLimpiar').onclick = function () {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    haFirmado = false;
+    $('firmaPlaceholder').style.display = '';
+    actualizarBoton();
+  };
+  $('chkAcepto').onchange = actualizarBoton;
+
+  function enviar() {
+    var error = validarDatos();
+    if (error) { irA(2); mensaje(error); return; }
+    if (!haFirmado) { mensaje('Dibuja tu firma en el recuadro.'); return; }
+    if (!$('chkAcepto').checked) { mensaje('Marca la casilla para aceptar la autorización.'); return; }
+    enviando = true;
+    actualizarBoton();
+    var b = $('btnSiguiente');
+    b.innerHTML = '<span class="girar" style="width:16px;height:16px;border-width:2px;border-top-color:#fff"></span>&nbsp; Enviando…';
+    var datos = leerDatos();
+    datos.acepta = true;
+    canvas.toBlob(function (blob) {
+      var fd = new FormData();
+      fd.append('datos', JSON.stringify(datos));
+      fd.append('firma', blob, 'firma.png');
+      fetch(base + '/firmar', { method: 'POST', body: fd }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
+      }).then(function (x) {
+        enviando = false;
+        b.textContent = '✍️ Firmar y enviar';
+        if (x.r.ok && x.d.ok) {
+          ['paso1', 'paso2', 'paso3'].forEach(function (id) { $(id).classList.remove('activa'); });
+          $('barraBotones').style.display = 'none';
+          $('barraPasos').style.display = 'none';
+          $('textoProgreso').textContent = '';
+          $('correoFinal').textContent = x.d.correo || datos.correo;
+          $('pantallaExito').classList.add('activa');
+          window.scrollTo(0, 0);
+          return;
+        }
+        if (x.r.status === 404 || x.r.status === 409 || x.r.status === 410) { noDisponible(x.d); return; }
+        mensaje((x.d && x.d.motivo) || 'No pudimos enviar tu autorización. Intenta de nuevo.');
+        actualizarBoton();
+      }).catch(function () {
+        enviando = false;
+        b.textContent = '✍️ Firmar y enviar';
+        mensaje('No pudimos enviar tu autorización. Revisa tu conexión e intenta de nuevo.');
+        actualizarBoton();
+      });
+    }, 'image/png');
+  }
+})();
+</script>
+</body>
+</html>

@@ -1208,15 +1208,18 @@ def dominio_otp_valido(host) -> str:
     return host if len(host) <= 80 and _DOMINIOS_OTP.match(host) else ""
 
 
-# El SMS del código debe caber en UN solo segmento: sin tildes ni ñ (alfabeto GSM, hasta 160 caracteres). Con
-# una tilde el SMS pasa a Unicode y el límite baja a 70; el texto de nov-2026 (104 caracteres, con tildes y la
-# línea "@dominio #código") salía en 2 partes y subió el % de personas a las que no les llegaba. Por eso la línea
-# de WebOTP queda apagada (OTP_LINEA_WEBOTP) hasta probarla con el proveedor.
+# Texto del SMS del código: el ORIGINAL, que funcionó por meses. Historia (nov-2026):
+#   - "Tu código de verificación Sanitas es: 123456" (44 caracteres): ~88 % validaba con el 1er SMS, ~5 % no ingresaba.
+#   - 11-12/11, texto largo con el código primero y la línea "@dominio #código" (104): empeoró un poco.
+#   - 13-16/11, "Sanitas: tu codigo de verificacion es 123456. No lo compartas con nadie." (72, sin tildes): solo
+#     ~50 % validaba con el SMS, el 15-25 % no ingresaba y WhatsApp subió a ~43 % (cada validación por WhatsApp
+#     cuesta). Los SMS que sí llegaban, llegaban igual de rápido: el problema era que muchos no llegaban (filtro del
+#     operador o del celular por el texto). Conclusión: no tocar el texto sin probarlo antes con el proveedor.
 OTP_LINEA_WEBOTP = False
 
 
 def texto_sms_otp(codigo: str, variables: dict | None = None) -> str:
-    texto = f"Sanitas: tu codigo de verificacion es {codigo}. No lo compartas con nadie."
+    texto = f"Tu código de verificación Sanitas es: {codigo}"
     dominio = dominio_otp_valido((variables or {}).get("OTP_DOMINIO")) if OTP_LINEA_WEBOTP else ""
     if dominio:
         texto += f"\n@{dominio} #{codigo}"
