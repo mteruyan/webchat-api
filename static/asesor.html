@@ -833,6 +833,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <button class="chico gris" id="btnAvisoInactividad" title="Si lo apagas, el bot no le mandará a este cliente el aviso automático de '¿sigues ahí?' en esta conversación">🔔 Aviso</button>
         <button class="chico gris" id="btnTransferir" title="Transferir esta conversación a otro asesor">🔀 Transf.</button>
         <button class="chico gris" id="btnRecordatorio" title="Programar recordatorios por SMS para las próximas entregas de una receta extendida">💊 Recordat.</button>
+        <button class="chico gris" id="btnEstadoSolicitud" title="Avisarle al cliente cómo va su solicitud (en coordinación, la farmacia lo contactará, despachado, entregado). Sirve también después de cerrar la conversación: le llega por notificación o SMS">📦 Estado</button>
         <button class="chico gris" id="btnHistorialUsuario" title="Ver el historial de conversaciones de este usuario">🕘 Histor.</button>
         <button class="chico gris" id="btnArchivosEmpresa" title="Archivos de la empresa (por RUC): lo que envió el cliente y los que guardaste para su próxima renovación">📁 Archivos</button>
         <button class="chico gris" id="btnGuiaArchivos" title="Enviarle al cliente la guía con las formas de adjuntar su archivo (desde el celular, la computadora o WhatsApp)">📎 Guía</button>
@@ -2470,6 +2471,12 @@ function conectarWs() {
       case 'alerta_encuesta':
         mostrarAlertaEncuestaAsesor(p);
         break;
+      case 'estado_solicitud':
+        pintarEstadoSolicitud(p);
+        break;
+      case 'alerta_primera_respuesta':
+        mostrarAlertaPrimeraRespuesta(p);
+        break;
       case 'nueva_asignacion': {
         const previa = conversaciones[p.conversacion_id];
         const esNueva = !previa || !!previa.provisional;
@@ -4080,6 +4087,105 @@ document.getElementById('btnCerrarModalBuscar').onclick = () => {
 };
 // ---- Encuesta con nota 1 o 2 de una conversación que atendió (la misma alerta que recibe el supervisor). Queda
 // en pantalla hasta que la cierre; "Ver la conversación" la busca por su código. ----
+// ---- ⏱️ Cliente asignado que aún no recibe la primera respuesta ----
+function mostrarAlertaPrimeraRespuesta(p) {
+  let cont = document.getElementById('alertasEncuesta');
+  if (!cont) {
+    cont = document.createElement('div');
+    cont.id = 'alertasEncuesta';
+    cont.setAttribute('aria-live', 'polite');
+    cont.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 32px));';
+    document.body.appendChild(cont);
+  }
+  const id = Number(p.conversacion_id);
+  const previa = cont.querySelector(`[data-primera="${id}"]`);
+  if (previa) previa.remove();
+  const caja = document.createElement('div');
+  caja.dataset.primera = String(id);
+  caja.style.cssText = 'background:#fff;border:1px solid #E1E8F0;border-left:5px solid #B8650A;border-radius:10px;padding:12px 34px 12px 14px;box-shadow:0 10px 30px rgba(16,35,58,.18);font-size:13px;line-height:1.45;position:relative;';
+  caja.innerHTML = `<div style="font-weight:700;margin-bottom:4px">⏱️ Un cliente espera tu primera respuesta</div>
+    <div>${escapeHtml(p.cliente || 'El cliente')} (#${id}) está asignado a ti hace ${Number(p.minutos) || 0} min y aún no le escribes. Un saludo corto le confirma que ya lo estás atendiendo.</div>
+    <button type="button" class="alerta-ver" style="margin-top:8px;border:1px solid #C9D6E4;background:#F4F8FC;color:#0A4C8C;border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer">Ir a la conversación</button>
+    <button type="button" class="alerta-x" aria-label="Cerrar" style="position:absolute;top:6px;right:8px;border:0;background:none;font-size:18px;cursor:pointer;color:#4A5B70">×</button>`;
+  caja.querySelector('.alerta-x').onclick = () => caja.remove();
+  caja.querySelector('.alerta-ver').onclick = () => { caja.remove(); if (conversaciones[id]) seleccionar(id); };
+  cont.appendChild(caja);
+  while (cont.children.length > 4) cont.firstChild.remove();
+  setTimeout(() => caja.remove(), 120000);
+}
+
+// ---- 📦 Estado de la solicitud: avisos de avance al cliente (también con la conversación ya cerrada) ----
+function abrirEstadoSolicitud() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  let caja = document.getElementById('modalEstadoSolicitud');
+  if (!caja) {
+    caja = document.createElement('div');
+    caja.id = 'modalEstadoSolicitud';
+    caja.style.cssText = 'position:fixed;inset:0;background:rgba(10,30,50,.45);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;';
+    caja.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:92vh;overflow-y:auto;padding:18px 18px 16px;position:relative;box-shadow:0 20px 50px rgba(10,30,50,.3)">
+      <button type="button" id="estCerrar" aria-label="Cerrar" style="position:absolute;top:8px;right:10px;border:0;background:none;font-size:20px;cursor:pointer;color:#4A5B70">×</button>
+      <div style="font-weight:700;font-size:15px;margin-bottom:4px">📦 Estado de la solicitud</div>
+      <div style="font-size:12.5px;color:#4A5B70;margin-bottom:10px">El cliente recibe el mensaje en el chat. Si la conversación ya está cerrada, le llega por notificación o, si no la tiene activada, por SMS (de 7:00 a 21:59).</div>
+      <div id="estActual"></div>
+      <div id="estMsg" style="font-size:12.5px;min-height:18px;margin:6px 0"></div>
+      <div style="font-weight:700;font-size:13px;margin:12px 0 6px">Solicitudes en curso (últimos 7 días, sin «Entregado»)</div>
+      <div id="estBandeja" style="font-size:12.5px;color:#4A5B70">Cargando…</div>
+    </div>`;
+    document.body.appendChild(caja);
+    const cerrar = () => { caja.style.display = 'none'; };
+    caja.addEventListener('click', (e) => { if (e.target === caja) cerrar(); });
+    document.getElementById('estCerrar').onclick = cerrar;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && caja.style.display !== 'none') cerrar(); });
+  }
+  caja.dataset.conv = activaId !== null ? String(activaId) : '';
+  caja.style.display = 'flex';
+  document.getElementById('estMsg').textContent = '';
+  ws.send(JSON.stringify({ type: 'estado_solicitud_listar', payload: {} }));
+}
+let estadosSolicitud = [];
+function botonesEstado(conversacionId, actual) {
+  const estilo = 'border:1px solid #C9D6E4;background:#F4F8FC;color:#0A4C8C;border-radius:8px;padding:6px 9px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;margin:0 6px 6px 0';
+  return estadosSolicitud.map(e => `<button type="button" data-conv="${Number(conversacionId)}" data-estado="${escapeHtml(e.codigo)}" title="${escapeHtml(e.texto)}" style="${estilo}${e.codigo === actual ? ';opacity:.55' : ''}">${escapeHtml(e.etiqueta)}</button>`).join('');
+}
+function enviarEstadoSolicitud(conversacionId, estado) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const e = estadosSolicitud.find(x => x.codigo === estado);
+  if (e && !confirm(`¿Enviarle al cliente (#${conversacionId}) este mensaje?\n\n${e.texto}`)) return;
+  document.getElementById('estMsg').style.color = '#4A5B70';
+  document.getElementById('estMsg').textContent = 'Enviando…';
+  ws.send(JSON.stringify({ type: 'estado_solicitud_enviar', payload: { conversacion_id: Number(conversacionId), estado } }));
+}
+function pintarEstadoSolicitud(p) {
+  estadosSolicitud = p.estados || estadosSolicitud;
+  const caja = document.getElementById('modalEstadoSolicitud');
+  if (p.ok && p.conversacion_id && p.abierta && conversaciones[p.conversacion_id]) {
+    agregarMensaje(p.conversacion_id, p.texto, 'asesor', { mensajeId: p.mensaje_id });
+  }
+  if (!caja) return;
+  const msg = document.getElementById('estMsg');
+  if (p.ok && p.conversacion_id) {
+    msg.style.color = '#197A54';
+    msg.textContent = `✅ Enviado a la conversación #${p.conversacion_id}${p.abierta ? '.' : ' (cerrada: le llega por notificación o SMS).'}`;
+  } else if (!p.ok) {
+    msg.style.color = '#C0392B';
+    msg.textContent = p.motivo || 'No se pudo enviar.';
+  }
+  const conv = caja.dataset.conv;
+  document.getElementById('estActual').innerHTML = conv
+    ? `<div style="font-size:12.5px;font-weight:600;margin-bottom:6px">Conversación abierta #${Number(conv)}</div>${botonesEstado(conv, null)}`
+    : '<div style="font-size:12.5px;color:#4A5B70">Abre una conversación para enviarle su estado, o usa la lista de abajo.</div>';
+  const bandeja = p.bandeja || [];
+  document.getElementById('estBandeja').innerHTML = bandeja.length ? bandeja.map(b => `
+    <div style="border:1px solid #E1E8F0;border-radius:9px;padding:8px 10px;margin-bottom:8px">
+      <div style="margin-bottom:6px"><b>#${Number(b.conversacion_id)}</b> ${escapeHtml(b.cliente || '')} · último: ${escapeHtml(b.etiqueta)} (${escapeHtml(b.fecha)})${b.abierta ? '' : ' · <span style="color:#8A97A6">cerrada</span>'}</div>
+      ${botonesEstado(b.conversacion_id, b.estado)}
+    </div>`).join('') : 'No tienes solicitudes en curso.';
+  caja.querySelectorAll('button[data-estado]').forEach(btn => {
+    btn.onclick = () => enviarEstadoSolicitud(btn.dataset.conv, btn.dataset.estado);
+  });
+}
+document.getElementById('btnEstadoSolicitud').onclick = abrirEstadoSolicitud;
+
 function mostrarAlertaEncuestaAsesor(p) {
   let cont = document.getElementById('alertasEncuesta');
   if (!cont) {

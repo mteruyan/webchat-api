@@ -35,6 +35,9 @@ SMS_VIGENCIA_HORAS = 72      # el enlace del SMS sirve 3 días
 SMS_VENTANA_HORAS = 12       # no se manda SMS por encuestas de cierres más antiguos que esto
 SMS_UNO_CADA_DIAS = 7        # máximo 1 SMS de encuesta por celular cada 7 días
 
+RESOLUCION = [  # (código, texto) — ¿se resolvió lo que vino a pedir? (separa el chat del servicio de fondo)
+    ("si", "Sí"), ("en_proceso", "Todavía está en proceso"), ("no", "No"),
+]
 SATISFACCION = [  # (valor, emoji, texto)
     (1, "😞", "Muy insatisfecho"), (2, "🙁", "Insatisfecho"), (3, "😐", "Neutral"),
     (4, "🙂", "Satisfecho"), (5, "🤩", "Muy satisfecho"),
@@ -61,6 +64,7 @@ MEJORAS = [  # (código, texto)
     ("ninguna", "No necesito mejoras por ahora"),
     ("otra", "Otra mejora"),
 ]
+_TXT_RESOLUCION = dict(RESOLUCION)
 _TXT_DIFICULTAD = dict(DIFICULTADES)
 _TXT_MEJORA = dict(MEJORAS)
 _TXT_FACILIDAD = dict(FACILIDAD)
@@ -71,16 +75,18 @@ PREGUNTAS = {
     "subtitulo": "Encuesta de experiencia · Menos de 1 minuto",
     "intro": "En Sanitas queremos brindarte una atención cada vez más sencilla. "
              "Cuéntanos cómo te fue utilizando nuestro canal digital.",
-    "satisfaccion": {"texto": "1. ¿Qué tan satisfecho estás con la atención recibida por nuestro webchat?",
+    "resuelta": {"texto": "1. ¿Se resolvió tu solicitud?",
+                 "opciones": [{"valor": c, "texto": t} for c, t in RESOLUCION]},
+    "satisfaccion": {"texto": "2. ¿Qué tan satisfecho estás con la atención recibida por nuestro webchat?",
                      "opciones": [{"valor": v, "emoji": e, "texto": t} for v, e, t in SATISFACCION]},
-    "facilidad": {"texto": "2. ¿Qué tan fácil te resultó utilizar el webchat para realizar tu consulta?",
+    "facilidad": {"texto": "3. ¿Qué tan fácil te resultó utilizar el webchat para realizar tu consulta?",
                   "opciones": [{"valor": v, "texto": t} for v, t in FACILIDAD]},
-    "dificultad": {"texto": "3. ¿Tuviste alguna dificultad al utilizar el webchat?",
+    "dificultad": {"texto": "4. ¿Tuviste alguna dificultad al utilizar el webchat?",
                    "opciones": [{"valor": c, "texto": t} for c, t in DIFICULTADES]},
-    "mejoras": {"texto": "4. ¿Qué te gustaría que mejoráramos o incorporáramos en nuestro canal digital?",
+    "mejoras": {"texto": "5. ¿Qué te gustaría que mejoráramos o incorporáramos en nuestro canal digital?",
                 "ayuda": "Puedes elegir más de una opción.",
                 "opciones": [{"valor": c, "texto": t} for c, t in MEJORAS]},
-    "comentario": {"texto": "5. Si deseas, cuéntanos qué podríamos hacer para mejorar tu experiencia.",
+    "comentario": {"texto": "6. Si deseas, cuéntanos qué podríamos hacer para mejorar tu experiencia.",
                    "max": MAX_COMENTARIO},
     "max_otra": MAX_TEXTO_OTRA,
 }
@@ -103,9 +109,12 @@ def _payload(encuesta_id: int, anterior: bool) -> dict:
 # ---------------------------------------------------------------------------
 # Envío
 # ---------------------------------------------------------------------------
-def crear_si_corresponde(conversacion_id: int) -> dict | None:
+def crear_si_corresponde(conversacion_id: int, excluir_etiquetas: list[str] | None = None) -> dict | None:
     """Crea la encuesta de esta conversación si aplica. Devuelve el payload para el widget o None.
-    Si la migración aún no se corrió, no hace nada (no debe romper el cierre)."""
+    No se encuesta lo que no se atendió: sin etiqueta de cierre, o con una de excluir_etiquetas (nombres, sin
+    distinguir mayúsculas; configuración encuesta_excluir_etiquetas). Si la migración aún no se corrió, no hace
+    nada (no debe romper el cierre)."""
+    excluir = [e.strip().lower() for e in (excluir_etiquetas or []) if e and e.strip()]
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -114,9 +123,12 @@ def crear_si_corresponde(conversacion_id: int) -> dict | None:
                    SELECT c.id, c.usuario_id, c.campana_id, c.asesor_id, %s
                    FROM conversaciones c JOIN campanas cam ON cam.id = c.campana_id
                    WHERE c.id = %s AND c.asesor_id IS NOT NULL AND cam.encuesta_satisfaccion = TRUE
+                     AND c.etiqueta_cierre_id IS NOT NULL
+                     AND NOT EXISTS (SELECT 1 FROM etiquetas_cierre et WHERE et.id = c.etiqueta_cierre_id
+                                       AND lower(trim(et.nombre)) = ANY(%s::text[]))
                    ON CONFLICT (conversacion_id) DO NOTHING
                    RETURNING id""",
-                (datetime.now(LIMA_TZ), conversacion_id),
+                (datetime.now(LIMA_TZ), conversacion_id, excluir),
             )
             fila = cur.fetchone()
         conn.commit()
@@ -193,6 +205,7 @@ def _validar(datos: dict):
     if "ninguna" in mejoras and len(mejoras) > 1:
         mejoras = [m for m in mejoras if m != "ninguna"]
     return {
+        "resuelta": datos.get("resuelta") if datos.get("resuelta") in _TXT_RESOLUCION else None,
         "satisfaccion": satisfaccion,
         "facilidad": facilidad,
         "dificultad": dificultad,
@@ -216,13 +229,13 @@ def guardar_respuesta(encuesta_id, sesion_token: str, datos: dict) -> dict:
             cur.execute(
                 """UPDATE encuestas_satisfaccion e
                    SET respondida_en = %s, omitida_en = NULL, satisfaccion = %s, facilidad = %s, dificultad = %s,
-                       dificultad_otra = %s, mejoras = %s, mejora_otra = %s, comentario = %s
+                       dificultad_otra = %s, mejoras = %s, mejora_otra = %s, comentario = %s, resuelta = %s
                    FROM usuarios_webchat u
                    WHERE e.id = %s AND u.id = e.usuario_id AND u.sesion_token = %s AND e.respondida_en IS NULL
                    RETURNING e.id""",
                 (datetime.now(LIMA_TZ), valores["satisfaccion"], valores["facilidad"], valores["dificultad"],
                  valores["dificultad_otra"], valores["mejoras"], valores["mejora_otra"], valores["comentario"],
-                 int(encuesta_id), sesion_token),
+                 valores["resuelta"], int(encuesta_id), sesion_token),
             )
             ok = cur.fetchone() is not None
             ya_respondida = False
@@ -439,10 +452,12 @@ def responder_por_sms(codigo: str, datos: dict) -> dict:
             cur.execute(
                 """UPDATE encuestas_satisfaccion
                    SET respondida_en = %s, omitida_en = NULL, satisfaccion = %s, facilidad = %s, dificultad = %s,
-                       dificultad_otra = %s, mejoras = %s, mejora_otra = %s, comentario = %s, respondida_por_sms = TRUE
+                       dificultad_otra = %s, mejoras = %s, mejora_otra = %s, comentario = %s, respondida_por_sms = TRUE,
+                       resuelta = %s
                    WHERE id = %s AND respondida_en IS NULL""",
                 (datetime.now(LIMA_TZ), valores["satisfaccion"], valores["facilidad"], valores["dificultad"],
-                 valores["dificultad_otra"], valores["mejoras"], valores["mejora_otra"], valores["comentario"], eid),
+                 valores["dificultad_otra"], valores["mejoras"], valores["mejora_otra"], valores["comentario"],
+                 valores["resuelta"], eid),
             )
         conn.commit()
         return {"ok": True, "encuesta_id": eid}
@@ -504,6 +519,16 @@ def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict
             dist_sat = dict(cur.fetchall())
             cur.execute(f"SELECT e.facilidad, COUNT(*) FROM encuestas_satisfaccion e WHERE {r} GROUP BY 1", base)
             dist_fac = dict(cur.fetchall())
+            # ¿Se resolvió? (migracion_encuesta_resolucion.sql) con la satisfacción promedio de cada grupo
+            dist_res = {}
+            try:
+                cur.execute("SAVEPOINT sp_res")
+                cur.execute(f"""SELECT e.resuelta, COUNT(*), AVG(e.satisfaccion) FROM encuestas_satisfaccion e
+                                WHERE {r} AND e.resuelta IS NOT NULL GROUP BY 1""", base)
+                dist_res = {c: (n, float(p) if p is not None else None) for c, n, p in cur.fetchall()}
+                cur.execute("RELEASE SAVEPOINT sp_res")
+            except Exception:  # noqa: BLE001
+                cur.execute("ROLLBACK TO SAVEPOINT sp_res")
 
             # Dificultades, con la satisfacción promedio de quienes la marcaron (¿cuánto pesa en la experiencia?)
             cur.execute(f"""SELECT e.dificultad, COUNT(*), AVG(e.satisfaccion)
@@ -588,8 +613,16 @@ def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict
          for c, t in MEJORAS],
         key=lambda x: (x["codigo"] in ("ninguna", "otra"), -x["cantidad"]))
 
+    n_res = sum(n for n, _ in dist_res.values())
+    resolucion = {"respondieron": n_res,
+                  "opciones": [{"codigo": c, "texto": t, "cantidad": dist_res.get(c, (0, None))[0],
+                                "pct": _pct(dist_res.get(c, (0, None))[0], n_res),
+                                "satisfaccion_prom": round(dist_res[c][1], 2)
+                                if c in dist_res and dist_res[c][1] is not None else None}
+                               for c, t in RESOLUCION]}
     return {
         "disponible": True,
+        "resolucion": resolucion,
         "enviadas": enviadas, "respondidas": resp, "omitidas": omitidas,
         "tasa_respuesta": _pct(resp, enviadas),
         "sms": sms,
@@ -667,7 +700,8 @@ def exportar_xlsx(f_desde: datetime, f_hasta: datetime, campana_ids, etiqueta: s
         with conn.cursor() as cur:
             cur.execute(
                 f"""SELECT e.respondida_en, e.conversacion_id, COALESCE(cam.nombre, ''), COALESCE(a.nombre_display, ''),
-                           e.satisfaccion, e.facilidad, e.dificultad, e.dificultad_otra, e.mejoras, e.mejora_otra, e.comentario
+                           e.satisfaccion, e.facilidad, e.dificultad, e.dificultad_otra, e.mejoras, e.mejora_otra, e.comentario,
+                           e.resuelta
                     FROM encuestas_satisfaccion e
                     LEFT JOIN campanas cam ON cam.id = e.campana_id LEFT JOIN asesores a ON a.id = e.asesor_id
                     WHERE e.enviada_en >= %s AND e.enviada_en < %s AND e.respondida_en IS NOT NULL{extra}
@@ -696,6 +730,8 @@ def exportar_xlsx(f_desde: datetime, f_hasta: datetime, campana_ids, etiqueta: s
                   ("Satisfechos — 4 y 5 (%)", s.get("csat")), ("Insatisfechos — 1 y 2 (%)", s.get("insatisfechos_pct")),
                   ("Lo encontró fácil o muy fácil (%)", f.get("ces")), ("Lo encontró difícil o muy difícil (%)", f.get("dificil_pct"))]:
         ws.append([et, v])
+    for o in (est.get("resolucion") or {}).get("opciones", []):
+        ws.append([f"¿Se resolvió? {o['texto']} (%)", o["pct"]])
     ws.append([])
     ws.append(["Hallazgos"]); ws.cell(ws.max_row, 1).font = Font(bold=True)
     for h in est.get("hallazgos", []):
@@ -720,16 +756,17 @@ def exportar_xlsx(f_desde: datetime, f_hasta: datetime, campana_ids, etiqueta: s
         ws.column_dimensions[col].width = 18
 
     ws2 = wb.create_sheet("Respuestas")
-    encab = ["Fecha respuesta", "Conversación", "Campaña", "Asesor", "Satisfacción (1-5)", "Satisfacción",
+    encab = ["Fecha respuesta", "Conversación", "Campaña", "Asesor", "¿Se resolvió?", "Satisfacción (1-5)", "Satisfacción",
              "Facilidad", "Dificultad", "Otra dificultad", "Mejoras", "Otra mejora", "Comentario"]
     ws2.append(encab)
     for c in ws2[1]: c.font = cab; c.fill = relleno
-    for fr, cid, cam, ase, sa, fa, di, do, ms, mo, co in filas:
-        ws2.append([fr.astimezone(LIMA_TZ).replace(tzinfo=None), cid, limpio(cam), limpio(ase), sa, _TXT_SATISFACCION.get(sa),
+    for fr, cid, cam, ase, sa, fa, di, do, ms, mo, co, re_ in filas:
+        ws2.append([fr.astimezone(LIMA_TZ).replace(tzinfo=None), cid, limpio(cam), limpio(ase),
+                    _TXT_RESOLUCION.get(re_, ""), sa, _TXT_SATISFACCION.get(sa),
                     _TXT_FACILIDAD.get(fa), _TXT_DIFICULTAD.get(di, di), limpio(do),
                     "; ".join(_TXT_MEJORA.get(m, m) for m in (ms or [])), limpio(mo), limpio(co)])
         ws2.cell(ws2.max_row, 1).number_format = "dd/mm/yyyy hh:mm"
-    for i, w in enumerate([17, 13, 26, 20, 12, 18, 20, 32, 30, 60, 30, 70], start=1):
+    for i, w in enumerate([17, 13, 26, 20, 22, 12, 18, 20, 32, 30, 60, 30, 70], start=1):
         ws2.column_dimensions[ws2.cell(1, i).column_letter].width = w
     for fila in ws2.iter_rows(min_row=2):
         for c in fila:

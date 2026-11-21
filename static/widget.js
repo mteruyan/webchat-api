@@ -700,6 +700,11 @@
       border-radius: 10px; padding: 9px 14px; font-size: 13.5px; cursor: pointer;
     }
     .acciones-cierre button.secundario { color: ${TOKENS.textoSuave}; border-color: ${TOKENS.borde}; font-size: 12.5px; }
+    .retomar { background: #F1F7FD; border: 1.5px solid ${TOKENS.azul}; border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+    .retomar p { margin: 0 0 8px; font-size: calc(13.5px + var(--fs, 0px)); line-height: 1.45; color: ${TOKENS.texto}; }
+    .retomar button { display: block; width: 100%; background: ${TOKENS.azul}; color: white; border: none; border-radius: 10px;
+      padding: 10px 14px; font-size: calc(14px + var(--fs, 0px)); font-weight: 700; font-family: inherit; cursor: pointer; }
+    .retomar button.ret-no { background: none; color: ${TOKENS.textoSuave}; font-weight: 400; font-size: calc(12.5px + var(--fs, 0px)); padding: 6px; margin-top: 4px; }
     .formulario {
       background: white; border: 1px solid ${TOKENS.borde}; border-radius: 12px;
       padding: 14px; margin: 8px 0;
@@ -2976,7 +2981,7 @@
     const P = p.preguntas || {};
     if (!p.encuesta_id || !P.satisfaccion) return;
     if ($cuerpo.querySelector(`.encuesta[data-id="${p.encuesta_id}"]`)) return;
-    const resp = { satisfaccion: null, facilidad: null, dificultad: null, mejoras: [], dificultad_otra: "", mejora_otra: "", comentario: "" };
+    const resp = { resuelta: null, satisfaccion: null, facilidad: null, dificultad: null, mejoras: [], dificultad_otra: "", mejora_otra: "", comentario: "" };
     const card = document.createElement("div");
     card.className = "encuesta";
     card.dataset.id = String(p.encuesta_id);
@@ -3002,12 +3007,15 @@
       return b;
     }
     function actualizar() {
-      const completa = resp.satisfaccion && resp.facilidad && resp.dificultad && resp.mejoras.length;
+      const completa = (resp.resuelta || !P.resuelta) && resp.satisfaccion && resp.facilidad && resp.dificultad && resp.mejoras.length;
       $btnEnviar.disabled = !completa;
       if (completa) $error.textContent = "";
     }
 
-    // 1. Caritas 1 a 5
+    // 1. ¿Se resolvió tu solicitud? (separa el chat del servicio: p. ej. el medicamento aún no llega)
+    if (P.resuelta) opciones(P.resuelta, "resuelta", false, null);
+
+    // 2. Caritas 1 a 5
     const b1 = bloque(P.satisfaccion);
     const caras = el("div", "enc-caras");
     P.satisfaccion.opciones.forEach((o) => {
@@ -3082,7 +3090,7 @@
     opciones(P.dificultad, "dificultad", false, "dificultad_otra");
     opciones(P.mejoras, "mejoras", true, "mejora_otra");
 
-    // 5. Comentario libre (opcional)
+    // 6. Comentario libre (opcional)
     const b5 = bloque(P.comentario);
     const ta = el("textarea");
     const maxC = (P.comentario && P.comentario.max) || 1000;
@@ -3103,7 +3111,7 @@
       $btnEnviar.textContent = "Enviando...";
       $error.textContent = "";
       const respuestas = {
-        satisfaccion: resp.satisfaccion, facilidad: resp.facilidad, dificultad: resp.dificultad, mejoras: resp.mejoras,
+        resuelta: resp.resuelta, satisfaccion: resp.satisfaccion, facilidad: resp.facilidad, dificultad: resp.dificultad, mejoras: resp.mejoras,
         dificultad_otra: resp.dificultad === "otra" ? resp.dificultad_otra : "",
         mejora_otra: resp.mejoras.includes("otra") ? resp.mejora_otra : "",
         comentario: resp.comentario,
@@ -3456,6 +3464,41 @@
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && teaserVisible) cerrarTeaser(cfg); });
     setTimeout(() => { cfgTeaser = cfg; actualizarTeaser(); }, Math.max(0, Number(cfg.retraso_ms) || 0));
+  }
+
+  // "Continuar mi consulta anterior": el cliente volvió dentro de las 24 h del cierre. Salta el menú y vuelve a
+  // la misma campaña (y al mismo asesor, si está disponible).
+  function quitarRetomar() {
+    $cuerpo.querySelectorAll(".retomar").forEach((x) => x.remove());
+  }
+  function mostrarRetomar(p) {
+    if (!p || !p.anterior_id) return;
+    quitarRetomar();
+    const card = document.createElement("div");
+    card.className = "retomar";
+    const texto = document.createElement("p");
+    const hace = p.hace_min < 60 ? `hace ${p.hace_min} min` : `hace ${Math.round(p.hace_min / 60)} h`;
+    texto.textContent = `¿Vienes por tu consulta de ${p.campana} (${hace})? Puedes continuarla sin pasar por el menú` +
+      (p.asesor ? `, con ${p.asesor} si está disponible.` : ".");
+    const si = document.createElement("button");
+    si.type = "button";
+    si.textContent = "↩️ Continuar mi consulta anterior";
+    si.onclick = () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      medir("sofi_retomar", { campana: p.campana });
+      card.remove();
+      enviar({ type: "retomar_conversacion", payload: { anterior_id: p.anterior_id } });
+    };
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "ret-no";
+    no.textContent = "No, es otra consulta";
+    no.onclick = () => card.remove();
+    card.appendChild(texto);
+    card.appendChild(si);
+    card.appendChild(no);
+    $cuerpo.appendChild(card);
+    if (estaCercaDelFinal()) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   function agregarAccionesCierre() {
@@ -4161,6 +4204,9 @@
         case "aviso_cola":
           agregarMensaje(p.texto, "sistema");
           break;
+        case "retomar_disponible":
+          mostrarRetomar(p);
+          break;
         case "espera_cola":
           mostrarEsperaCola(p);
           break;
@@ -4405,6 +4451,7 @@
           break;
         }
         case "en_cola":
+          quitarRetomar();
           $estadoTexto.textContent = "En cola";
           if (!volviendoDeReposo) agregarMensaje("⏳ En breve te atenderá un asesor...", "sistema");
           volviendoDeReposo = false;

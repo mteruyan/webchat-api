@@ -1115,7 +1115,7 @@ TIPOS_SMS = {
     "invitacion": "📨 Invitación al chat", "enlace_directo": "🔗 Enlace directo", "archivo": "📎 Archivo",
     "aviso_manual": "📲 Aviso de mensaje (manual)", "aviso_respuesta": "💬 Aviso: te respondieron",
     "turno": "⏳ Aviso de turno", "encuesta": "⭐ Encuesta", "plan": "📋 Plan de salud",
-    "recordatorio_receta": "💊 Recordatorio de receta", "seguimiento": "📣 Seguimiento", "otro": "✉️ SMS",
+    "recordatorio_receta": "💊 Recordatorio de receta", "aviso_cierre": "🔔 Aviso al cerrar", "seguimiento": "📣 Seguimiento", "otro": "✉️ SMS",
 }
 _sms_sin_tabla_avisado = False
 

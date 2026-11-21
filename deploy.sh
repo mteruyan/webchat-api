@@ -48,10 +48,10 @@
 #   Fase 2:  MAX_INSTANCIAS=2 ./deploy.sh   -> mínimo 1, máximo 2, con afinidad de sesión
 # Emergencia: BUS_ACTIVO=no apaga el bus (solo válido con 1 instancia).
 MAX_INSTANCIAS="${MAX_INSTANCIAS:-1}"
-if [ "$MAX_INSTANCIAS" -gt 1 ]; then DB_POOL_MAX=12; else DB_POOL_MAX=20; fi
+if [ "$MAX_INSTANCIAS" -gt 1 ]; then DB_POOL_MAX=10; else DB_POOL_MAX=20; fi
 # --no-cpu-throttling: la CPU queda siempre asignada (el aviso de inactividad corre en segundo plano).
 # Las conexiones de Cloud SQL (db-g1-small) se comparten con sofi-apis y otros: por instancia = DB_POOL_MAX + sofi 3 +
-# recetas 2 + bus 2. Con 2 instancias: 2 x 19 = 38 (antes 1 x 25). Revisar SHOW max_connections antes de la fase 2.
+# recetas 2 + bus 2. Con 2 instancias: 2 x 17 = 34 (antes 1 x 27). max_connections = 50 (20/11): quedan ~9 para sofi-apis y otros.
 
 # Nota sobre --set-env-vars: usamos el delimitador alterno "^;^" (en vez del
 # "," por defecto) precisamente para que ALLOWED_ORIGINS pueda llevar varias

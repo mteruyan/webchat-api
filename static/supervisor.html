@@ -1895,6 +1895,30 @@ function mostrarAvisoOtraPestana() {
 
 // Encuesta recién respondida que conviene revisar (solo le llega al supervisor máximo): una queja de un tema
 // que ya se había corregido, o un cliente insatisfecho. Queda en pantalla hasta cerrarla.
+// ⏱️ Conversaciones asignadas sin primera respuesta del asesor (umbral: alerta_primera_respuesta_min en el Editor).
+function mostrarAlertaPrimeraRespuesta(p) {
+  const items = (p && p.items) || [];
+  if (!items.length) return;
+  let cont = document.getElementById('alertasEncuesta');
+  if (!cont) {
+    cont = document.createElement('div');
+    cont.id = 'alertasEncuesta';
+    cont.setAttribute('aria-live', 'polite');
+    cont.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:99999;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 32px));';
+    document.body.appendChild(cont);
+  }
+  const caja = document.createElement('div');
+  caja.style.cssText = 'background:#fff;border:1px solid #E1E8F0;border-left:5px solid #B8650A;border-radius:10px;padding:12px 34px 12px 14px;box-shadow:0 10px 30px rgba(16,35,58,.18);font-size:13px;line-height:1.45;position:relative;';
+  caja.innerHTML = `<div style="font-weight:700;margin-bottom:4px">⏱️ ${items.length === 1 ? 'Un cliente espera' : items.length + ' clientes esperan'} la primera respuesta del asesor</div>
+    ${items.slice(0, 6).map(i => `<div>#${Number(i.conversacion_id)} ${escapeHtml(i.cliente || '')} — ${escapeHtml(i.asesor || '')} · ${Number(i.minutos) || 0} min</div>`).join('')}
+    ${items.length > 6 ? `<div style="color:#4A5B70">y ${items.length - 6} más…</div>` : ''}
+    <button type="button" aria-label="Cerrar" style="position:absolute;top:6px;right:8px;border:0;background:none;font-size:18px;cursor:pointer;color:#4A5B70">×</button>`;
+  caja.querySelector('button').onclick = () => caja.remove();
+  cont.appendChild(caja);
+  while (cont.children.length > 4) cont.firstChild.remove();
+  setTimeout(() => caja.remove(), 180000);
+}
+
 function mostrarAlertaEncuesta(p) {
   let cont = document.getElementById('alertasEncuesta');
   if (!cont) {
@@ -2145,6 +2169,8 @@ function conectarWs() {
       aplicarPermisosSupervisor(p);
     } else if (data.type === 'alerta_encuesta') {
       mostrarAlertaEncuesta(p);
+    } else if (data.type === 'alerta_primera_respuesta') {
+      mostrarAlertaPrimeraRespuesta(p);
     } else if (data.type === 'error_permiso') {
       alert(p.motivo || 'No tienes permiso para esa acción.');
     } else if (data.type === 'campanas_admin') {

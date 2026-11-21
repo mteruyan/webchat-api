@@ -7,6 +7,10 @@ Reglas (para una conversación con asesor, sobre las respuestas del asesor o sup
   - SMS a los 3 minutos sin leer, solo si no le llegó un push por esas respuestas. Máximo 1 SMS cada 30 minutos
     por conversación, y solo si hay respuestas nuevas desde el último SMS.
 
+Al cerrar (asesor o supervisor), si quedó sin leer una respuesta "importante" (empieza o contiene el marcador
+configurable aviso_cierre_marcador, por defecto 💊: coordinación de recetas), se avisa igual: push y, si no le
+llegó, SMS con el texto del mensaje (ver pendiente_al_cerrar y main._avisar_al_cerrar). Las demás despedidas no.
+
 "Leído" = el widget abierto y visible en pantalla (mensajes.leido_en). Si el cliente escribió después de la
 respuesta, también se da por leída.
 
@@ -15,6 +19,8 @@ nada y el chat sigue igual.
 """
 
 import logging
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from db import get_connection, release_connection
@@ -128,6 +134,65 @@ def pendientes(ahora: datetime | None = None) -> list[dict]:
         release_connection(conn)
 
 
+def texto_para_sms(texto: str, maximo: int = 110) -> str:
+    """Primera línea útil del mensaje, sin emojis ni tildes (así el SMS admite 160 caracteres)."""
+    for linea in (texto or "").splitlines():
+        plano = unicodedata.normalize("NFKD", linea).encode("ascii", "ignore").decode("ascii")
+        plano = re.sub(r"\s+", " ", plano).strip().lstrip(".-*_ ").rstrip()
+        if len(plano) >= 8:
+            if len(plano) > maximo:
+                return plano[:maximo - 3].rstrip() + "..."
+            return plano if plano[-1] in ".!?" else plano + "."
+    return ""
+
+
+def contacto(conversacion_id: int) -> dict | None:
+    """Celular, token del widget y nombre del asesor de una conversación (para avisarle por fuera del chat)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR'), u.sesion_token,
+                          COALESCE(a.nombre_display, '')
+                   FROM conversaciones c JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   LEFT JOIN asesores a ON a.id = c.asesor_id WHERE c.id = %s""", (conversacion_id,))
+            fila = cur.fetchone()
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    return {"telefono": fila[0], "sesion_token": fila[1], "asesor": fila[2]} if fila else None
+
+
+def pendiente_al_cerrar(conversacion_id: int, marcador: str, minutos: int = 30) -> dict | None:
+    """Respuesta importante (contiene el marcador) que el cliente no leyó ni contestó, enviada en los últimos
+    minutos de una conversación recién cerrada: {"texto", "telefono", "sesion_token", "asesor"} o None."""
+    if not marcador:
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT m.contenido, COALESCE(NULLIF(u.telefono, ''), c.variables_sesion->>'CELULAR'),
+                          u.sesion_token, COALESCE(a.nombre_display, '')
+                   FROM mensajes m
+                   JOIN conversaciones c ON c.id = m.conversacion_id
+                   JOIN usuarios_webchat u ON u.id = c.usuario_id
+                   LEFT JOIN asesores a ON a.id = c.asesor_id
+                   WHERE m.conversacion_id = %s AND m.emisor_tipo IN ('asesor', 'supervisor')
+                     AND m.leido_en IS NULL AND m.enviado_en > %s AND strpos(m.contenido, %s) > 0
+                     AND NOT EXISTS (SELECT 1 FROM mensajes mu WHERE mu.conversacion_id = m.conversacion_id
+                                       AND mu.emisor_tipo = 'usuario' AND mu.enviado_en > m.enviado_en)
+                   ORDER BY m.enviado_en DESC LIMIT 1""",
+                (conversacion_id, datetime.now(LIMA_TZ) - timedelta(minutes=minutos), marcador))
+            fila = cur.fetchone()
+        conn.rollback()
+    finally:
+        release_connection(conn)
+    if fila is None:
+        return None
+    return {"texto": fila[0], "telefono": fila[1], "sesion_token": fila[2], "asesor": fila[3]}
+
+
 def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict:
     """Para el dashboard: qué tan rápido leen los clientes las respuestas del asesor y qué avisos se enviaron."""
     filtro, extra = "", []
@@ -138,22 +203,30 @@ def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict
         with conn.cursor() as cur:
             # Momento en que el cliente "vio" cada respuesta: la marca de lectura, o su siguiente mensaje si
             # contestó antes (le respondió al asesor, así que la leyó).
+            # Despedida = la ÚLTIMA respuesta del asesor, con la conversación cerrada antes de 3 min (el SMS no
+            # alcanza a salir y no hay nada que el cliente necesite leer): no cuenta en estas cifras.
             base = f"""WITH r AS (
-                    SELECT m.enviado_en,
+                    SELECT m.enviado_en, m.conversacion_id,
                            LEAST(m.leido_en, (SELECT MIN(mu.enviado_en) FROM mensajes mu
                                               WHERE mu.conversacion_id = m.conversacion_id AND mu.emisor_tipo = 'usuario'
                                                 AND mu.enviado_en > m.enviado_en)) AS visto_en
                     FROM mensajes m JOIN conversaciones c ON c.id = m.conversacion_id
-                    WHERE m.emisor_tipo IN ('asesor', 'supervisor') AND m.enviado_en >= %s AND m.enviado_en < %s{filtro})"""
+                    WHERE m.emisor_tipo IN ('asesor', 'supervisor') AND m.enviado_en >= %s AND m.enviado_en < %s{filtro}
+                      AND NOT (c.cerrado_en IS NOT NULL AND c.cerrado_en < m.enviado_en + interval '3 minutes'
+                               AND NOT EXISTS (SELECT 1 FROM mensajes m2 WHERE m2.conversacion_id = m.conversacion_id
+                                                 AND m2.emisor_tipo IN ('asesor', 'supervisor')
+                                                 AND m2.enviado_en > m.enviado_en)))"""
             cur.execute(
                 base + """
                 SELECT COUNT(*),
                        COUNT(*) FILTER (WHERE visto_en - enviado_en <= interval '5 minutes'),
                        COUNT(*) FILTER (WHERE visto_en IS NULL),
                        percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM visto_en - enviado_en))
-                           FILTER (WHERE visto_en IS NOT NULL)
+                           FILTER (WHERE visto_en IS NOT NULL),
+                       COUNT(DISTINCT conversacion_id),
+                       COUNT(DISTINCT conversacion_id) FILTER (WHERE visto_en IS NOT NULL)
                 FROM r""", [f_desde, f_hasta] + extra)
-            total, en_5, nunca, mediana = cur.fetchone()
+            total, en_5, nunca, mediana, convs, convs_leyo = cur.fetchone()
             cur.execute(
                 base + """
                 SELECT (enviado_en AT TIME ZONE 'America/Lima')::date, COUNT(*),
@@ -190,6 +263,8 @@ def estadisticas(f_desde: datetime, f_hasta: datetime, campana_ids=None) -> dict
         "leidas_5min": en_5, "pct_leidas_5min": round(en_5 * 100.0 / total, 1) if total else None,
         "nunca_leidas": nunca, "pct_nunca_leidas": round(nunca * 100.0 / total, 1) if total else None,
         "mediana_min": round(float(mediana) / 60, 1) if mediana is not None else None,
+        "conversaciones": convs, "conversaciones_leyo": convs_leyo,
+        "pct_conversaciones_leyo": round(convs_leyo * 100.0 / convs, 1) if convs else None,
         "por_dia": por_dia,
         "avisos": avisos,
     }

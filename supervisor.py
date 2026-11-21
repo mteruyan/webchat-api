@@ -1193,6 +1193,9 @@ def filtrar_evento(evento: dict, alcance):
         if "campanas" in p:
             out["campanas"] = [c for c in p["campanas"] if c.get("id") in alcance["ids"]]
         return {**evento, "payload": out}
+    if tipo == "alerta_primera_respuesta":
+        items = [i for i in (p.get("items") or []) if i.get("campana_id") in alcance["ids"]]
+        return {**evento, "payload": {**p, "items": items}} if items else None
     if tipo == "horarios_actuales":
         return {**evento, "payload": {**p, "campanas": [c for c in (p.get("campanas") or []) if c.get("codigo") in alcance["codigos"]]}}
     if tipo == "feriados_actuales":

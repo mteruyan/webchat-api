@@ -1310,7 +1310,8 @@ function renderAvisos(d) {
   let html = `<div class="enc-kpis">
     ${kpi(fmtPct(d.pct_leidas_5min), 'Leídas en menos de 5 min', `${d.leidas_5min} de ${d.respuestas} respuestas del asesor`, 'var(--verde)')}
     ${kpi(fmtNum(d.mediana_min, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> min</small>', 'Tiempo típico hasta leerla', 'mediana, de las que sí se leyeron')}
-    ${kpi(fmtPct(d.pct_nunca_leidas), 'Nunca leídas', `${d.nunca_leidas} respuestas`, 'var(--rojo)')}`;
+    ${kpi(fmtPct(d.pct_nunca_leidas), 'Nunca leídas', `${d.nunca_leidas} respuestas`, 'var(--rojo)')}
+    ${d.conversaciones ? kpi(fmtPct(d.pct_conversaciones_leyo), 'Conversaciones con respuesta leída', `${d.conversaciones_leyo} de ${d.conversaciones} conversaciones`, 'var(--verde)') : ''}`;
   if (a.disponible === false) {
     html += `</div><div class="vacio-panel">Para ver los avisos enviados falta ejecutar <b>migracion_avisos_cliente.sql</b>.</div>`;
   } else {
@@ -1324,7 +1325,7 @@ function renderAvisos(d) {
       <div class="enc-dias">${d.por_dia.map(x => `<div class="d" title="${escapaHtml(x.dia.split('-').reverse().join('/'))}: ${x.respuestas} respuestas · ${fmtPct(x.pct_5min)} leídas en menos de 5 min">
         <span>${x.pct_5min == null ? '' : Math.round(x.pct_5min) + '%'}</span><i style="height:${x.respuestas / maxR * 85}%;background:${x.pct_5min >= 70 ? 'var(--verde)' : (x.pct_5min >= 40 ? 'var(--naranja)' : 'var(--rojo)')}"></i></div>`).join('')}</div>`;
   }
-  html += `<p class="nota-panel">«Leída» = el cliente tenía el chat abierto y visible en pantalla (o le contestó al asesor). Si no la lee, se le avisa: notificación push al instante si la activó, y un SMS a los 3 minutos si no le llegó ninguna notificación (máximo 1 SMS cada 30 minutos por conversación).</p>`;
+  html += `<p class="nota-panel">«Leída» = el cliente tenía el chat abierto y visible en pantalla (o le contestó al asesor). No se cuenta la despedida: la última respuesta cuando se cierra la conversación antes de 3 minutos. Si no la lee, se le avisa: notificación push al instante si la activó, y un SMS a los 3 minutos si no le llegó ninguna notificación (máximo 1 SMS cada 30 minutos por conversación). Al cerrar con una respuesta importante sin leer (marcador 💊: recetas) se le avisa igual.</p>`;
   return html;
 }
 async function cargarAvisos(desde, hasta) {
@@ -1367,6 +1368,13 @@ function renderTextosEncuesta() {
       <div class="extra" style="color:var(--texto-suave)">Facilidad: ${escapaHtml(t.facilidad || '–')} · Dificultad: ${escapaHtml(t.dificultad || '–')}${t.mejoras && t.mejoras.length ? ' · Pidió: ' + escapaHtml(t.mejoras.join(', ')) : ''}</div>
     </div>`).join('');
 }
+// ¿Se resolvió su solicitud? Con la satisfacción de cada grupo: muestra cuánto de la nota es el servicio de fondo.
+function resolucionKpi(r, kpi) {
+  if (!r || !r.respondieron) return '';
+  const o = {}; (r.opciones || []).forEach(x => { o[x.codigo] = x; });
+  const sat = x => (x && x.satisfaccion_prom != null) ? ` (satisf. ${fmtNum(x.satisfaccion_prom, 1)})` : '';
+  return kpi(fmtPct(o.si && o.si.pct), 'Solicitud resuelta', `Sí${sat(o.si)} · en proceso ${fmtPct(o.en_proceso && o.en_proceso.pct)}${sat(o.en_proceso)} · no ${fmtPct(o.no && o.no.pct)}${sat(o.no)} — ${r.respondieron} respuestas`, 'var(--verde)');
+}
 // Números gruesos de la encuesta: es lo único que se muestra en la vista General (el detalle está en la vista Encuesta).
 function encuestaKpis(d) {
   if (!d || d.disponible === false) return '<div class="vacio-panel">Aún no hay datos: falta ejecutar <b>migracion_encuesta_satisfaccion.sql</b> en la base de datos.</div>';
@@ -1375,9 +1383,10 @@ function encuestaKpis(d) {
   const kpi = (num, et, det, color) => `<div class="enc-kpi"><div class="numero" style="color:${color || 'var(--azul)'}">${num}</div><div class="etiqueta">${et}</div>${det ? `<div class="detalle">${det}</div>` : ''}</div>`;
   return `<div class="enc-kpis">
     ${kpi(d.respondidas, 'Respuestas', `de ${d.enviadas} enviadas · ${fmtPct(d.tasa_respuesta)} responde${d.omitidas ? ' · ' + d.omitidas + ' «Ahora no»' : ''}${d.sms && d.sms.enviados ? ' · por SMS: ' + d.sms.respondidas + ' de ' + d.sms.enviados + ' (' + fmtPct(d.sms.tasa_respuesta) + ')' : ''}`)}
-    ${kpi(fmtNum(s.promedio, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> / 5</small>', 'Satisfacción promedio', 'pregunta 1', s.promedio == null ? null : colorSatisf(Math.round(s.promedio)))}
+    ${kpi(fmtNum(s.promedio, 1) + '<small style="font-size:14px;color:var(--texto-suave)"> / 5</small>', 'Satisfacción promedio', 'pregunta 2', s.promedio == null ? null : colorSatisf(Math.round(s.promedio)))}
     ${kpi(fmtPct(s.csat), 'Satisfechos (4 y 5)', `${fmtPct(s.insatisfechos_pct)} insatisfechos (1 y 2)`, 'var(--verde)')}
     ${kpi(fmtPct(f.ces), 'Le resultó fácil', `fácil o muy fácil · ${fmtPct(f.dificil_pct)} difícil`, 'var(--azul)')}
+    ${resolucionKpi(d.resolucion, kpi)}
   </div>${d.respondidas ? '' : '<div class="vacio-panel">Todavía nadie respondió en este período.</div>'}`;
 }
 function renderEncuesta(d) {
