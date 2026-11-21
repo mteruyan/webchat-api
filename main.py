@@ -48,6 +48,7 @@ import api_handlers
 import bot_engine
 from api_handlers import enviar_sms_danaconnect, _generar_codigo_otp, validar_horario_consultas
 import asignacion
+import bus
 import enlaces_directos
 import auth
 import reportes
@@ -1270,11 +1271,105 @@ class ConnectionManager:
         # no llega a un asesor (mismo concepto que `escuchas`, pero para asesores).
         self.escuchas_asesor: dict[int, set] = {}                # conversacion_id -> {asesor_id, ...}
 
+    # --- Varias instancias (bus.py): presencia compartida y entrega en las otras instancias -----------------
+    def widget_conectado(self, conversacion_id: int) -> bool:
+        return conversacion_id in self.widget_connections or str(conversacion_id) in bus.remotos("widget")
+
+    def widgets_conectados(self) -> list:
+        ids = set(self.widget_connections)
+        for k in bus.remotos("widget"):
+            with contextlib.suppress(ValueError):
+                ids.add(int(k))
+        return list(ids)
+
+    def asesor_conectado(self, asesor_id: int) -> bool:
+        return asesor_id in self.asesor_connections or str(asesor_id) in bus.remotos("asesor")
+
+    def asesores_conectados(self) -> list:
+        ids = set(self.asesor_connections)
+        for k in bus.remotos("asesor"):
+            with contextlib.suppress(ValueError):
+                ids.add(int(k))
+        return list(ids)
+
+    def supervisores_conectados(self) -> list:
+        ids = set(self.supervisor_connections)
+        for k in bus.remotos("supervisor"):
+            with contextlib.suppress(ValueError):
+                ids.add(int(k))
+        return list(ids)
+
+    def hay_escuchas(self, conversacion_id: int) -> bool:
+        if self.escuchas.get(conversacion_id) or self.escuchas_asesor.get(conversacion_id):
+            return True
+        prefijo = f"{conversacion_id}:"
+        return any(k.startswith(prefijo) for k in bus.remotos("escucha_sup")) or \
+            any(k.startswith(prefijo) for k in bus.remotos("escucha_ase"))
+
+    def marcar_visible(self, conversacion_id: int, visible: bool):
+        self.widget_visible[conversacion_id] = visible
+        bus.presencia("widget", conversacion_id, True, visible)
+
+    async def _cerrar_local(self, tipo: str, clave: int):
+        """Otra instancia abrió la misma sesión (otro dispositivo/pestaña): se cierra la de aquí avisándole."""
+        if tipo == "widget":
+            ws = self.widget_connections.pop(clave, None)
+            self.widget_visible.pop(clave, None)
+            aviso = "sesion_en_otro_dispositivo"
+        elif tipo == "asesor":
+            ws = self.asesor_connections.pop(clave, None)
+            self.quitar_todas_escuchas_asesor(clave)
+            aviso = "sesion_en_otra_pestana"
+        elif tipo == "supervisor":
+            ws = self.supervisor_connections.pop(clave, None)
+            self.supervisor_alcance.pop(clave, None)
+            for conversacion_id, escuchando in self.escuchas.items():
+                if clave in escuchando:
+                    escuchando.discard(clave)
+                    bus.presencia("escucha_sup", f"{conversacion_id}:{clave}", False)
+            aviso = "sesion_en_otra_pestana"
+        else:
+            return
+        if ws is not None:
+            bus.presencia(tipo, clave, False)
+        if ws is not None:
+            try:
+                await ws.send_json({"type": aviso, "payload": {}})
+                await ws.close(code=4000)
+            except Exception:
+                pass
+
+    async def recibir_del_bus(self, msg: dict):
+        """Mensaje de otra instancia: se entrega solo a las conexiones de esta."""
+        t, d, e = msg.get("t"), msg.get("d"), msg.get("e") or {}
+        if t == "w":
+            ws = self.widget_connections.get(d)
+            if ws:
+                with contextlib.suppress(Exception):
+                    await ws.send_json(e)
+        elif t == "a":
+            ws = self.asesor_connections.get(d)
+            if ws:
+                with contextlib.suppress(Exception):
+                    await ws.send_json(e)
+        elif t == "s":
+            await self._enviar_supervisor_local(d, e)
+        elif t == "S":
+            await self._enviar_todos_supervisores_local(e)
+        elif t == "A":
+            await self._enviar_todos_asesores_local(e)
+        elif t == "esc":
+            await self._notificar_escuchas_local(d, e)
+        elif t == "cerrar":
+            await self._cerrar_local((msg.get("x") or {}).get("quien"), d)
+
     async def connect_widget(self, conversacion_id: int, ws: WebSocket):
         await ws.accept()
         anterior = self.widget_connections.get(conversacion_id)
         self.widget_connections[conversacion_id] = ws
         self.widget_visible[conversacion_id] = True
+        bus.publicar("cerrar", conversacion_id, quien="widget")
+        bus.presencia("widget", conversacion_id, True, True)
         if anterior is not None and anterior is not ws:
             # La misma conversación se abrió en otro dispositivo o pestaña (p. ej. tras
             # escanear el QR): la conexión vieja se cierra avisándole, para que no
@@ -1291,22 +1386,28 @@ class ConnectionManager:
         (iniciar_nueva_conversacion / reiniciar_datos)."""
         self.widget_connections[conversacion_id] = ws
         self.widget_visible[conversacion_id] = True
+        bus.presencia("widget", conversacion_id, True, True)
 
     def disconnect_widget(self, conversacion_id: int, ws: WebSocket = None):
         """Con `ws`, solo quita el registro si esa sigue siendo LA conexión vigente
         (una conexión desplazada por otro dispositivo no debe borrar a la nueva)."""
         if ws is not None and self.widget_connections.get(conversacion_id) is not ws:
             return
-        self.widget_connections.pop(conversacion_id, None)
+        if self.widget_connections.pop(conversacion_id, None) is not None:
+            bus.presencia("widget", conversacion_id, False)
         self.widget_visible.pop(conversacion_id, None)
 
     def cliente_mirando(self, conversacion_id: int) -> bool:
-        return conversacion_id in self.widget_connections and self.widget_visible.get(conversacion_id, True)
+        if conversacion_id in self.widget_connections:
+            return self.widget_visible.get(conversacion_id, True)
+        return bus.remotos("widget").get(str(conversacion_id), False)
 
     async def connect_asesor(self, asesor_id: int, ws: WebSocket):
         await ws.accept()
         anterior = self.asesor_connections.get(asesor_id)
         self.asesor_connections[asesor_id] = ws
+        bus.publicar("cerrar", asesor_id, quien="asesor")
+        bus.presencia("asesor", asesor_id, True)
         await self._cerrar_conexion_anterior(anterior, ws)
 
     @staticmethod
@@ -1331,24 +1432,30 @@ class ConnectionManager:
 
     def disconnect_asesor(self, asesor_id: int):
         self.asesor_connections.pop(asesor_id, None)
-        for ayudando in self.escuchas_asesor.values():
-            ayudando.discard(asesor_id)
+        bus.presencia("asesor", asesor_id, False)
+        self.quitar_todas_escuchas_asesor(asesor_id)
 
     def registrar_escucha_asesor(self, asesor_id: int, conversacion_id: int):
         self.escuchas_asesor.setdefault(conversacion_id, set()).add(asesor_id)
+        bus.presencia("escucha_ase", f"{conversacion_id}:{asesor_id}", True)
 
     def quitar_escucha_asesor(self, asesor_id: int, conversacion_id: int):
         self.escuchas_asesor.get(conversacion_id, set()).discard(asesor_id)
+        bus.presencia("escucha_ase", f"{conversacion_id}:{asesor_id}", False)
 
     def quitar_todas_escuchas_asesor(self, asesor_id: int):
-        for ayudando in self.escuchas_asesor.values():
-            ayudando.discard(asesor_id)
+        for conversacion_id, ayudando in self.escuchas_asesor.items():
+            if asesor_id in ayudando:
+                ayudando.discard(asesor_id)
+                bus.presencia("escucha_ase", f"{conversacion_id}:{asesor_id}", False)
 
     async def connect_supervisor(self, supervisor_id: int, ws: WebSocket, alcance: dict | None = None):
         await ws.accept()
         anterior = self.supervisor_connections.get(supervisor_id)
         self.supervisor_connections[supervisor_id] = ws
         self.supervisor_alcance[supervisor_id] = alcance
+        bus.publicar("cerrar", supervisor_id, quien="supervisor")
+        bus.presencia("supervisor", supervisor_id, True)
         await self._cerrar_conexion_anterior(anterior, ws)
 
     def es_conexion_vigente_supervisor(self, supervisor_id: int, ws: WebSocket) -> bool:
@@ -1359,23 +1466,35 @@ class ConnectionManager:
     def disconnect_supervisor(self, supervisor_id: int):
         self.supervisor_connections.pop(supervisor_id, None)
         self.supervisor_alcance.pop(supervisor_id, None)
-        for escuchando in self.escuchas.values():
-            escuchando.discard(supervisor_id)
+        bus.presencia("supervisor", supervisor_id, False)
+        for conversacion_id, escuchando in self.escuchas.items():
+            if supervisor_id in escuchando:
+                escuchando.discard(supervisor_id)
+                bus.presencia("escucha_sup", f"{conversacion_id}:{supervisor_id}", False)
 
     def registrar_escucha(self, supervisor_id: int, conversacion_id: int):
         self.escuchas.setdefault(conversacion_id, set()).add(supervisor_id)
+        bus.presencia("escucha_sup", f"{conversacion_id}:{supervisor_id}", True)
 
     def quitar_escucha(self, supervisor_id: int, conversacion_id: int):
         self.escuchas.get(conversacion_id, set()).discard(supervisor_id)
+        bus.presencia("escucha_sup", f"{conversacion_id}:{supervisor_id}", False)
 
     async def enviar_a_widget(self, conversacion_id: int, evento: dict):
         ws = self.widget_connections.get(conversacion_id)
+        remoto = None
         if ws:
             try:
                 await ws.send_json(evento)
             except Exception:
                 ws = None   # conexión muerta (celular en segundo plano): que igual le llegue el aviso
-        if evento.get("type") in ("mensaje_asesor", "archivo_asesor") and not (ws and self.widget_visible.get(conversacion_id, True)):
+        else:
+            # ¿Conectado en otra instancia? Se le manda por el bus; el aviso push depende de si allá está mirando.
+            remoto = bus.remotos("widget").get(str(conversacion_id))
+            if remoto is not None:
+                bus.publicar("w", conversacion_id, evento)
+        mirando = (ws and self.widget_visible.get(conversacion_id, True)) or bool(remoto)
+        if evento.get("type") in ("mensaje_asesor", "archivo_asesor") and not mirando:
             # El cliente cerró la ventana/app o no está mirando el chat: le llega un aviso push (si activó avisos).
             _lanzar_aviso_push(conversacion_id,
                                "archivo" if evento.get("type") == "archivo_asesor" else "respuesta",
@@ -1385,34 +1504,66 @@ class ConnectionManager:
         ws = self.asesor_connections.get(asesor_id)
         if ws:
             await ws.send_json(evento)
+        elif str(asesor_id) in bus.remotos("asesor"):
+            bus.publicar("a", asesor_id, evento)
+
+    async def _enviar_supervisor_local(self, supervisor_id: int, evento: dict) -> bool:
+        ws = self.supervisor_connections.get(supervisor_id)
+        if not ws:
+            return False
+        # Un supervisor de campaña solo recibe lo de sus campañas (ver supervisor.filtrar_evento).
+        evento = supervisor.filtrar_evento(evento, self.supervisor_alcance.get(supervisor_id))
+        if evento is not None:
+            await ws.send_json(evento)
+        return True
 
     async def enviar_a_supervisor(self, supervisor_id: int, evento: dict):
-        ws = self.supervisor_connections.get(supervisor_id)
-        if ws:
-            # Un supervisor de campaña solo recibe lo de sus campañas (ver supervisor.filtrar_evento).
-            evento = supervisor.filtrar_evento(evento, self.supervisor_alcance.get(supervisor_id))
-            if evento is not None:
-                await ws.send_json(evento)
+        if not await self._enviar_supervisor_local(supervisor_id, evento) and \
+                str(supervisor_id) in bus.remotos("supervisor"):
+            bus.publicar("s", supervisor_id, evento)
 
-    async def enviar_a_todos_supervisores(self, evento: dict):
+    async def _enviar_todos_supervisores_local(self, evento: dict):
         for supervisor_id, ws in list(self.supervisor_connections.items()):
             e = supervisor.filtrar_evento(evento, self.supervisor_alcance.get(supervisor_id))
             if e is not None:
-                await ws.send_json(e)
+                with contextlib.suppress(Exception):
+                    await ws.send_json(e)
+
+    async def enviar_a_todos_supervisores(self, evento: dict):
+        await self._enviar_todos_supervisores_local(evento)
+        if bus.remotos("supervisor"):
+            bus.publicar("S", None, evento)
+
+    async def _enviar_todos_asesores_local(self, evento: dict):
+        for ws in list(self.asesor_connections.values()):
+            with contextlib.suppress(Exception):
+                await ws.send_json(evento)
 
     async def enviar_a_todos_asesores(self, evento: dict):
-        for ws in self.asesor_connections.values():
-            await ws.send_json(evento)
+        await self._enviar_todos_asesores_local(evento)
+        if bus.remotos("asesor"):
+            bus.publicar("A", None, evento)
 
     async def notificar_escuchas(self, conversacion_id: int, evento: dict):
+        await self._notificar_escuchas_local(conversacion_id, evento)
+        prefijo = f"{conversacion_id}:"
+        if any(k.startswith(prefijo) for k in bus.remotos("escucha_sup")) or \
+                any(k.startswith(prefijo) for k in bus.remotos("escucha_ase")):
+            bus.publicar("esc", conversacion_id, evento)
+
+    async def _notificar_escuchas_local(self, conversacion_id: int, evento: dict):
         for supervisor_id in list(self.escuchas.get(conversacion_id, set())):
-            await self.enviar_a_supervisor(supervisor_id, evento)
+            with contextlib.suppress(Exception):
+                await self._enviar_supervisor_local(supervisor_id, evento)
         # Asesores que están ayudando en el bot a esta conversación: reciben el
         # mismo evento envuelto, para que la consola de asesor no lo confunda
         # con los eventos de sus propias conversaciones asignadas.
         for asesor_id in list(self.escuchas_asesor.get(conversacion_id, set())):
+            ws = self.asesor_connections.get(asesor_id)
+            if ws is None:
+                continue
             try:
-                await self.enviar_a_asesor(asesor_id, {
+                await ws.send_json({
                     "type": "ayuda_bot_evento",
                     "payload": {"evento": evento.get("type"), **(evento.get("payload") or {})},
                 })
@@ -1512,7 +1663,7 @@ def _registrar_origen(conversacion_id: int, origen, pagina=None):
 def _hay_escuchas(conversacion_id: int) -> bool:
     """True si algún supervisor está escuchando o algún asesor está ayudando
     en el bot a esta conversación."""
-    return bool(manager.escuchas.get(conversacion_id) or manager.escuchas_asesor.get(conversacion_id))
+    return manager.hay_escuchas(conversacion_id)
 
 
 def _ultimo_mensaje_id(conversacion_id: int) -> int:
@@ -2234,7 +2385,7 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
     datos_encuesta = None
     try:
         datos_encuesta = await asyncio.to_thread(encuesta.crear_si_corresponde, conversacion_id)
-        if datos_encuesta and conversacion_id in manager.widget_connections:
+        if datos_encuesta and manager.widget_conectado(conversacion_id):
             await manager.enviar_a_widget(conversacion_id, {"type": "encuesta_satisfaccion", "payload": datos_encuesta})
             # Solo cuenta como vista si tenía el chat a la vista; si no, puede recibirla por SMS (encuesta_sms_activo).
             if manager.cliente_mirando(conversacion_id):
@@ -2579,7 +2730,7 @@ def _validaciones_pendientes() -> list:
             continue
         lista.append({"conversacion_id": cid, "celular": celular or "", "nombre": nombre or "Cliente",
                       "dni": dni or "", "pedido_en": pedido_dt.isoformat(),
-                      "en_linea": cid in manager.widget_connections,
+                      "en_linea": manager.widget_conectado(cid),
                       "entrada_cola": entrada_cola.isoformat() if entrada_cola else None})
     return lista
 
@@ -3067,6 +3218,17 @@ _TIPOS_FIABLES_STAFF = {"mensaje_asesor", "mensaje_asesor_archivo", "responder_d
 _cids_widget: dict = {}
 
 
+async def _registrar_cid(token: str, cid: str) -> bool:
+    """Como _registrar_cid_widget, pero también mira las otras instancias (widget_cids): tras un reinicio o un
+    cambio de instancia el widget reenvía lo que no tenía confirmado y no se debe procesar dos veces."""
+    if cid in _cids_widget.get(token, []):
+        return False
+    nuevo = await asyncio.to_thread(bus.cid_nuevo, token, cid)
+    if nuevo is False:
+        return False
+    return _registrar_cid_widget(token, cid)
+
+
 def _registrar_cid_widget(token: str, cid: str) -> bool:
     """True si el cid es nuevo (hay que procesarlo); False si ya se procesó (reenvío tras un corte de red)."""
     vistos = _cids_widget.setdefault(token, [])
@@ -3259,7 +3421,9 @@ async def _validar_celular_manual(conversacion_id, supervisor_id: int) -> dict:
     pendiente = await asyncio.to_thread(_validacion_pendiente, conversacion_id)
     if not pendiente:
         return {"ok": False, "motivo": "Esta conversación ya no está esperando el código de validación."}
-    ws_cliente = manager.widget_connections.get(conversacion_id)
+    # Conectado aquí o en otra instancia (entonces se le habla por el bus, ver _WidgetPorManager).
+    ws_cliente = manager.widget_connections.get(conversacion_id) or (
+        _WidgetPorManager(conversacion_id) if manager.widget_conectado(conversacion_id) else None)
     if ws_cliente is None:
         return {"ok": False, "motivo": "El cliente no tiene el chat abierto en este momento. Pídele que lo abra "
                                        "(sin cerrar la página) y vuelve a intentarlo."}
@@ -3502,7 +3666,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
             cid_actual = None
             if tipo in _TIPOS_FIABLES and payload.get("cid"):
                 cid_actual = str(payload.get("cid"))[:64]
-                if not _registrar_cid_widget(nuevo_token, cid_actual):
+                if not await _registrar_cid(nuevo_token, cid_actual):
                     await websocket.send_json({"type": "mensaje_recibido_servidor",
                                                "payload": {"cid": cid_actual, "dup": True}})
                     continue
@@ -3534,7 +3698,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         continue
 
                     if tipo == "visibilidad":
-                        manager.widget_visible[conversacion_id] = bool(payload.get("visible"))
+                        manager.marcar_visible(conversacion_id, bool(payload.get("visible")))
                         continue
 
                     if tipo == "ping":
@@ -3984,7 +4148,8 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
         manager.disconnect_widget(conversacion_id, websocket)
 
 
-def _marcar_conectado(asesor_id: int):
+def _marcar_conectado(asesor_id: int) -> int | None:
+    """Abre la sesión del asesor (marcada con esta instancia) y devuelve su id."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -3997,19 +4162,40 @@ def _marcar_conectado(asesor_id: int):
                    WHERE asesor_id = %s AND desconectado_en IS NULL""",
                 (datetime.now(LIMA_TZ), asesor_id),
             )
-            cur.execute(
-                "INSERT INTO asesor_sesiones (asesor_id, conectado_en) VALUES (%s, %s)",
-                (asesor_id, datetime.now(LIMA_TZ)),
-            )
+            try:
+                cur.execute("SAVEPOINT sp_sesion")
+                cur.execute(
+                    "INSERT INTO asesor_sesiones (asesor_id, conectado_en, instancia) VALUES (%s, %s, %s) RETURNING id",
+                    (asesor_id, datetime.now(LIMA_TZ), monitoreo.INSTANCIA),
+                )
+                sesion_id = cur.fetchone()[0]
+            except Exception:  # noqa: BLE001  (aún sin la columna "instancia": migracion_dos_instancias.sql)
+                cur.execute("ROLLBACK TO SAVEPOINT sp_sesion")
+                cur.execute(
+                    "INSERT INTO asesor_sesiones (asesor_id, conectado_en) VALUES (%s, %s) RETURNING id",
+                    (asesor_id, datetime.now(LIMA_TZ)),
+                )
+                sesion_id = cur.fetchone()[0]
         conn.commit()
+        return sesion_id
     finally:
         release_connection(conn)
 
 
-def _marcar_desconectado(asesor_id: int):
+def _marcar_desconectado(asesor_id: int, sesion_id: int | None = None):
+    """Con sesion_id cierra solo ESA sesión: si el asesor ya se reconectó (quizá en otra instancia), su sesión
+    nueva y su pausa no se tocan."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            if sesion_id is not None:
+                cur.execute("UPDATE asesor_sesiones SET desconectado_en = %s WHERE id = %s AND desconectado_en IS NULL",
+                            (datetime.now(LIMA_TZ), sesion_id))
+                cur.execute("SELECT 1 FROM asesor_sesiones WHERE asesor_id = %s AND desconectado_en IS NULL",
+                            (asesor_id,))
+                if cur.fetchone() is not None:
+                    conn.commit()
+                    return
             cur.execute(
                 """UPDATE asesor_sesiones SET desconectado_en = %s
                    WHERE asesor_id = %s AND desconectado_en IS NULL""",
@@ -4737,7 +4923,7 @@ async def _revisar_colas():
     for e in lista:
         cid = e["conversacion_id"]
         vigentes.add(cid)
-        if cid in manager.widget_connections:
+        if manager.widget_conectado(cid):
             payload = espera_cola.para_widget(e)
             if _espera_enviada.get(cid) != payload:
                 _espera_enviada[cid] = payload
@@ -4755,7 +4941,7 @@ async def _revisar_colas():
     # Ya no espera (la asesora le respondió, se cerró, etc.): se quita la tarjeta del widget.
     for cid in [c for c in _espera_enviada if c not in vigentes]:
         _espera_enviada.pop(cid, None)
-        if cid in manager.widget_connections:
+        if manager.widget_conectado(cid):
             await manager.enviar_a_widget(cid, {"type": "espera_cola", "payload": {}})
 
 
@@ -4821,6 +5007,18 @@ async def _loop_inactividad():
     await asyncio.sleep(20)
     vuelta = 0
     while True:
+        # Con varias instancias, estas tareas las corre SOLO la líder (bus.py): si no, cada aviso, encuesta o
+        # asignación saldría dos veces.
+        if not bus.es_lider:
+            vuelta += 1
+            await asyncio.sleep(10)
+            continue
+        if vuelta % 3 == 2:   # cada 30 s: presencia y sesiones de asesor de instancias caídas
+            try:
+                for asesor_id in await asyncio.to_thread(bus.limpiar_instancias_muertas):
+                    await supervisor.notificar_cambio_asesor(asesor_id, manager)
+            except Exception:
+                logger.exception("Error limpiando instancias caídas")
         # El aviso de espera del asesor se revisa cada 10 s (para que el primer
         # aviso salga cerca de los 30 s); la inactividad general, cada 30 s.
         try:
@@ -4869,6 +5067,7 @@ _HILOS_TRABAJO = 32
 async def _iniciar_watcher_inactividad():
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=_HILOS_TRABAJO, thread_name_prefix="trabajo"))
+    bus.iniciar(asyncio.get_running_loop(), monitoreo.INSTANCIA, manager.recibir_del_bus)
     asyncio.create_task(_loop_inactividad())
     _iniciar_vigia()
     # Cada arranque queda registrado: el primero de una revisión es un deploy; otro de la misma, un reinicio.
@@ -5023,6 +5222,7 @@ DRENAJE_RAPIDO_MIN_CONSOLAS = 3
 DRENAJE_REVISAR_CADA_SEG = 10
 DRENAJE_ARRANQUE_MIN_SEG = 300
 DRENAJE_CONFIRMAR_INTENTOS = 3
+DRENAJE_INTENTOS_CON_OTRA = 8      # con 2 instancias: 8 respuestas seguidas de la otra = a esta ya no le llega nada
 DRENAJE_CONFIRMAR_TIMEOUT_SEG = 20
 
 
@@ -5034,7 +5234,12 @@ def _confirmar_drenaje(intentos: int = DRENAJE_CONFIRMAR_INTENTOS) -> tuple:
     import urllib.error
     import urllib.request
     fallas = []
-    for intento in range(intentos):
+    otras = set()
+    # Con 2 instancias sanas, Cloud Run reparte: que /vivo lo conteste la otra NO prueba que a esta la retiraron.
+    # Se insiste hasta DRENAJE_INTENTOS_CON_OTRA veces: si alguna llega aquí, esta instancia sigue en servicio.
+    intento = 0
+    while intento < (DRENAJE_INTENTOS_CON_OTRA if otras else intentos):
+        intento += 1
         url = f"{_URL_PUBLICA}/vivo?d={uuid.uuid4().hex[:8]}"
         try:
             with urllib.request.urlopen(url, timeout=DRENAJE_CONFIRMAR_TIMEOUT_SEG) as r:
@@ -5043,7 +5248,9 @@ def _confirmar_drenaje(intentos: int = DRENAJE_CONFIRMAR_INTENTOS) -> tuple:
             if otra == monitoreo.INSTANCIA:
                 return False, "Cloud Run sigue enviando tráfico a esta instancia"
             if otra:
-                return True, f"Cloud Run ya envía el tráfico a otra instancia ({otra})"
+                otras.add(otra)
+                time.sleep(1)
+                continue
             fallas.append("respuesta sin instancia")
         except urllib.error.HTTPError as e:
             fallas.append(f"HTTP {e.code}")
@@ -5054,6 +5261,8 @@ def _confirmar_drenaje(intentos: int = DRENAJE_CONFIRMAR_INTENTOS) -> tuple:
             else:
                 return False, f"no se pudo comprobar ({e})"
         time.sleep(3)
+    if otras:
+        return True, f"Cloud Run envía el tráfico a otra instancia ({', '.join(sorted(otras))})"
     return True, "Cloud Run no la atiende: " + ", ".join(fallas)
 
 
@@ -7910,14 +8119,14 @@ async def _despues_de_encuesta(encuesta_id: int):
         if not caso:
             return
         texto = seguimiento.texto_alerta(caso)
-        for sid in list(manager.supervisor_connections.keys()):
+        for sid in manager.supervisores_conectados():
             if await asyncio.to_thread(supervisor.obtener_alcance, sid, True) is None:
                 await manager.enviar_a_supervisor(sid, {"type": "alerta_encuesta", "payload": {
                     "texto": texto, "tipo": caso["tipo"], "caso_id": caso["id"], "conversacion_id": caso["conversacion_id"]}})
         # El mismo mensaje al asesor que lo atendió (nota 1 o 2); si no está conectado, lo verá al volver a entrar.
         if _alerta_encuesta_a_asesor_activa():
             asesor_id = await asyncio.to_thread(seguimiento.asesor_del_caso, caso["id"])
-            if asesor_id and asesor_id in manager.asesor_connections:
+            if asesor_id and manager.asesor_conectado(asesor_id):
                 await _enviar_alerta_encuesta_asesor(asesor_id, caso)
     except Exception:
         logger.warning("No se pudo revisar la encuesta %s después de responderla", encuesta_id, exc_info=True)
@@ -7990,7 +8199,7 @@ async def seguimiento_enviar(mejora_id: int, request: Request, authorization: st
     if r.get("ok") and r.get("usuarios"):
         try:
             for conv_id, usuario_id in await asyncio.to_thread(
-                    seguimiento.conversaciones_con_bot, r["usuarios"], list(manager.widget_connections.keys())):
+                    seguimiento.conversaciones_con_bot, r["usuarios"], manager.widgets_conectados()):
                 for texto in await asyncio.to_thread(seguimiento.entregar_pendientes, conv_id, usuario_id):
                     await manager.enviar_a_widget(conv_id, {"type": "mensaje_bot", "payload": {"texto": texto}})
         except Exception:
@@ -8345,11 +8554,12 @@ async def _avisar_cliente_plan(sid: int):
         nodo = "plan_listo" if listo else "plan_rechazado"
         eventos = await asyncio.to_thread(entrar_a_nodo, conv, nodo,
                                           {"PLAN_DNI": datos["dni"], "PLAN_MOTIVO": datos["motivo"] or ""})
-        ws_cliente = manager.widget_connections.get(conv)
+        ws_cliente = manager.widget_connections.get(conv) or (
+            _WidgetPorManager(conv) if manager.widget_conectado(conv) else None)
         if eventos and ws_cliente is not None:
             try:
                 await _procesar_eventos_bot(conv, ws_cliente, eventos)
-                visto = bool(manager.widget_visible.get(conv))
+                visto = manager.cliente_mirando(conv)
             except Exception:  # noqa: BLE001
                 logger.warning("Plan de salud: no se pudo avisar en el chat (conversación %s)", conv, exc_info=True)
     if visto or not datos["celular"]:
@@ -8388,7 +8598,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
         await websocket.send_json({"type": "version_servidor", "payload": _version_consolas()})
     except Exception:
         pass
-    _marcar_conectado(asesor_id)
+    sesion_id = _marcar_conectado(asesor_id)
     # La pausa se restablece ANTES de enviar nada ni de asignar de la cola.
     _cambiar_pausa_asesor(asesor_id, bool(pausado))
     await supervisor.notificar_cambio_asesor(asesor_id, manager)
@@ -8422,7 +8632,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
             # Envío fiable de la consola: lo escrito sin red se reenvía al reconectar con el mismo cid;
             # si ya lo procesamos solo se confirma (no se duplica).
             if tipo in _TIPOS_FIABLES_STAFF and payload.get("cid"):
-                if not _registrar_cid_widget(f"asesor:{asesor_id}", str(payload["cid"])[:64]):
+                if not await _registrar_cid(f"asesor:{asesor_id}", str(payload["cid"])[:64]):
                     await websocket.send_json({"type": "mensaje_propio_guardado", "payload": {
                         "conversacion_id": payload.get("conversacion_id"), "cid": payload.get("cid"), "dup": True}})
                     continue
@@ -8800,7 +9010,7 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
         # debe desconectar ni "des-pausar" al nuevo.
         if manager.es_conexion_vigente_asesor(asesor_id, websocket):
             manager.disconnect_asesor(asesor_id)
-            _marcar_desconectado(asesor_id)
+            _marcar_desconectado(asesor_id, sesion_id)
             await supervisor.notificar_cambio_asesor(asesor_id, manager)
 
 
@@ -9192,7 +9402,7 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                     continue
 
             if tipo in _TIPOS_FIABLES_STAFF and payload.get("cid"):
-                if not _registrar_cid_widget(f"supervisor:{supervisor_id}", str(payload["cid"])[:64]):
+                if not await _registrar_cid(f"supervisor:{supervisor_id}", str(payload["cid"])[:64]):
                     await websocket.send_json({"type": "mensaje_propio_guardado", "payload": {
                         "conversacion_id": conversacion_id, "cid": payload.get("cid"), "dup": True}})
                     continue

@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 # La instancia de Cloud SQL (db-g1-small) se comparte con sofi-apis y otros sistemas. Semana del 23 al 30/10:
 # pico de 17 conexiones en total (webchat 7 de 8, sofi_whatsapp 11). Con 8 el pool del webchat se llenaba en
 # los picos; 20 + 3 deja margen y sigue lejos del máximo de la instancia (revisar con SHOW max_connections;).
-_MAX_WEBCHAT = 20
+# Con 2 instancias cada una abre su propio pool: DB_POOL_MAX (deploy.sh) permite bajarlo para no pasar el
+# max_connections de Cloud SQL (2 x (pool + 3 sofi + 2 recetas + 2 del bus) + consolas psql).
+_MAX_WEBCHAT = max(5, int(os.environ.get("DB_POOL_MAX", "20") or 20))
 _MAX_SOFI = 3
 _MAX_RECETAS = 2   # solo "Mantenimiento Petitorio" (supervisor): pocas operaciones, a mano
 # Si el pool está lleno se espera a que se libere una conexión. En un hilo de trabajo se puede esperar

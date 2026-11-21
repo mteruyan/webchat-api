@@ -516,7 +516,7 @@ async def notificar_respuestas_rapidas_a_todos(manager):
             todas = _obtener_respuestas_rapidas(cur, solo_activas=False)
             campanas_por_asesor = {
                 asesor_id: _campanas_de_asesor(cur, asesor_id)
-                for asesor_id in list(manager.asesor_connections.keys())
+                for asesor_id in manager.asesores_conectados()   # de todas las instancias
             }
     finally:
         release_connection(conn)

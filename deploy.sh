@@ -41,11 +41,17 @@
 # NO fue por falta de cupo (el pico real de la semana fue ~85 conexiones): el servidor se congeló, las peticiones se
 # acumularon sin terminar y llenaron los 400. Ver el vigía en main.py ("Vigía" en Cloud Logging).
 # --memory=1Gi: con el valor por defecto (512Mi) la memoria llegó al 88 % la semana del 23/10.
-# El estado de los WebSockets (quién esta conectado,
-# quién escucha cada conversación) vive en la memoria del proceso. Con 2+ instancias, el cliente puede quedar en
-# una y el asesor en otra y los mensajes no se entregan. No subir max-instances hasta migrar ese estado a Redis.
+# VARIAS INSTANCIAS (20/11): los WebSockets viven en la memoria de cada instancia; bus.py las comunica por Postgres
+# LISTEN/NOTIFY (presencia en ws_presencia, eventos por pg_notify) y solo la LÍDER corre las tareas de fondo.
+# Requiere migracion_dos_instancias.sql. Despliegue por fases:
+#   Fase 1:  ./deploy.sh                    -> 1 instancia con el bus activo (validar 1-2 días)
+#   Fase 2:  MAX_INSTANCIAS=2 ./deploy.sh   -> mínimo 1, máximo 2, con afinidad de sesión
+# Emergencia: BUS_ACTIVO=no apaga el bus (solo válido con 1 instancia).
+MAX_INSTANCIAS="${MAX_INSTANCIAS:-1}"
+if [ "$MAX_INSTANCIAS" -gt 1 ]; then DB_POOL_MAX=12; else DB_POOL_MAX=20; fi
 # --no-cpu-throttling: la CPU queda siempre asignada (el aviso de inactividad corre en segundo plano).
-# Las conexiones de Cloud SQL (db-g1-small) se comparten con sofi-apis y otros: ver los pools en db.py (webchat 20 + sofi 3).
+# Las conexiones de Cloud SQL (db-g1-small) se comparten con sofi-apis y otros: por instancia = DB_POOL_MAX + sofi 3 +
+# recetas 2 + bus 2. Con 2 instancias: 2 x 19 = 38 (antes 1 x 25). Revisar SHOW max_connections antes de la fase 2.
 
 # Nota sobre --set-env-vars: usamos el delimitador alterno "^;^" (en vez del
 # "," por defecto) precisamente para que ALLOWED_ORIGINS pueda llevar varias
@@ -56,7 +62,7 @@
 gcloud run deploy webchat-api --source . \
   --project=sanitas-recetas-prod --region=us-central1 \
   --add-cloudsql-instances=sanitas-recetas-prod:us-central1:sanitas-recetas-db \
-  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;GCS_CARTAS_BUCKET=sanitas-webchat-cartas;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483;DANACONNECT_SINIESTRALIDAD_CONV=" \
+  --set-env-vars="^;^INSTANCE_CONNECTION_NAME=sanitas-recetas-prod:us-central1:sanitas-recetas-db;DB_NAME=webchat;DB_USER=recetas_user;SOFI_DB_NAME=sofi_whatsapp;GCS_BUCKET=sanitas-webchat-contenido;GCS_CARTAS_BUCKET=sanitas-webchat-cartas;ALLOWED_ORIGINS=https://www.sanitasperu.com,https://sanitasperu.com;IA_PALABRA_CLAVE=#sofi-lab;IA_TESTERS=51975448483,51997855645;MAD_PALABRA_CLAVE=#sofi-mad;MAD_TESTERS=51975448483;DANACONNECT_SINIESTRALIDAD_CONV=;DB_POOL_MAX=${DB_POOL_MAX};BUS_ACTIVO=si" \
   --set-secrets=DB_PASSWORD=webchat-db-password:latest,SECRET_KEY=webchat-jwt-secret:latest,SOFI_APIS_KEY=API_KEY:latest,DANACONNECT_AUTH=webchat-danaconnect-auth:latest,VAPID_PRIVATE_KEY=webchat-vapid-private:latest \
   --liveness-probe=httpGet.path=/vivo,periodSeconds=20,timeoutSeconds=5,failureThreshold=3 \
-  --min-instances=1 --max-instances=1 --concurrency=1000 --memory=1Gi --cpu=1 --no-cpu-throttling --timeout=3600 --allow-unauthenticated
+  --min-instances=1 --max-instances="${MAX_INSTANCIAS}" --session-affinity --concurrency=1000 --memory=1Gi --cpu=1 --no-cpu-throttling --timeout=3600 --allow-unauthenticated
