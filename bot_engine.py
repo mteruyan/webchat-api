@@ -32,6 +32,7 @@ from db import get_connection, release_connection
 import supervisor
 import archivos_cliente
 import planes
+import cartas_tarifas
 from api_handlers import (
     validar_horario_consultas, consulta_doi, listar_distritos, update_doi_distrito,
     seleccionar_direccion, registrar_direccion, crear_doi_nuevo, procesar_receta, trae_escoge,
@@ -233,7 +234,9 @@ def _hito_por_nodo(cur, conversacion_id: int, nodo: dict):
     elif tipo == "cierre":
         _hito(cur, conversacion_id, "cierre_bot", codigo)
     elif tipo == "conversacion_ia":
-        pass  # modo experimental oculto: no debe contar en el embudo del dashboard
+        # Modo experimental oculto: no debe contar en el embudo del dashboard. La carta de tarifas sí es un flujo.
+        if (nodo.get("accion_config") or {}).get("fuente") == "carta":
+            _hito(cur, conversacion_id, "entro_flujo", codigo)
     elif not codigo.startswith("webchat_"):
         _hito(cur, conversacion_id, "entro_flujo", codigo)
 
@@ -419,15 +422,25 @@ def _opciones_visibles(cur, conversacion_id: int, opciones, variables: dict = No
     - "interruptor": "<nombre>" -> oculta mientras se prueba (ver _interruptor_activo).
     - "solo_en_horario": "<codigo de campaña>" -> solo en el horario de esa campaña (p. ej. "Mi plan de salud",
       que depende del backoffice). Con "visible_si_tiene_plan": true se muestra igual fuera de horario a quien
-      ya tiene su plan cargado (preguntarle a la IA no depende del backoffice)."""
-    if not opciones or not any(isinstance(o, dict) and (o.get("solo_en_horario") or o.get("interruptor"))
+      ya tiene su plan cargado (preguntarle a la IA no depende del backoffice).
+    - "solo_con_carta": <año> -> solo si un documento de la conversación tiene carta de tarifas de ese año
+      (p. ej. "Tarifas 2027", ver cartas_tarifas.py)."""
+    if not opciones or not any(isinstance(o, dict) and (o.get("solo_en_horario") or o.get("interruptor")
+                                                        or o.get("solo_con_carta"))
                                for o in opciones):
         return opciones
     en_horario, interruptores, tiene_plan, visibles = {}, {}, None, []
+    con_carta = {}
     for o in opciones:
         if not isinstance(o, dict):
             visibles.append(o)
             continue
+        if o.get("solo_con_carta"):
+            anio = cartas_tarifas.anio_de(o["solo_con_carta"])
+            if anio not in con_carta:
+                con_carta[anio] = cartas_tarifas.documento_con_carta(cur, conversacion_id, variables, anio) is not None
+            if not con_carta[anio]:
+                continue
         interruptor = o.get("interruptor")
         if interruptor:
             if interruptor not in interruptores:
@@ -447,7 +460,7 @@ def _opciones_visibles(cur, conversacion_id: int, opciones, variables: dict = No
             if not ok:
                 continue
         visibles.append({k: v for k, v in o.items()
-                         if k not in ("solo_en_horario", "visible_si_tiene_plan", "interruptor")})
+                         if k not in ("solo_en_horario", "visible_si_tiene_plan", "interruptor", "solo_con_carta")})
     return visibles
 
 
@@ -574,6 +587,11 @@ def _avanzar(cur, conversacion_id: int, nodo_actual: str, variables: dict) -> li
             # esperando texto. Es un BUCLE: cada mensaje del usuario se responde en
             # recibir_entrada_usuario (_turno_ia) SIN avanzar de nodo; se sale con "menu"
             # (lo intercepta main.py en cualquier punto del bot).
+            if (nodo["accion_config"] or {}).get("fuente") == "carta":
+                # Carta de tarifas (cartas_tarifas.py): su PDF + bienvenida + preguntas sugeridas.
+                eventos.extend(_bienvenida_carta(cur, conversacion_id, nodo, variables))
+                _guardar_estado(cur, conversacion_id, nodo["codigo"], variables)
+                break
             es_plan = (nodo["accion_config"] or {}).get("fuente") == "plan"
             if variables.pop("IA_SIN_BIENVENIDA", None) == "si":
                 # Llega desde el filtro de "Hablar c/ asesor" cuando Sofi le hizo una pregunta: la conversación
@@ -783,11 +801,13 @@ def iniciar_conversacion(conversacion_id: int, nodo_inicial: str, variables_inic
 class _TurnoIA:
     """Marca interna: el nodo actual es 'conversacion_ia' y el turno se atiende fuera del árbol.
     fuente: None = agente de sofi-apis; "plan" = IA con el plan de salud del DNI (planes.py)."""
-    def __init__(self, nodo_codigo: str, variables: dict, temas: list = None, fuente: str = None):
+    def __init__(self, nodo_codigo: str, variables: dict, temas: list = None, fuente: str = None,
+                 config: dict = None):
         self.nodo_codigo = nodo_codigo
         self.variables = variables
         self.temas = temas or []
         self.fuente = fuente
+        self.config = config or {}     # accion_config del nodo (la carta usa "anio" y "preguntas")
 
 
 # ---- Captura de VARIAS imágenes (validacion.multiple = true, p. ej. la receta en 2 o más fotos) ----
@@ -1211,6 +1231,13 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
     temas = turno.temas
     texto = (texto or "").strip()
 
+    # --- Carta de tarifas: preguntas sugeridas, ver la carta y preguntas libres (cartas_tarifas.py) ------------
+    if turno.fuente == "carta":
+        eventos_carta = _turno_carta(conversacion_id, turno, texto, opcion_id, archivo_url)
+        if eventos_carta is not None:
+            return eventos_carta
+        # None: "Hablar con un asesor" (lo atiende el código de abajo, igual que en Sofi)
+
     # --- Plan de salud con varios planes: elegir / cambiar de plan (no llama a la IA) ---------------
     if turno.fuente == "plan" and not texto and opcion_id and (
             opcion_id.startswith(ID_PLAN_ELEGIR) or opcion_id == ID_PLAN_CAMBIAR):
@@ -1409,6 +1436,216 @@ def _turno_ia(conversacion_id: int, turno: "_TurnoIA", texto, opcion_id, archivo
     return [{"type": "mensaje_bot", "payload": payload}]
 
 
+# ---------------------------------------------------------------------------
+# Carta de tarifas ("Tarifas 2027"): nodo conversacion_ia con accion_config
+#   {"fuente": "carta", "anio": 2027, "preguntas": [{"label": "📝 Resumen de mi carta", "pregunta": "..."}]}
+# Botones: carta_q:<n> (pregunta sugerida), carta_pdf (ver la carta), ia_asesor, ia_menu.
+# ---------------------------------------------------------------------------
+ID_CARTA_PDF = "carta_pdf"
+_PREGUNTAS_CARTA_POR_DEFECTO = [
+    {"label": "📝 Resumen de mi carta", "pregunta": "Hazme un resumen sencillo de mi carta."},
+    {"label": "📈 Explícame mi incremento",
+     "pregunta": "Explícame mi incremento: cuánto pagaba, cuánto pagaré, la diferencia y el porcentaje."},
+    {"label": "🔄 ¿Qué cambió?", "pregunta": "¿Qué cambió en mi plan o en mis condiciones según la carta?"},
+]
+
+
+def _preguntas_carta(config: dict) -> list:
+    preguntas = (config or {}).get("preguntas")
+    if not isinstance(preguntas, list):
+        return _PREGUNTAS_CARTA_POR_DEFECTO
+    return [p for p in preguntas if isinstance(p, dict) and p.get("label")]
+
+
+def _botones_carta(config: dict) -> list:
+    botones = [{"id": f"carta_q:{i}", "label": p["label"]} for i, p in enumerate(_preguntas_carta(config))]
+    return botones + [{"id": ID_CARTA_PDF, "label": "📄 Ver mi carta"},
+                      {"id": ID_IA_ASESOR, "label": "👩‍💼 Hablar con un asesor"},
+                      {"id": ID_IA_MENU, "label": "🏠 Menú principal"}]
+
+
+MAX_INTENTOS_DOC_CARTA = 3     # documentos que se pueden probar por conversación (evita recorrer DNI ajenos)
+
+
+def _botones_sin_carta() -> list:
+    return [{"id": ID_IA_ASESOR, "label": "👩‍💼 Hablar con un asesor"},
+            {"id": ID_IA_MENU, "label": "🏠 Menú principal"}]
+
+
+def _pedir_doc_carta(cur, conversacion_id: int, variables: dict, anio: int, texto: str = None) -> list:
+    """Sin documento con carta: se le pide el DNI/CE del titular (como en Tarifas 2026)."""
+    variables["CARTA_PIDE_DOC"] = "si"
+    texto = texto or (f"📄 *Tarifas {anio}*\n\nPara mostrarte tu carta, escríbeme el *DNI o CE del titular* del "
+                      "contrato 👇")
+    botones = _botones_sin_carta()
+    _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+    _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(botones))
+    return [{"type": "mensaje_bot", "payload": {"texto": texto, "opciones": botones}}]
+
+
+def _texto_sin_carta(anio: int) -> str:
+    return (f"No encontré una carta de *Tarifas {anio}* para el documento que nos indicaste 😕 "
+            "Si crees que es un error, toca *👩‍💼 Hablar con un asesor*.")
+
+
+def _eventos_pdf_carta(cur, conversacion_id: int, documento: str, anio: int) -> list:
+    """La(s) carta(s) del documento como archivo del chat (mismo evento que un archivo enviado por un asesor)."""
+    cartas = cartas_tarifas.cartas_de(cur, documento, anio)
+    if not cartas:
+        return []
+    texto = (f"📄 Aquí tienes tu carta de *Tarifas {anio}*. Ábrela cuando quieras para revisarla con calma:"
+             if len(cartas) == 1 else
+             f"📄 Aquí tienes tus {len(cartas)} cartas de *Tarifas {anio}*. Ábrelas cuando quieras:")
+    _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+    eventos = [{"type": "mensaje_bot", "payload": {"texto": texto}}]
+    for _cid, ruta, _archivo in cartas:
+        cur.execute("""INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
+                       VALUES (%s, 'bot', 'archivo', %s, %s) RETURNING id""",
+                    (conversacion_id, ruta, datetime.now(LIMA_TZ)))
+        eventos.append({"type": "archivo_asesor", "payload": {"ruta": ruta, "mensaje_id": cur.fetchone()[0]}})
+    return eventos
+
+
+def _bienvenida_carta(cur, conversacion_id: int, nodo: dict, variables: dict) -> list:
+    config = nodo["accion_config"] or {}
+    anio = cartas_tarifas.anio_de(config.get("anio"))
+    documento = cartas_tarifas.documento_con_carta(cur, conversacion_id, variables, anio)
+    if not documento:
+        if int(variables.get("CARTA_INTENTOS") or 0) >= MAX_INTENTOS_DOC_CARTA:
+            texto = _texto_sin_carta(anio)
+            _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+            _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(_botones_sin_carta()))
+            return [{"type": "mensaje_bot", "payload": {"texto": texto, "opciones": _botones_sin_carta()}}]
+        return _pedir_doc_carta(cur, conversacion_id, variables, anio)
+    variables.pop("CARTA_PIDE_DOC", None)
+    variables["CARTA_DOC"] = documento
+    variables["CARTA_ANIO"] = anio
+    cartas_tarifas.preparar_en_segundo_plano(documento, anio)   # la IA lee la carta mientras tanto
+    eventos = _eventos_pdf_carta(cur, conversacion_id, documento, anio)
+    texto = sustituir_variables(nodo["texto"] or "", variables) or (
+        f"Puedo ayudarte a entender tu carta de *Tarifas {anio}* 😊 Elige una opción o escríbeme tu pregunta 👇")
+    botones = _botones_carta(config)
+    _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto)
+    _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(botones))
+    eventos.append({"type": "mensaje_bot", "payload": {
+        "texto": texto, "opciones": botones, "imagen_url": sustituir_variables(nodo.get("imagen_url"), variables)}})
+    return eventos
+
+
+def _recibir_doc_carta(conversacion_id: int, turno: "_TurnoIA", texto: str, anio: int) -> list:
+    """El cliente escribió el DNI/CE: si tiene carta, se la muestra; si no, puede probar otro (hasta
+    MAX_INTENTOS_DOC_CARTA por conversación)."""
+    variables = turno.variables
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            _guardar_mensaje(cur, conversacion_id, "usuario", "texto", texto)
+            documento = cartas_tarifas.normalizar_doc(texto)
+            if not documento or not re.fullmatch(r"[\s\d.\-A-Za-z]{6,20}", texto.strip()):
+                eventos = _pedir_doc_carta(cur, conversacion_id, variables, anio,
+                                           "Ese documento no parece válido 🤔 Escríbelo solo con números "
+                                           "(DNI de 8 dígitos o tu CE), por favor 👇")
+            elif cartas_tarifas.cartas_de(cur, documento, anio):
+                variables["CARTA_DOC"] = documento
+                eventos = _bienvenida_carta(cur, conversacion_id, _obtener_nodo(cur, turno.nodo_codigo), variables)
+            else:
+                intentos = int(variables.get("CARTA_INTENTOS") or 0) + 1
+                variables["CARTA_INTENTOS"] = intentos
+                if intentos >= MAX_INTENTOS_DOC_CARTA:
+                    variables.pop("CARTA_PIDE_DOC", None)
+                    texto_bot = _texto_sin_carta(anio)
+                    _guardar_mensaje(cur, conversacion_id, "bot", "texto", texto_bot)
+                    _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(_botones_sin_carta()))
+                    eventos = [{"type": "mensaje_bot", "payload": {"texto": texto_bot,
+                                                                   "opciones": _botones_sin_carta()}}]
+                else:
+                    eventos = _pedir_doc_carta(
+                        cur, conversacion_id, variables, anio,
+                        f"No encontré una carta de *Tarifas {anio}* para el documento *{documento}* 😕 Revisa que "
+                        "sea el DNI o CE del *titular* del contrato y escríbelo de nuevo, o toca *👩‍💼 Hablar con "
+                        "un asesor*.")
+            _guardar_estado(cur, conversacion_id, turno.nodo_codigo, variables)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_connection(conn)
+    return eventos
+
+
+def _turno_carta(conversacion_id: int, turno: "_TurnoIA", texto: str, opcion_id, archivo_url):
+    """Un turno en la carta de tarifas. None = lo atiende el código general (Hablar con un asesor)."""
+    config = turno.config
+    anio = cartas_tarifas.anio_de(config.get("anio") or turno.variables.get("CARTA_ANIO"))
+    documento = cartas_tarifas.normalizar_doc(turno.variables.get("CARTA_DOC"))
+    botones = _botones_carta(config)
+
+    # Esperando el DNI/CE del titular (no había un documento con carta en la conversación)
+    if turno.variables.get("CARTA_PIDE_DOC") == "si" and texto:
+        return _recibir_doc_carta(conversacion_id, turno, texto, anio)
+
+    if not texto and opcion_id:
+        if opcion_id == ID_IA_ASESOR:
+            return None
+        if opcion_id == ID_CARTA_PDF:
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    _guardar_mensaje(cur, conversacion_id, "usuario", "boton_click", "📄 Ver mi carta")
+                    eventos = _eventos_pdf_carta(cur, conversacion_id, documento, anio) if documento else []
+                conn.commit()
+            finally:
+                release_connection(conn)
+            return eventos or [{"type": "mensaje_bot", "payload": {"texto": _texto_sin_carta(anio)}}]
+        m = re.fullmatch(r"carta_q:(\d+)", opcion_id)
+        preguntas = _preguntas_carta(config)
+        if not m or int(m.group(1)) >= len(preguntas):
+            return []               # botón viejo o desconocido: se ignora
+        p = preguntas[int(m.group(1))]
+        texto = (p.get("pregunta") or p["label"]).strip()
+        etiqueta_boton = p["label"]     # se guarda como clic (dashboard: "Opciones del menú más tocadas")
+    else:
+        etiqueta_boton = None
+
+    if not texto:
+        if archivo_url:
+            return [{"type": "mensaje_bot", "payload": {
+                "texto": "Por ahora solo puedo leer mensajes de texto. Escríbeme tu pregunta sobre tu carta 😊",
+                "opciones": botones}}]
+        return []
+    if not documento:
+        return _responder_con_botones_ia(conversacion_id, texto, _texto_sin_carta(anio), [
+            {"id": ID_IA_ASESOR, "label": "👩‍💼 Hablar con un asesor"},
+            {"id": ID_IA_MENU, "label": "🏠 Menú principal"}])
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            _guardar_mensaje(cur, conversacion_id, "usuario", "boton_click" if etiqueta_boton else "texto",
+                             etiqueta_boton or texto)
+        conn.commit()
+    finally:
+        release_connection(conn)
+
+    if _excede_tope_ia(conversacion_id):
+        respuesta = ("Estás enviando muchas consultas seguidas 😅 Dame un momento y vuelve a intentarlo, "
+                     "o toca *Hablar con un asesor* para que te atienda una persona.")
+    else:
+        # Gemini (puede tardar unos segundos): sin una conexión del pool tomada.
+        respuesta = cartas_tarifas.responder(conversacion_id, documento, anio, texto)
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            _guardar_mensaje(cur, conversacion_id, "bot", "texto", respuesta)
+            _guardar_mensaje(cur, conversacion_id, "bot", "opciones", json.dumps(botones))
+        conn.commit()
+    finally:
+        release_connection(conn)
+    return [{"type": "mensaje_bot", "payload": {"texto": respuesta, "opciones": botones}}]
+
+
 def _responder_con_botones_ia(conversacion_id: int, etiqueta_usuario: str, texto: str, botones: list) -> list:
     """Respuesta fija con botones (sin agente). Guarda el clic de la persona y el mensaje del bot."""
     conn = get_connection()
@@ -1446,7 +1683,7 @@ def _recibir_entrada_usuario_arbol(conversacion_id: int, texto: str = None,
 
             if nodo["tipo"] == "conversacion_ia":
                 return _TurnoIA(nodo["codigo"], variables, _temas_ia(nodo),
-                                (nodo["accion_config"] or {}).get("fuente"))
+                                (nodo["accion_config"] or {}).get("fuente"), nodo["accion_config"] or {})
 
             if nodo["tipo"] == "captura_dato":
                 validacion = nodo["validacion"] or {}
@@ -1587,10 +1824,13 @@ def _recibir_entrada_usuario_arbol(conversacion_id: int, texto: str = None,
                         (str(valor).strip(), conversacion_id),
                     )
                 elif columna in ("nombre", "telefono", "dni"):
-                    cur.execute(
+                    # 20/11: un texto de más de 150 caracteres en un nodo que guarda el nombre rompía el turno del
+                    # bot (varchar(150)) y el cliente se quedaba sin respuesta: se recorta y, si igual falla, sigue.
+                    _ejecutar_seguro(
+                        cur,
                         f"UPDATE usuarios_webchat SET {columna} = %s "
                         "WHERE id = (SELECT usuario_id FROM conversaciones WHERE id = %s)",
-                        (valor, conversacion_id),
+                        (str(valor)[:150 if columna == "nombre" else 20], conversacion_id),
                     )
                     if columna == "telefono":
                         _hito(cur, conversacion_id, "celular_ingresado", nodo["codigo"])

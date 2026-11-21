@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Autorización de reporte de siniestralidad - Sanitas Perú</title>
+<title>Firma tu documento - Sanitas Perú</title>
 <style>
 :root {
   --teal: #00A9B7;
@@ -49,7 +49,7 @@ label {
   display: block; font-size: 12px; font-weight: 600; color: var(--gray);
   margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.3px;
 }
-input[type="text"], input[type="email"], select {
+input[type="text"], input[type="email"], input[type="number"], input[type="date"], select {
   width: 100%; padding: 11px 12px; border: 1px solid var(--border);
   border-radius: 8px; font-size: 16px; background: var(--white); color: var(--navy); font-family: inherit;
 }
@@ -142,7 +142,30 @@ canvas#firmaCanvas {
 .girar { display: inline-block; width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--teal);
          border-radius: 50%; animation: girar 0.9s linear infinite; vertical-align: middle; }
 @keyframes girar { to { transform: rotate(360deg); } }
-@media (max-width: 380px) { .fila2 { grid-template-columns: 1fr; gap: 0; } }
+@media (max-width: 380px) { .fila2, .fila2i { grid-template-columns: 1fr; gap: 0; } }
+.fila2i { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+.fila2 { align-items: end; }
+input.corto { max-width: 130px; }
+.bloque-formato { display: none; }
+.subtitulo-seccion { font-size: 13px; font-weight: 700; color: var(--teal-dark); margin: 18px 0 2px; text-transform: uppercase; letter-spacing: .3px; }
+.opciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.opciones label.opcion {
+  display: flex; align-items: center; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--navy);
+  cursor: pointer; background: white; flex: 1 1 140px;
+}
+.opciones label.opcion input { accent-color: var(--teal); width: 18px; height: 18px; margin: 0; }
+.opciones label.opcion.elegida { border-color: var(--teal); background: #F2FBFC; }
+.nota { font-size: 12.5px; color: var(--gray); line-height: 1.45; margin-top: 6px; }
+.adjuntos-lista { list-style: none; padding: 0; margin: 10px 0 0; }
+.adjuntos-lista li {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 6px; font-size: 13.5px; background: #FAFCFD;
+}
+.adjuntos-lista li span.nombre { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adjuntos-lista li button { width: 30px; min-height: 30px; height: 30px; padding: 0; background: transparent; color: var(--danger); font-size: 18px; }
+.zona-adjunto { border: 2px dashed var(--border); border-radius: 10px; padding: 14px; margin-top: 8px; background: #FAFCFD; }
+.zona-adjunto .estado { font-size: 13px; color: var(--gray); margin-top: 8px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -151,9 +174,9 @@ canvas#firmaCanvas {
   <div class="marca">
     <span class="logo"><img src="/static/imagenes/logo-sanitas.png" alt="Sanitas"></span>
   </div>
-  <h1>Autorización de entrega de reporte de siniestralidad</h1>
+  <h1 id="tituloFormato">Cargando…</h1>
   <div class="progreso" id="textoProgreso">Cargando…</div>
-  <div class="pasos" id="barraPasos"><span></span><span></span><span></span></div>
+  <div class="pasos" id="barraPasos"></div>
 </div>
 
 <div class="contenedor">
@@ -162,10 +185,10 @@ canvas#firmaCanvas {
   <div class="cargando" id="pantallaCargando"><span class="girar"></span>&nbsp; Cargando tu formulario…</div>
 
   <!-- ═══════════ PASO 1: DOCUMENTO ═══════════ -->
-  <div class="pantalla" id="paso1">
+  <div class="pantalla" id="pasoDoc">
     <div class="card">
-      <h2>1. Foto de tu documento de identidad</h2>
-      <div class="subtitulo">Sube una foto de tu DNI (o carné de extranjería). La usamos para completar tus datos y se adjunta a tu autorización.</div>
+      <h2><span class="num"></span>Foto de tu documento de identidad</h2>
+      <div class="subtitulo">Sube una foto de tu DNI (o carné de extranjería). La usamos para completar tus datos y se adjunta a tu documento firmado.</div>
 
       <label>Parte de adelante (obligatoria)</label>
       <div class="foto-caja" id="cajaAnverso">
@@ -195,11 +218,12 @@ canvas#firmaCanvas {
   </div>
 
   <!-- ═══════════ PASO 2: DATOS ═══════════ -->
-  <div class="pantalla" id="paso2">
+  <div class="pantalla" id="pasoDatos">
     <div class="card">
-      <h2>2. Revisa y completa tus datos</h2>
-      <div class="subtitulo">Corrige lo que no esté bien. Estos datos van en tu autorización.</div>
+      <h2><span class="num"></span>Revisa y completa tus datos</h2>
+      <div class="subtitulo">Corrige lo que no esté bien. Estos datos van en tu documento.</div>
 
+      <div id="datosComunes">
       <label for="inNombre">Nombres y apellidos</label>
       <input type="text" id="inNombre" autocomplete="name" maxlength="120">
 
@@ -218,6 +242,9 @@ canvas#firmaCanvas {
         </div>
       </div>
 
+      </div>
+
+      <div class="bloque-formato" id="datosSINIESTRALIDAD">
       <label for="inContrato">N° de contrato del plan de salud</label>
       <input type="text" id="inContrato" readonly>
 
@@ -238,19 +265,151 @@ canvas#firmaCanvas {
         <div id="listaDependientes"></div>
         <button type="button" class="btn-secundario btn-chico" id="btnAgregarDep" style="margin-top:10px;">➕ Agregar dependiente</button>
       </div>
+      </div>
+
+      <!-- Declaración jurada de latencia -->
+      <div class="bloque-formato" id="datosLATENCIA">
+        <label for="latDomicilio">Domicilio real (calle, número, distrito)</label>
+        <input type="text" id="latDomicilio" maxlength="200" autocomplete="street-address">
+        <label for="latEmpleador">Tu última entidad empleadora</label>
+        <input type="text" id="latEmpleador" maxlength="150" placeholder="Nombre de la empresa">
+        <div class="fila2">
+          <div>
+            <label for="latCese">Fecha en que cesaste</label>
+            <input type="date" id="latCese">
+          </div>
+          <div>
+            <label for="latAportes">Aportes a EsSalud (últimos 3 años)</label>
+            <input type="number" id="latAportes" min="0" max="36" inputmode="numeric" placeholder="Ej.: 24">
+          </div>
+        </div>
+        <div class="nota">Aportes: cuántos meses aportaste a EsSalud en los tres años antes de tu cese (de 0 a 36).</div>
+      </div>
+
+      <!-- Solicitud de reembolso -->
+      <div class="bloque-formato" id="datosREEMBOLSO">
+        <div class="subtitulo-seccion">Datos del titular</div>
+        <div class="fila2i">
+          <div><label for="reTitPaterno">Apellido paterno</label><input type="text" id="reTitPaterno" maxlength="60"></div>
+          <div><label for="reTitMaterno">Apellido materno</label><input type="text" id="reTitMaterno" maxlength="60"></div>
+        </div>
+        <label for="reTitNombres">Nombres</label><input type="text" id="reTitNombres" maxlength="80">
+        <div class="fila2">
+          <div><label for="reTitTipo">Documento</label>
+            <select id="reTitTipo"><option value="DNI">DNI</option><option value="CE">Carné de extranjería</option><option value="OTRO">Pasaporte / otro</option></select></div>
+          <div><label for="reTitNumero">Número</label><input type="text" id="reTitNumero" maxlength="20" inputmode="numeric"></div>
+        </div>
+        <label for="reTitEdad">Edad</label><input type="number" class="corto" id="reTitEdad" min="0" max="120" inputmode="numeric">
+
+        <div class="subtitulo-seccion">Datos del paciente</div>
+        <label class="check-linea" style="text-transform:none;letter-spacing:0;color:var(--navy);font-weight:500;font-size:14px;">
+          <input type="checkbox" id="reEsTitular">
+          <span>El paciente soy yo (el titular).</span>
+        </label>
+        <div id="rePacienteDatos">
+        <div class="fila2i">
+          <div><label for="rePacPaterno">Apellido paterno</label><input type="text" id="rePacPaterno" maxlength="60"></div>
+          <div><label for="rePacMaterno">Apellido materno</label><input type="text" id="rePacMaterno" maxlength="60"></div>
+        </div>
+        <label for="rePacNombres">Nombres</label><input type="text" id="rePacNombres" maxlength="80">
+        <div class="fila2">
+          <div><label for="rePacTipo">Documento</label>
+            <select id="rePacTipo"><option value="DNI">DNI</option><option value="CE">Carné de extranjería</option><option value="OTRO">Pasaporte / otro</option></select></div>
+          <div><label for="rePacNumero">Número</label><input type="text" id="rePacNumero" maxlength="20" inputmode="numeric"></div>
+        </div>
+        <label for="rePacEdad">Edad</label><input type="number" class="corto" id="rePacEdad" min="0" max="120" inputmode="numeric">
+          <label for="rePacParentesco">Parentesco con el titular</label>
+          <select id="rePacParentesco"><option value="">Elige…</option><option value="CONYUGE">Cónyuge</option><option value="HIJO">Hijo(a)</option><option value="PADRE">Padre / Madre</option></select>
+        </div>
+        <label>Sexo del paciente</label>
+        <div class="opciones" id="reSexo">
+          <label class="opcion"><input type="radio" name="reSexo" value="M"> Masculino</label>
+          <label class="opcion"><input type="radio" name="reSexo" value="F"> Femenino</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ REEMBOLSO: FORMA DE PAGO ═══════════ -->
+  <div class="pantalla" id="pasoPago">
+    <div class="card">
+      <h2><span class="num"></span>Forma de pago</h2>
+      <div class="subtitulo">¿Cómo quieres recibir tu reembolso?</div>
+      <label>¿Ya registraste tu cuenta bancaria en Sanitas?</label>
+      <div class="opciones">
+        <label class="opcion"><input type="radio" name="reRegistrada" value="si"> Sí, usar esa cuenta</label>
+        <label class="opcion"><input type="radio" name="reRegistrada" value="no"> No</label>
+      </div>
+      <div id="reBloqueForma" style="display:none">
+        <label>Forma de pago</label>
+        <div class="opciones">
+          <label class="opcion"><input type="radio" name="reForma" value="ABONO"> 🏦 Abono en cuenta</label>
+          <label class="opcion"><input type="radio" name="reForma" value="CHEQUE"> 🧾 Cheque</label>
+        </div>
+        <div id="reBloqueCheque" class="nota" style="display:none">El cheque se recoge en nuestras oficinas; solo se emiten los días martes y jueves a partir de las 3:00 p. m.</div>
+        <div id="reBloqueAbono" style="display:none">
+          <label for="reBanco">Banco</label>
+          <select id="reBanco"><option value="">Elige tu banco…</option><option value="BCP">Banco de Crédito BCP</option><option value="BBVA">BBVA Continental</option><option value="INTERBANK">Interbank</option><option value="SCOTIABANK">Scotiabank</option><option value="OTRO">Otro</option></select>
+          <div id="reBancoOtroCaja" style="display:none"><label for="reBancoOtro">Nombre del banco</label><input type="text" id="reBancoOtro" maxlength="40"></div>
+          <label>Tipo de cuenta</label>
+          <div class="opciones">
+            <label class="opcion"><input type="radio" name="reTipoCuenta" value="AHORROS"> Ahorros</label>
+            <label class="opcion"><input type="radio" name="reTipoCuenta" value="CORRIENTE"> Corriente</label>
+          </div>
+          <label for="reCuenta">N° de cuenta</label>
+          <input type="text" id="reCuenta" maxlength="24" inputmode="numeric" autocomplete="off">
+          <div class="nota" id="reNotaCuenta"></div>
+          <label for="reCci">CCI (código de cuenta interbancario, 20 dígitos)</label>
+          <input type="text" id="reCci" maxlength="24" inputmode="numeric" autocomplete="off">
+          <label for="reTitularCuenta">Nombre del titular de la cuenta</label>
+          <input type="text" id="reTitularCuenta" maxlength="120">
+          <div class="fila2">
+            <div><label for="reDocCuentaTipo">Documento de la cuenta</label>
+              <select id="reDocCuentaTipo"><option value="DNI">DNI</option><option value="RUC">RUC</option><option value="CE">CE</option></select></div>
+            <div><label for="reDocCuentaNumero">Número</label><input type="text" id="reDocCuentaNumero" maxlength="12" inputmode="numeric"></div>
+          </div>
+          <label for="reCorreo">Correo (para el aviso del abono)</label>
+          <input type="email" id="reCorreo" maxlength="120" inputmode="email" autocomplete="email">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ REEMBOLSO: ADJUNTOS ═══════════ -->
+  <div class="pantalla" id="pasoAdjuntos">
+    <div class="card">
+      <h2><span class="num"></span>Adjunta tus documentos</h2>
+      <div class="subtitulo">Puedes subir fotos o archivos PDF.</div>
+
+      <div class="subtitulo-seccion">Hoja del médico tratante (obligatoria)</div>
+      <div class="nota">La página 2 del formato, llenada, firmada y sellada por tu médico.</div>
+      <div class="zona-adjunto">
+        <button type="button" class="btn-chico" data-adjuntar="medico">📷 Agregar foto o PDF</button>
+        <ul class="adjuntos-lista" id="listaMedico"></ul>
+        <div class="estado" id="estadoMedico"></div>
+      </div>
+
+      <div class="subtitulo-seccion">Comprobantes y sustentos (al menos uno)</div>
+      <div class="nota">Facturas o recibos a nombre de Sanitas Perú S.A. (RUC 20523470761), receta, orden y resultados de exámenes, etc.</div>
+      <div class="zona-adjunto">
+        <button type="button" class="btn-chico" data-adjuntar="sustento">📎 Agregar foto o PDF</button>
+        <ul class="adjuntos-lista" id="listaSustento"></ul>
+        <div class="estado" id="estadoSustento"></div>
+      </div>
+      <input type="file" id="fileAdjunto" accept="image/*,application/pdf" style="display:none">
     </div>
   </div>
 
   <!-- ═══════════ PASO 3: FIRMA ═══════════ -->
-  <div class="pantalla" id="paso3">
+  <div class="pantalla" id="pasoFirma">
     <div class="card">
-      <h2>3. Lee y firma tu autorización</h2>
+      <h2><span class="num"></span>Lee y firma</h2>
       <div class="subtitulo">Así quedará el documento que firmas.</div>
       <div class="texto-legal" id="textoAutorizacion"></div>
 
       <label class="check-linea" style="text-transform:none;letter-spacing:0;color:var(--navy);font-weight:500;font-size:13.5px;">
         <input type="checkbox" id="chkAcepto">
-        <span>Leí la autorización y la Ley N° 29733 de Protección de Datos Personales, y autorizo a Sanitas Perú S.A. EPS a entregarme mi reporte de siniestralidad.</span>
+        <span id="textoAcepto">Leí la autorización y la Ley N° 29733 de Protección de Datos Personales, y autorizo a Sanitas Perú S.A. EPS a entregarme mi reporte de siniestralidad.</span>
       </label>
 
       <label>Tu firma</label>
@@ -269,8 +428,8 @@ canvas#firmaCanvas {
   <div class="pantalla" id="pantallaExito">
     <div class="card final">
       <div class="grande">✅</div>
-      <h2>¡Listo! Recibimos tu autorización</h2>
-      <p>Tu asesor ya la tiene y te enviará tu reporte de siniestralidad a <b id="correoFinal"></b>.</p>
+      <h2 id="tituloExito">¡Listo! Recibimos tu documento</h2>
+      <p id="textoExito">Tu asesor ya lo tiene.</p>
       <p>Ya puedes cerrar esta página.</p>
     </div>
   </div>
@@ -298,10 +457,22 @@ canvas#firmaCanvas {
   var token = partes[1] || '';
   var base = '/siniestralidad/' + encodeURIComponent(token);
   var info = null;            // datos del servidor
+  var formato = 'SINIESTRALIDAD';
+  var PASOS = { SINIESTRALIDAD: ['pasoDoc', 'pasoDatos', 'pasoFirma'], LATENCIA: ['pasoDoc', 'pasoDatos', 'pasoFirma'],
+                REEMBOLSO: ['pasoDoc', 'pasoDatos', 'pasoPago', 'pasoAdjuntos', 'pasoFirma'] };
+  var TODAS = ['pasoDoc', 'pasoDatos', 'pasoPago', 'pasoAdjuntos', 'pasoFirma'];
+  var pasos = PASOS.SINIESTRALIDAD;
   var paso = 1;
   var subido = { anverso: false, reverso: false };
   var subiendo = { anverso: false, reverso: false };
   var maxDep = 5;
+  var adjuntos = [];
+  var maxAdjuntos = { medico: 4, sustento: 20 };
+  var subiendoAdjunto = false;
+  var DIGITOS = { BBVA: { AHORROS: 20, CORRIENTE: 20 }, BCP: { AHORROS: 14, CORRIENTE: 13 },
+                  SCOTIABANK: { AHORROS: 10, CORRIENTE: 10 }, INTERBANK: { AHORROS: 13, CORRIENTE: 13 } };
+  var BANCOS = { BCP: 'Banco de Crédito BCP', BBVA: 'BBVA Continental', INTERBANK: 'Interbank', SCOTIABANK: 'Scotiabank', OTRO: 'Otro' };
+  var PARENTESCOS = { TITULAR: 'El mismo titular', CONYUGE: 'Cónyuge', HIJO: 'Hijo(a)', PADRE: 'Padre/Madre' };
 
   function $(id) { return document.getElementById(id); }
   function esc(t) {
@@ -309,6 +480,8 @@ canvas#firmaCanvas {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function valor(id) { return $(id).value.trim().replace(/\s+/g, ' '); }
+  function radio(nombre) { var r = document.querySelector('input[name="' + nombre + '"]:checked'); return r ? r.value : ''; }
   function mensaje(texto, tipo) {
     var m = $('mensajeGlobal');
     m.className = 'mensaje' + (texto ? ' ' + (tipo || 'error') : '');
@@ -322,9 +495,9 @@ canvas#firmaCanvas {
     $('barraBotones').style.display = 'none';
     $('barraPasos').style.display = 'none';
     $('textoProgreso').textContent = '';
-    ['paso1', 'paso2', 'paso3'].forEach(function (id) { $(id).classList.remove('activa'); });
+    TODAS.forEach(function (id) { $(id).classList.remove('activa'); });
     $('iconoNoDisponible').textContent = estado === 'firmado' ? '✅' : (estado === 'vencido' ? '⏰' : '🔗');
-    $('tituloNoDisponible').textContent = estado === 'firmado' ? 'Ya firmaste esta autorización'
+    $('tituloNoDisponible').textContent = estado === 'firmado' ? 'Ya firmaste este documento'
       : (estado === 'vencido' ? 'Este enlace venció' : 'Este enlace no está disponible');
     $('textoNoDisponible').textContent = (d && d.motivo) || 'Pídele un enlace nuevo a tu asesor por el webchat.';
     $('pantallaNoDisponible').classList.add('activa');
@@ -334,49 +507,76 @@ canvas#firmaCanvas {
   function irA(n) {
     paso = n;
     mensaje('');
-    ['paso1', 'paso2', 'paso3'].forEach(function (id, i) { $(id).classList.toggle('activa', i + 1 === n); });
+    var actual = pasos[n - 1];
+    TODAS.forEach(function (id) { $(id).classList.toggle('activa', id === actual); });
     var marcas = $('barraPasos').children;
     for (var i = 0; i < marcas.length; i++) marcas[i].classList.toggle('hecho', i < n);
-    $('textoProgreso').textContent = 'Paso ' + n + ' de 3' + (info && info.vence ? ' · El enlace vence el ' + info.vence : '');
+    $('textoProgreso').textContent = 'Paso ' + n + ' de ' + pasos.length + (info && info.vence ? ' · El enlace vence el ' + info.vence : '');
     $('btnAtras').style.visibility = n === 1 ? 'hidden' : 'visible';
-    $('btnSiguiente').textContent = n === 3 ? '✍️ Firmar y enviar' : 'Continuar';
-    if (n === 3) { armarTexto(); setTimeout(ajustarCanvas, 30); }
+    $('btnSiguiente').textContent = actual === 'pasoFirma' ? '✍️ Firmar y enviar' : 'Continuar';
+    if (actual === 'pasoFirma') { armarTexto(); setTimeout(ajustarCanvas, 30); }
     actualizarBoton();
     window.scrollTo(0, 0);
   }
 
   function actualizarBoton() {
-    var b = $('btnSiguiente');
-    if (paso === 1) b.disabled = !subido.anverso || subiendo.anverso || subiendo.reverso;
-    else if (paso === 3) b.disabled = !(haFirmado && $('chkAcepto').checked) || enviando;
+    var b = $('btnSiguiente'), actual = pasos[paso - 1];
+    if (actual === 'pasoDoc') b.disabled = !subido.anverso || subiendo.anverso || subiendo.reverso;
+    else if (actual === 'pasoAdjuntos') b.disabled = subiendoAdjunto;
+    else if (actual === 'pasoFirma') b.disabled = !(haFirmado && $('chkAcepto').checked) || enviando;
     else b.disabled = false;
   }
 
   $('btnAtras').onclick = function () { if (paso > 1) irA(paso - 1); };
   $('btnSiguiente').onclick = function () {
-    if (paso === 1) { irA(2); return; }
-    if (paso === 2) {
-      var error = validarDatos();
-      if (error) { mensaje(error); return; }
-      irA(3);
-      return;
-    }
-    enviar();
+    var actual = pasos[paso - 1], error = '';
+    if (actual === 'pasoDatos') error = validarDatos();
+    else if (actual === 'pasoPago') error = validarPago();
+    else if (actual === 'pasoAdjuntos') error = validarAdjuntos();
+    else if (actual === 'pasoFirma') { enviar(); return; }
+    if (error) { mensaje(error); return; }
+    irA(paso + 1);
   };
+
+  function prepararFormato() {
+    formato = info.formato || 'SINIESTRALIDAD';
+    pasos = PASOS[formato] || PASOS.SINIESTRALIDAD;
+    $('tituloFormato').textContent = info.titulo || 'Firma tu documento';
+    document.title = (info.titulo || 'Firma tu documento') + ' - Sanitas Perú';
+    $('barraPasos').innerHTML = pasos.map(function () { return '<span></span>'; }).join('');
+    pasos.forEach(function (id, i) { var n = $(id).querySelector('.num'); if (n) n.textContent = (i + 1) + '. '; });
+    ['SINIESTRALIDAD', 'LATENCIA', 'REEMBOLSO'].forEach(function (f) { $('datos' + f).style.display = f === formato ? 'block' : 'none'; });
+    $('datosComunes').style.display = formato === 'REEMBOLSO' ? 'none' : 'block';
+    if (formato === 'LATENCIA') {
+      $('inTipo').querySelector('option[value="OTRO"]').remove();
+      $('latCese').max = new Date().toISOString().slice(0, 10);
+    }
+    $('textoAcepto').textContent = formato === 'LATENCIA'
+      ? 'Leí la declaración jurada y declaro que los datos son verdaderos.'
+      : (formato === 'REEMBOLSO'
+        ? 'Leí la solicitud, las declaraciones y la Ley N° 29733 de Protección de Datos Personales, y declaro que los datos son verdaderos.'
+        : 'Leí la autorización y la Ley N° 29733 de Protección de Datos Personales, y autorizo a Sanitas Perú S.A. EPS a entregarme mi reporte de siniestralidad.');
+  }
 
   // ---------- Carga inicial ----------
   fetchLimite(base + '/datos', { cache: 'no-store' }, 30).then(function (x) {
     if (!x.r.ok || !x.d.ok) { noDisponible(x.d); return; }
     info = x.d;
     maxDep = info.max_dependientes || 5;
+    if (info.max_adjuntos) maxAdjuntos = info.max_adjuntos;
+    prepararFormato();
     $('inNombre').value = info.nombre || '';
-    $('inTipo').value = info.tipo_documento || 'DNI';
+    $('inTipo').value = info.tipo_documento === 'CE' ? 'CE' : (formato === 'LATENCIA' ? 'DNI' : (info.tipo_documento || 'DNI'));
     $('inNumero').value = info.n_documento || '';
     $('inContrato').value = info.contrato || '';
     $('inCorreo').value = info.correo || '';
+    $('reCorreo').value = info.correo || '';
+    $('reTitNumero').value = info.n_documento || '';
     if (info.dni_anverso) marcarSubido('anverso', null, 'Ya subiste esta foto. Puedes cambiarla si quieres.');
     if (info.dni_reverso) marcarSubido('reverso', null, 'Ya subiste esta foto.');
     if (info.ocr) aplicarOcr(info.ocr, false);
+    adjuntos = info.adjuntos || [];
+    pintarAdjuntos();
     $('pantallaCargando').style.display = 'none';
     $('barraBotones').style.display = 'flex';
     irA(1);
@@ -385,7 +585,7 @@ canvas#firmaCanvas {
     mensaje('No pudimos cargar tu formulario. Revisa tu conexión y vuelve a abrir el enlace.');
   });
 
-  // ---------- Paso 1: fotos ----------
+  // ---------- Paso: fotos del documento ----------
   function marcarSubido(lado, url, texto) {
     var L = lado === 'anverso' ? 'Anverso' : 'Reverso';
     subido[lado] = true;
@@ -497,10 +697,22 @@ canvas#firmaCanvas {
 
   function aplicarOcr(ocr, forzar) {
     if (!ocr) return;
+    var esDoc = ocr.es_documento !== false;
     if (ocr.nombre && (forzar || !$('inNombre').value)) $('inNombre').value = ocr.nombre;
-    if (ocr.numero && (forzar || !$('inNumero').value) && ocr.es_documento !== false) {
+    if (ocr.numero && (forzar || !$('inNumero').value) && esDoc) {
       $('inNumero').value = ocr.numero;
-      if (ocr.tipo) $('inTipo').value = ocr.tipo;
+      if (ocr.tipo && $('inTipo').querySelector('option[value="' + ocr.tipo + '"]')) $('inTipo').value = ocr.tipo;
+    }
+    // Reembolso: titular con apellidos y nombres por separado
+    if (ocr.apellidos && (forzar || !$('reTitPaterno').value)) {
+      var ap = ocr.apellidos.split(' ');
+      $('reTitPaterno').value = ap[0] || '';
+      $('reTitMaterno').value = ap.slice(1).join(' ');
+    }
+    if (ocr.nombres && (forzar || !$('reTitNombres').value)) $('reTitNombres').value = ocr.nombres;
+    if (ocr.numero && esDoc && (forzar || !$('reTitNumero').value)) {
+      $('reTitNumero').value = ocr.numero;
+      if (ocr.tipo) $('reTitTipo').value = ocr.tipo;
     }
   }
 
@@ -513,7 +725,7 @@ canvas#firmaCanvas {
     };
   });
 
-  // ---------- Paso 2: datos ----------
+  // ---------- Paso: datos ----------
   function filaDependiente(n, nombre, doc) {
     var div = document.createElement('div');
     div.className = 'dependiente';
@@ -543,11 +755,63 @@ canvas#firmaCanvas {
     $('bloqueDependientes').style.display = si ? 'block' : 'none';
     if (si && !$('listaDependientes').children.length) $('btnAgregarDep').onclick();
   };
-  $('inNumero').addEventListener('input', function () {
-    if ($('inTipo').value === 'DNI') this.value = this.value.replace(/\D/g, '').slice(0, 8);
+  function soloDigitosDni(input, select, max) {
+    input.addEventListener('input', function () {
+      if (!select || $(select).value === 'DNI') this.value = this.value.replace(/\D/g, '').slice(0, max || 8);
+    });
+  }
+  soloDigitosDni($('inNumero'), 'inTipo');
+  soloDigitosDni($('reTitNumero'), 'reTitTipo');
+  soloDigitosDni($('rePacNumero'), 'rePacTipo');
+  ['reCuenta', 'reCci'].forEach(function (id) { soloDigitosDni($(id), null, 24); });
+  $('reEsTitular').onchange = function () { $('rePacienteDatos').style.display = this.checked ? 'none' : 'block'; };
+
+  // Opciones tipo tarjeta: resalta la elegida
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.type === 'radio') {
+      document.querySelectorAll('input[name="' + e.target.name + '"]').forEach(function (r) {
+        r.closest('label').classList.toggle('elegida', r.checked);
+      });
+      if (e.target.name === 'reRegistrada') $('reBloqueForma').style.display = e.target.value === 'no' ? 'block' : 'none';
+      if (e.target.name === 'reForma') {
+        $('reBloqueAbono').style.display = e.target.value === 'ABONO' ? 'block' : 'none';
+        $('reBloqueCheque').style.display = e.target.value === 'CHEQUE' ? 'block' : 'none';
+      }
+      if (e.target.name === 'reTipoCuenta') notaCuenta();
+    }
   });
+  $('reBanco').onchange = function () { $('reBancoOtroCaja').style.display = this.value === 'OTRO' ? 'block' : 'none'; notaCuenta(); };
+  function notaCuenta() {
+    var d = (DIGITOS[$('reBanco').value] || {})[radio('reTipoCuenta')];
+    $('reNotaCuenta').textContent = d ? 'Debe tener ' + d + ' dígitos.' : '';
+  }
+
+  function persona(prefijo) {
+    return { paterno: valor(prefijo + 'Paterno'), materno: valor(prefijo + 'Materno'), nombres: valor(prefijo + 'Nombres'),
+             tipo_documento: $(prefijo + 'Tipo').value, n_documento: $(prefijo + 'Numero').value.trim().replace(/[\s.\-]/g, ''),
+             edad: $(prefijo + 'Edad').value.trim() };
+  }
 
   function leerDatos() {
+    if (formato === 'LATENCIA') {
+      return { nombre: valor('inNombre'), tipo_documento: $('inTipo').value,
+               n_documento: $('inNumero').value.trim().replace(/[\s.\-]/g, ''), domicilio: valor('latDomicilio'),
+               empleador: valor('latEmpleador'), fecha_cese: $('latCese').value, aportes: $('latAportes').value.trim() };
+    }
+    if (formato === 'REEMBOLSO') {
+      var pac = persona('rePac');
+      pac.sexo = radio('reSexo');
+      pac.parentesco = $('rePacParentesco').value;
+      return {
+        titular: persona('reTit'), paciente_es_titular: $('reEsTitular').checked, paciente: pac,
+        cuenta_registrada: radio('reRegistrada') === 'si',
+        pago: { forma: radio('reForma'), banco: $('reBanco').value, banco_otro: valor('reBancoOtro'),
+                tipo_cuenta: radio('reTipoCuenta'), n_cuenta: $('reCuenta').value.replace(/\D/g, ''),
+                cci: $('reCci').value.replace(/\D/g, ''), titular_cuenta: valor('reTitularCuenta'),
+                doc_tipo: $('reDocCuentaTipo').value, doc_numero: $('reDocCuentaNumero').value.trim(),
+                correo: $('reCorreo').value.trim() }
+      };
+    }
     var deps = [];
     if ($('chkDependientes').checked) {
       $('listaDependientes').querySelectorAll('.dependiente').forEach(function (f) {
@@ -557,7 +821,7 @@ canvas#firmaCanvas {
     }
     return {
       ciudad: $('inCiudad').value.trim(),
-      nombre: $('inNombre').value.trim().replace(/\s+/g, ' '),
+      nombre: valor('inNombre'),
       tipo_documento: $('inTipo').value,
       n_documento: $('inNumero').value.trim().replace(/[\s.\-]/g, ''),
       correo: $('inCorreo').value.trim(),
@@ -567,11 +831,43 @@ canvas#firmaCanvas {
     };
   }
 
+  function validarDocumento(tipo, numero, quien) {
+    if (tipo === 'DNI' && !/^\d{8}$/.test(numero)) return 'El DNI ' + quien + 'debe tener 8 dígitos.';
+    if (tipo !== 'DNI' && !/^[A-Za-z0-9]{5,20}$/.test(numero)) return 'Revisa el número de documento ' + quien + '.';
+    return '';
+  }
+  function validarPersona(p, quien) {
+    if (p.paterno.length < 2 || p.nombres.length < 2) return 'Escribe el apellido paterno y los nombres del ' + quien + '.';
+    var e = validarDocumento(p.tipo_documento, p.n_documento, 'del ' + quien + ' ');
+    if (e) return e;
+    if (!/^\d{1,3}$/.test(p.edad) || Number(p.edad) > 120) return 'Indica la edad del ' + quien + '.';
+    return '';
+  }
+
   function validarDatos() {
-    var d = leerDatos();
+    var d = leerDatos(), e;
+    if (formato === 'REEMBOLSO') {
+      e = validarPersona(d.titular, 'titular');
+      if (e) return e;
+      if (!d.paciente_es_titular) {
+        e = validarPersona(d.paciente, 'paciente');
+        if (e) return e;
+        if (!d.paciente.parentesco) return 'Indica el parentesco del paciente con el titular.';
+      }
+      if (!d.paciente.sexo) return 'Indica el sexo del paciente.';
+      return '';
+    }
     if (d.nombre.split(' ').length < 2 || d.nombre.length < 5) return 'Escribe tus nombres y apellidos completos.';
-    if (d.tipo_documento === 'DNI' && !/^\d{8}$/.test(d.n_documento)) return 'El DNI debe tener 8 dígitos.';
-    if (d.tipo_documento !== 'DNI' && !/^[A-Za-z0-9]{5,20}$/.test(d.n_documento)) return 'Revisa el número de tu documento.';
+    e = validarDocumento(d.tipo_documento, d.n_documento, '');
+    if (e) return e.replace('El DNI debe', 'El DNI debe');
+    if (formato === 'LATENCIA') {
+      if (d.domicilio.length < 8) return 'Escribe tu domicilio completo (calle, número, distrito).';
+      if (d.empleador.length < 2) return 'Escribe el nombre de tu última entidad empleadora.';
+      if (!d.fecha_cese) return 'Indica la fecha en que cesaste.';
+      if (d.fecha_cese > new Date().toISOString().slice(0, 10)) return 'La fecha de cese no puede ser futura.';
+      if (!/^\d{1,2}$/.test(d.aportes) || Number(d.aportes) > 36) return 'Indica tus aportes a EsSalud (un número de 0 a 36).';
+      return '';
+    }
     if (!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(d.correo)) return 'Escribe un correo válido para recibir tu reporte.';
     if (d.ciudad.length < 2) return 'Escribe tu ciudad.';
     if (d.con_dependientes) {
@@ -586,12 +882,147 @@ canvas#firmaCanvas {
     return '';
   }
 
-  // ---------- Paso 3: texto y firma ----------
+  // ---------- Paso: forma de pago (reembolso) ----------
+  function validarPago() {
+    var d = leerDatos(), g = d.pago;
+    if (!radio('reRegistrada')) return 'Indica si ya registraste tu cuenta en Sanitas.';
+    if (d.cuenta_registrada) return '';
+    if (!g.forma) return 'Elige la forma de pago: abono en cuenta o cheque.';
+    if (g.forma === 'CHEQUE') return '';
+    if (!g.banco) return 'Elige el banco.';
+    if (g.banco === 'OTRO' && g.banco_otro.length < 3) return 'Escribe el nombre del banco.';
+    if (!g.tipo_cuenta) return 'Elige el tipo de cuenta.';
+    var dig = (DIGITOS[g.banco] || {})[g.tipo_cuenta];
+    if (dig && g.n_cuenta.length !== dig) return 'El N° de cuenta debe tener ' + dig + ' dígitos.';
+    if (!dig && (g.n_cuenta.length < 6 || g.n_cuenta.length > 20)) return 'Revisa el N° de cuenta.';
+    if (g.cci && g.cci.length !== 20) return 'El CCI debe tener 20 dígitos.';
+    if (g.banco === 'OTRO' && !g.cci) return 'Para otros bancos, el CCI (20 dígitos) es obligatorio.';
+    if (g.titular_cuenta.split(' ').length < 2) return 'Escribe el nombre completo del titular de la cuenta.';
+    var dn = g.doc_numero.replace(/[\s.\-]/g, '');
+    if ((g.doc_tipo === 'DNI' && !/^\d{8}$/.test(dn)) || (g.doc_tipo === 'RUC' && !/^\d{11}$/.test(dn)) ||
+        (g.doc_tipo === 'CE' && !/^[A-Za-z0-9]{8,12}$/.test(dn))) return 'Revisa el N° del documento con el que se abrió la cuenta.';
+    if (!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(g.correo)) return 'Escribe un correo válido para el aviso del abono.';
+    return '';
+  }
+
+  // ---------- Paso: adjuntos (reembolso) ----------
+  var categoriaElegida = 'medico';
+  document.querySelectorAll('[data-adjuntar]').forEach(function (b) {
+    b.onclick = function () { categoriaElegida = b.dataset.adjuntar; $('fileAdjunto').click(); };
+  });
+  $('fileAdjunto').onchange = function (e) {
+    var f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) subirAdjunto(categoriaElegida, f);
+  };
+  function estadoAdjunto(cat) { return $(cat === 'medico' ? 'estadoMedico' : 'estadoSustento'); }
+  function subirAdjunto(cat, archivo) {
+    mensaje('');
+    var cuantos = adjuntos.filter(function (a) { return a.categoria === cat; }).length;
+    if (cuantos >= (maxAdjuntos[cat] || 0)) { mensaje('Llegaste al máximo de archivos en esta sección.'); return; }
+    if (archivo.size > 15 * 1024 * 1024 && !/^image\//.test(archivo.type || '')) { mensaje('El archivo pesa más de 15 MB.'); return; }
+    subiendoAdjunto = true;
+    actualizarBoton();
+    estadoAdjunto(cat).innerHTML = '<span class="girar" style="width:14px;height:14px;border-width:2px"></span>&nbsp; Subiendo ' + esc(archivo.name || 'archivo') + '…';
+    var esPdf = /pdf$/i.test(archivo.type || '') || /\.pdf$/i.test(archivo.name || '');
+    (esPdf ? Promise.resolve(archivo) : comprimir(archivo)).then(function (blob) {
+      var fd = new FormData();
+      fd.append('categoria', cat);
+      var nombre = archivo.name || (esPdf ? 'documento.pdf' : 'foto.jpg');
+      if (!esPdf && blob.type === 'image/jpeg' && !/\.jpe?g$/i.test(nombre)) nombre = nombre.replace(/\.[^.]*$/, '') + '.jpg';
+      fd.append('file', blob, nombre);
+      return fetchLimite(base + '/adjunto', { method: 'POST', body: fd }, 180);
+    }).then(function (x) {
+      subiendoAdjunto = false;
+      if (x.r.status === 404 || x.r.status === 409 || x.r.status === 410) { noDisponible(x.d); return; }
+      if (!x.r.ok || !x.d.ok) {
+        estadoAdjunto(cat).textContent = '';
+        mensaje((x.d && x.d.motivo) || 'No pudimos subir el archivo. Intenta de nuevo.');
+        actualizarBoton();
+        return;
+      }
+      adjuntos = x.d.adjuntos || [];
+      estadoAdjunto(cat).textContent = '✓ Archivo guardado';
+      pintarAdjuntos();
+      actualizarBoton();
+    }).catch(function (e) {
+      subiendoAdjunto = false;
+      estadoAdjunto(cat).textContent = '';
+      mensaje(e && e.name === 'AbortError'
+        ? 'El archivo está tardando demasiado en subir. Revisa tu señal o conéctate a WiFi e intenta de nuevo.'
+        : 'No pudimos subir el archivo. Revisa tu conexión e intenta de nuevo.');
+      actualizarBoton();
+    });
+  }
+  function pintarAdjuntos() {
+    [['medico', 'listaMedico'], ['sustento', 'listaSustento']].forEach(function (par) {
+      var lista = adjuntos.filter(function (a) { return a.categoria === par[0]; });
+      $(par[1]).innerHTML = lista.map(function (a) {
+        return '<li><span>' + (a.pdf ? '📄' : '🖼️') + '</span><span class="nombre">' + esc(a.nombre) + '</span>' +
+          '<button type="button" data-borrar="' + esc(a.id) + '" aria-label="Quitar archivo">×</button></li>';
+      }).join('');
+    });
+    document.querySelectorAll('[data-borrar]').forEach(function (b) {
+      b.onclick = function () {
+        b.disabled = true;
+        var fd = new FormData();
+        fd.append('id', b.dataset.borrar);
+        fetchLimite(base + '/adjunto/borrar', { method: 'POST', body: fd }, 30).then(function (x) {
+          if (x.r.ok && x.d.ok) { adjuntos = x.d.adjuntos || []; pintarAdjuntos(); }
+          else { b.disabled = false; mensaje((x.d && x.d.motivo) || 'No pudimos quitar el archivo.'); }
+        }).catch(function () { b.disabled = false; mensaje('No pudimos quitar el archivo. Revisa tu conexión.'); });
+      };
+    });
+  }
+  function validarAdjuntos() {
+    if (!adjuntos.some(function (a) { return a.categoria === 'medico'; })) return 'Adjunta la foto de la hoja llenada y sellada por tu médico.';
+    if (!adjuntos.some(function (a) { return a.categoria === 'sustento'; })) return 'Adjunta al menos un comprobante (factura o recibo).';
+    return '';
+  }
+
+  // ---------- Paso: texto y firma ----------
   var MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function fechaLarga(iso) {
+    var p = String(iso || '').split('-');
+    return p.length === 3 ? Number(p[2]) + ' de ' + MESES[Number(p[1]) - 1] + ' de ' + p[0] : '';
+  }
   function armarTexto() {
-    var d = leerDatos(), hoy = new Date();
+    var d = leerDatos(), hoy = new Date(), h;
+    if (formato === 'LATENCIA') {
+      var tipoTxt = d.tipo_documento === 'DNI' ? 'Documento Nacional de Identidad' : 'Carné de Extranjería';
+      h = '<p style="text-align:center"><b><u>DECLARACIÓN JURADA</u></b></p>' +
+        '<p>Por el presente documento yo, <b>' + esc(d.nombre.toUpperCase()) + '</b>, identificado/a con ' + tipoTxt + ' N° <b>' +
+        esc(d.n_documento.toUpperCase()) + '</b>, con domicilio real en <b>' + esc(d.domicilio.toUpperCase()) + '</b>, <b>DECLARO BAJO JURAMENTO</b> lo siguiente:</p>' +
+        '<p>1. Mi última entidad empleadora fue <b>' + esc(d.empleador.toUpperCase()) + '</b>.<br>' +
+        '2. Haber cesado de dicha entidad empleadora el <b>' + esc(fechaLarga(d.fecha_cese)) + '</b>.<br>' +
+        '3. Haber realizado <b>' + esc(d.aportes) + '</b> aportes a ESSALUD en los últimos tres años previos a la fecha de mi cese.</p>' +
+        '<div class="ley"><p>Ello de conformidad con lo establecido en el Art. 37 del Decreto Supremo N° 009-97-SA Reglamento de la Ley de Modernización de la Seguridad Social en Salud, relativo a la Latencia.</p>' +
+        '<p>Formulo la presente declaración en honor a la verdad y al amparo de lo dispuesto por la ley N° 27444, ley de simplificación administrativa, sus modificatorias y su reglamento, asumiendo expresa responsabilidad por la veracidad de la presente declaración, relevando a terceros de ulteriores responsabilidades y en caso de falsedad me someto a la normatividad administrativa y/o penal vigente, y las sanciones que establece la ley.</p>' +
+        '<p>En señal de conformidad firmo y acompaño con la copia de mi documento de identidad, a los ' + hoy.getDate() + ' días del mes de ' + MESES[hoy.getMonth()] + ' del año ' + hoy.getFullYear() + '.</p></div>';
+      $('textoAutorizacion').innerHTML = h;
+      return;
+    }
+    if (formato === 'REEMBOLSO') {
+      var t = d.titular, p = d.paciente_es_titular ? t : d.paciente, g = d.pago;
+      var nom = function (x) { return esc([x.nombres, x.paterno, x.materno].filter(Boolean).join(' ').toUpperCase()); };
+      var pagoTxt = d.cuenta_registrada ? 'Cuenta ya registrada en Sanitas'
+        : (g.forma === 'CHEQUE' ? 'Cheque (se recoge en nuestras oficinas)'
+          : 'Abono en cuenta ' + (g.tipo_cuenta === 'AHORROS' ? 'de ahorros' : 'corriente') + ' ' +
+            esc(g.banco === 'OTRO' ? g.banco_otro : BANCOS[g.banco] || '') + ' N° ' + esc(g.n_cuenta) + (g.cci ? ' (CCI ' + esc(g.cci) + ')' : ''));
+      h = '<p style="text-align:center"><b>SOLICITUD DE REEMBOLSO</b></p>' +
+        '<table><tr><th>Titular</th><td>' + nom(t) + ' · ' + esc(t.tipo_documento) + ' ' + esc(t.n_documento) + ' · ' + esc(t.edad) + ' años</td></tr>' +
+        '<tr><th>Paciente</th><td>' + nom(p) + ' · ' + esc(p.tipo_documento) + ' ' + esc(p.n_documento) + ' · ' + esc(p.edad) + ' años · ' +
+        (d.paciente.sexo === 'M' ? 'Masculino' : 'Femenino') + ' · ' + esc(PARENTESCOS[d.paciente_es_titular ? 'TITULAR' : d.paciente.parentesco] || '') + '</td></tr>' +
+        '<tr><th>Forma de pago</th><td>' + pagoTxt + '</td></tr>' +
+        '<tr><th>Adjuntos</th><td>' + adjuntos.length + ' archivo(s)</td></tr></table>' +
+        '<div class="ley"><p>Las declaraciones anteriores son verdaderas y, en tal sentido, el afiliado/asegurado suscribe la presente declaración, la cual tendrá el carácter de declaración jurada. Asimismo, de conformidad con el artículo 25 inciso a) de la Ley General de Salud 26842, el afiliado/asegurado presta su consentimiento para que las clínicas o médicos tratantes proporcionen a la compañía cualquier información del acto médico, relacionado a la atención, tales como historia clínica, certificados e informes, dispensándolos de la reserva de información. Sin perjuicio de lo expuesto el afiliado/asegurado reconoce que las clínicas o médicos tratantes están exceptuados de la reserva de información, por lo que estos podrán brindar a la aseguradora o a la administradora del financiamiento toda la información relacionada con el acto médico del afiliado/asegurado, siempre que fuese con fines de reembolso, pago de beneficios, fiscalización o auditoría.</p>' +
+        '<p>De conformidad con lo establecido con la Ley Nro. 29733 – Ley de Protección de Datos Personales y su Reglamento, quien suscribe el presente documento queda informado y da su consentimiento libre, expreso, inequívoco e informado, para el tratamiento y transferencia, nacional e internacional de sus datos personales a la base de datos de SANITAS PERÚ S.A., con las finalidades de analizar las circunstancias al celebrar contratos con SANITAS PERÚ S.A., gestionar la contratación y evaluar la calidad del servicio.</p>' +
+        '<p>El afiliado declara que todos los datos descritos en la presente solicitud son válidos y que cualquier error en la información brindada sin previo aviso a Sanitas podrá afectar el pago o el tiempo del reembolso; en dichos casos la responsabilidad recaerá directamente en el AFILIADO.</p></div>';
+      $('textoAutorizacion').innerHTML = h;
+      return;
+    }
     var marca = function (t) { return d.tipo_documento === t ? '(X)' : '( )'; };
-    var h = '<p style="text-align:right">' + esc(d.ciudad) + ', ' + hoy.getDate() + ' de ' + MESES[hoy.getMonth()] + ' del ' + hoy.getFullYear() + '</p>' +
+    h = '<p style="text-align:right">' + esc(d.ciudad) + ', ' + hoy.getDate() + ' de ' + MESES[hoy.getMonth()] + ' del ' + hoy.getFullYear() + '</p>' +
       '<p>Señores,<br><b>SANITAS PERÚ S.A. EPS PRESENTE.-</b></p>' +
       '<p>Yo, <b>' + esc(d.nombre.toUpperCase()) + '</b> identificado/a con documento de identidad ' + marca('DNI') + ' DNI, ' +
       marca('CE') + ' CE, ' + marca('OTRO') + ' Otro N° <b>' + esc(d.n_documento.toUpperCase()) + '</b> solicito a la compañía Sanitas Perú S.A. EPS ' +
@@ -666,9 +1097,15 @@ canvas#firmaCanvas {
 
   function enviar() {
     var error = validarDatos();
-    if (error) { irA(2); mensaje(error); return; }
+    if (error) { irA(pasos.indexOf('pasoDatos') + 1); mensaje(error); return; }
+    if (formato === 'REEMBOLSO') {
+      error = validarPago();
+      if (error) { irA(pasos.indexOf('pasoPago') + 1); mensaje(error); return; }
+      error = validarAdjuntos();
+      if (error) { irA(pasos.indexOf('pasoAdjuntos') + 1); mensaje(error); return; }
+    }
     if (!haFirmado) { mensaje('Dibuja tu firma en el recuadro.'); return; }
-    if (!$('chkAcepto').checked) { mensaje('Marca la casilla para aceptar la autorización.'); return; }
+    if (!$('chkAcepto').checked) { mensaje('Marca la casilla para aceptar.'); return; }
     enviando = true;
     actualizarBoton();
     var b = $('btnSiguiente');
@@ -685,22 +1122,31 @@ canvas#firmaCanvas {
         enviando = false;
         b.textContent = '✍️ Firmar y enviar';
         if (x.r.ok && x.d.ok) {
-          ['paso1', 'paso2', 'paso3'].forEach(function (id) { $(id).classList.remove('activa'); });
+          TODAS.forEach(function (id) { $(id).classList.remove('activa'); });
           $('barraBotones').style.display = 'none';
           $('barraPasos').style.display = 'none';
           $('textoProgreso').textContent = '';
-          $('correoFinal').textContent = x.d.correo || datos.correo;
+          if (formato === 'SINIESTRALIDAD') {
+            $('tituloExito').textContent = '¡Listo! Recibimos tu autorización';
+            $('textoExito').innerHTML = 'Tu asesor ya la tiene y te enviará tu reporte de siniestralidad a <b>' + esc(x.d.correo || datos.correo) + '</b>.';
+          } else if (formato === 'LATENCIA') {
+            $('tituloExito').textContent = '¡Listo! Recibimos tu declaración jurada';
+            $('textoExito').textContent = 'Tu asesor ya la tiene y continuará con tu trámite.';
+          } else {
+            $('tituloExito').textContent = '¡Listo! Recibimos tu solicitud de reembolso';
+            $('textoExito').textContent = 'Tu asesor ya la tiene con tus documentos. Recuerda que todo reembolso está sujeto a las condiciones de tu plan de salud y a la validación de Auditoría Médica.';
+          }
           $('pantallaExito').classList.add('activa');
           window.scrollTo(0, 0);
           return;
         }
         if (x.r.status === 404 || x.r.status === 409 || x.r.status === 410) { noDisponible(x.d); return; }
-        mensaje((x.d && x.d.motivo) || 'No pudimos enviar tu autorización. Intenta de nuevo.');
+        mensaje((x.d && x.d.motivo) || 'No pudimos enviar tu documento. Intenta de nuevo.');
         actualizarBoton();
       }).catch(function () {
         enviando = false;
         b.textContent = '✍️ Firmar y enviar';
-        mensaje('No pudimos enviar tu autorización. Revisa tu conexión e intenta de nuevo.');
+        mensaje('No pudimos enviar tu documento. Revisa tu conexión e intenta de nuevo.');
         actualizarBoton();
       });
     }, 'image/png');

@@ -150,6 +150,9 @@ def _es_generico(etiqueta: str) -> bool:
     return bool(_GENERICOS.match(n))
 
 
+MAX_BOTONES = 80     # botones que muestra "Opciones del menú más tocadas" (antes 30: los nuevos o poco usados no salían)
+
+
 def resumir_botones(filas, sin_conversaciones_sin_clic: int = 0) -> dict:
     """filas: (conversacion_id, contenido, opciones_json_previas, sin_opcion: bool) ordenadas por
     conversación y orden de clic. Devuelve botones más tocados y, para las conversaciones sin
@@ -170,7 +173,7 @@ def resumir_botones(filas, sin_conversaciones_sin_clic: int = 0) -> dict:
     botones = sorted(
         ({"opcion": e[:80], "clics": por_boton_clics[e], "conversaciones": len(cs)}
          for e, cs in por_boton_convs.items() if not _es_generico(e)),
-        key=lambda x: (-x["conversaciones"], -x["clics"]))[:30]
+        key=lambda x: (-x["conversaciones"], -x["clics"]))[:MAX_BOTONES]
 
     def contar(d, sin_clic_label):
         c = Counter(d.values())

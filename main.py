@@ -627,7 +627,21 @@ _FIRMA_MARGEN_SEG = 300
 _FIRMAS_CACHE_MAX = 5000
 
 
-def _gcs_bucket_y_credenciales():
+# Cartas de tarifas (cartas_tarifas.py): van en un bucket PRIVADO aparte (GCS_CARTAS_BUCKET), con su nombre original
+# (lleva el nombre y el documento del cliente). Por eso NO usan el prefijo "webchat/": ningún enlace que acepte
+# rutas de "webchat/" (p. ej. /receta-correo, sin login) puede pedirlas. Solo las abren el staff con sesión
+# (/archivo-receta) y el cliente de la conversación a la que se le envió (/widget/archivo, ver ahí).
+PREFIJO_CARTAS = "cartas-tarifas/"
+
+
+def _bucket_para(ruta: str | None) -> str:
+    """Nombre del bucket donde está ese objeto."""
+    if (ruta or "").startswith(PREFIJO_CARTAS) and os.environ.get("GCS_CARTAS_BUCKET"):
+        return os.environ["GCS_CARTAS_BUCKET"]
+    return os.environ["GCS_BUCKET"]
+
+
+def _gcs_bucket_y_credenciales(ruta: str | None = None):
     global _gcs_cliente_firmas, _gcs_credenciales
     with _gcs_lock:
         if _gcs_cliente_firmas is None:
@@ -637,7 +651,7 @@ def _gcs_bucket_y_credenciales():
         # Solo se refresca cuando el token venció o está por vencer (dura ~1 hora).
         if not _gcs_credenciales.valid or not getattr(_gcs_credenciales, "token", None):
             _gcs_credenciales.refresh(google.auth.transport.requests.Request())
-        return _gcs_cliente_firmas.bucket(os.environ["GCS_BUCKET"]), _gcs_credenciales
+        return _gcs_cliente_firmas.bucket(_bucket_para(ruta)), _gcs_credenciales
 
 
 def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como: str | None = None) -> str:
@@ -654,7 +668,7 @@ def _generar_url_firmada(nombre_archivo: str, minutos: int = 60, descargar_como:
     if guardada and guardada[1] - ahora > _FIRMA_MARGEN_SEG:
         return guardada[0]
 
-    bucket, credentials = _gcs_bucket_y_credenciales()
+    bucket, credentials = _gcs_bucket_y_credenciales(nombre_archivo)
     blob = bucket.blob(nombre_archivo)
 
     # Cloud Run no tiene una llave privada local para firmar — hay que pasarle
@@ -700,7 +714,7 @@ def _descargar_de_bucket(nombre_archivo: str) -> bytes:
         if _gcs_cliente_firmas is None:
             _gcs_cliente_firmas = storage.Client()
         cliente = _gcs_cliente_firmas
-    return cliente.bucket(os.environ["GCS_BUCKET"]).blob(nombre_archivo).download_as_bytes()
+    return cliente.bucket(_bucket_para(nombre_archivo)).blob(nombre_archivo).download_as_bytes()
 
 
 # Autorización de siniestralidad (siniestralidad.py): guarda y lee sus archivos en el mismo bucket.
@@ -1022,8 +1036,8 @@ def ver_archivo_receta(ruta: str, token: str | None = None, descargar: bool = Fa
 
     # La ruta SIEMPRE debe quedar dentro de "webchat/" (carpeta de archivos
     # subidos por pacientes) — nunca se debe poder pedir un objeto arbitrario
-    # del bucket ni salir de esa carpeta con "..".
-    if not ruta or ".." in ruta or not ruta.startswith("webchat/"):
+    # del bucket ni salir de esa carpeta con "..". Excepción: las cartas de tarifas (bucket privado aparte).
+    if not ruta or ".." in ruta or not (ruta.startswith("webchat/") or ruta.startswith(PREFIJO_CARTAS)):
         raise HTTPException(status_code=400, detail="Ruta inválida")
 
     nombre_descarga = None
@@ -1131,8 +1145,12 @@ def ver_archivo_widget(conversacion_id: int, ruta: str, sesion_token: str):
     puede pedir imágenes de SU PROPIA conversación, nunca de otra.
 
     Uso: <img src="{urlBase}/widget/archivo?conversacion_id=123&ruta=webchat/xxx.jpg&sesion_token=...">
+
+    Cartas de tarifas (PREFIJO_CARTAS): además, tienen que haberse enviado en ESA conversación (su nombre se
+    puede adivinar, a diferencia de los archivos de "webchat/", que llevan un UUID).
     """
-    if not ruta or ".." in ruta or not ruta.startswith("webchat/"):
+    es_carta = (ruta or "").startswith(PREFIJO_CARTAS)
+    if not ruta or ".." in ruta or not (ruta.startswith("webchat/") or es_carta):
         raise HTTPException(status_code=400, detail="Ruta inválida")
     if not sesion_token:
         raise HTTPException(status_code=401, detail="Falta la sesión")
@@ -1159,6 +1177,11 @@ def ver_archivo_widget(conversacion_id: int, ruta: str, sesion_token: str):
                         (alcance[2], alcance[3], conversacion_id))
                     permitido = cur.fetchone() is not None
                 if not permitido:
+                    raise HTTPException(status_code=403, detail="No autorizado")
+            if es_carta:
+                cur.execute("""SELECT 1 FROM mensajes WHERE conversacion_id = %s AND tipo_contenido = 'archivo'
+                                 AND contenido = %s LIMIT 1""", (conversacion_id, ruta))
+                if cur.fetchone() is None:
                     raise HTTPException(status_code=403, detail="No autorizado")
     finally:
         release_connection(conn)
@@ -1639,12 +1662,12 @@ _gcs_cliente = None
 def _archivo_existe(ruta: str) -> bool:
     """True si el archivo todavía está en el bucket (puede haberse borrado por antigüedad)."""
     global _gcs_cliente
-    if not ruta or ".." in ruta or not ruta.startswith("webchat/"):
+    if not ruta or ".." in ruta or not (ruta.startswith("webchat/") or ruta.startswith(PREFIJO_CARTAS)):
         return False
     try:
         if _gcs_cliente is None:
             _gcs_cliente = storage.Client()
-        return _gcs_cliente.bucket(os.environ["GCS_BUCKET"]).blob(ruta).exists()
+        return _gcs_cliente.bucket(_bucket_para(ruta)).blob(ruta).exists()
     except Exception:
         logger.warning("No se pudo comprobar si existe %s", ruta, exc_info=True)
         return False
@@ -3803,7 +3826,7 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                         ya_confirmado = False
                         if en_ia and (tipo == "mensaje_usuario"
                                       or (tipo == "click_opcion"
-                                          and str(payload.get("opcion_codigo") or "").startswith("ia_q:"))):
+                                          and str(payload.get("opcion_codigo") or "").startswith(("ia_q:", "carta_q:")))):
                             # Turno con el agente de IA: tarda 5-15 s (hasta 45). Se confirma la recepción,
                             # se muestra "escribiendo…" y la llamada corre en un hilo aparte para no
                             # congelar el servidor (el resto de clientes y asesores siguen normales).
@@ -4992,13 +5015,18 @@ def _autoprueba_http():
 # DRENAJE_SIN_PETICIONES_SEG. Entonces se termina el proceso: los clientes se reconectan y Cloud Run levanta la
 # instancia nueva al instante. También aplica a la revisión vieja tras un deploy.
 DRENAJE_SIN_PETICIONES_SEG = 180
-DRENAJE_REVISAR_CADA_SEG = 15
+# 20/11 15:33-15:37: Cloud Run perdió la conexión con la instancia y todo recibió 429 durante ~4 min (3 de ellos
+# esperando los 180 s). Con varias consolas abiertas (horario de atención) 60 s sin NINGUNA petición ya es anormal:
+# se confirma antes (la confirmación por la dirección pública evita reinicios en falso).
+DRENAJE_RAPIDO_SEG = 60
+DRENAJE_RAPIDO_MIN_CONSOLAS = 3
+DRENAJE_REVISAR_CADA_SEG = 10
 DRENAJE_ARRANQUE_MIN_SEG = 300
 DRENAJE_CONFIRMAR_INTENTOS = 3
 DRENAJE_CONFIRMAR_TIMEOUT_SEG = 20
 
 
-def _confirmar_drenaje() -> tuple:
+def _confirmar_drenaje(intentos: int = DRENAJE_CONFIRMAR_INTENTOS) -> tuple:
     """Pregunta a /vivo por la dirección PÚBLICA (pasa por Cloud Run, como un cliente). Con una sola instancia la
     respuesta debe venir de esta misma. (True, motivo) si Cloud Run ya no nos manda tráfico: responde otra instancia,
     o rechaza / no responde (429, 5xx, timeout) en todos los intentos. (False, motivo) si llegó a esta instancia,
@@ -5006,7 +5034,7 @@ def _confirmar_drenaje() -> tuple:
     import urllib.error
     import urllib.request
     fallas = []
-    for intento in range(DRENAJE_CONFIRMAR_INTENTOS):
+    for intento in range(intentos):
         url = f"{_URL_PUBLICA}/vivo?d={uuid.uuid4().hex[:8]}"
         try:
             with urllib.request.urlopen(url, timeout=DRENAJE_CONFIRMAR_TIMEOUT_SEG) as r:
@@ -5040,16 +5068,19 @@ def _vigilar_drenaje():
                 continue
             _, asesores, supervisores = _ws_abiertos()
             silencio = ahora - monitoreo.ULTIMA_PETICION_EXTERNA[0]
-            if (asesores + supervisores) == 0 or silencio <= DRENAJE_SIN_PETICIONES_SEG:
+            consolas = asesores + supervisores
+            rapido = consolas >= DRENAJE_RAPIDO_MIN_CONSOLAS
+            umbral = DRENAJE_RAPIDO_SEG if rapido else DRENAJE_SIN_PETICIONES_SEG
+            if consolas == 0 or silencio <= umbral:
                 continue
             # 14/11 08:56: el silencio solo NO basta: con pocas consolas y todas en segundo plano (pestaña oculta,
             # celular bloqueado) el navegador deja de pedir /consola/version y se reinició sin motivo. Se confirma
             # preguntándole a Cloud Run por la dirección pública.
-            drenada, motivo = _confirmar_drenaje()
+            drenada, motivo = _confirmar_drenaje(2 if rapido else DRENAJE_CONFIRMAR_INTENTOS)
             if not drenada:
                 logger.info("Drenaje: %.0f s sin peticiones con %d consolas, pero no es drenaje (%s). Sigue normal.",
-                            silencio, asesores + supervisores, motivo)
-                proxima_confirmacion = time.monotonic() + DRENAJE_SIN_PETICIONES_SEG
+                            silencio, consolas, motivo)
+                proxima_confirmacion = time.monotonic() + umbral
                 continue
             logger.critical("Drenaje: hace %.0f s que Cloud Run no manda peticiones a esta instancia (%s). Se termina "
                             "el proceso para que los clientes se reconecten a la instancia nueva. %s",
@@ -5941,6 +5972,8 @@ def _enviar_sms_saliente(conversacion_id: int, remitente_id: int) -> dict:
     if not enviar_sms_danaconnect(telefono, mensaje, "aviso_manual", conversacion_id, remitente_id):
         return {"ok": False, "motivo": "Danaconnect no pudo enviar el SMS. Intenta de nuevo en un momento."}
 
+    # El SMS ya salió: si el registro falla (20/11: la restricción de "tipo" no aceptaba 'sms_saliente', ver
+    # migracion_sms_saliente.sql), igual se responde OK; si no, el asesor reintenta y el cliente recibe dos SMS.
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -5950,6 +5983,9 @@ def _enviar_sms_saliente(conversacion_id: int, remitente_id: int) -> dict:
                 (conversacion_id, remitente_id, datetime.now(LIMA_TZ)),
             )
         conn.commit()
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("SMS saliente enviado (conversación %s) pero no se pudo registrar", conversacion_id)
     finally:
         release_connection(conn)
 
@@ -6649,6 +6685,18 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "Enlaces de los SMS (invitación, enlace directo, archivo, respuesta del asesor, encuesta): escribe si para que abran el app Sofi cuando el cliente la tiene instalada en Android (si no la tiene, van a la página web de siempre), o no para que vayan siempre a la página web",
         "default": "si",
     },
+    "tarifas_2027_activo": {
+        "etiqueta": "Tarifas 2027 (carta + IA): escribe si para mostrar la opción en Consultas a todos los clientes que tienen carta, o no para mantenerla oculta (solo la ven los celulares de tarifas_2027_testers). Aplica al instante, sin desplegar",
+        "default": "no",
+    },
+    "tarifas_2027_testers": {
+        "etiqueta": "Tarifas 2027: celulares que ven la opción aunque esté oculta (para probar), separados por comas. Igual solo aparece si el DNI de la conversación tiene carta",
+        "default": "",
+    },
+    "tarifas_2027_contexto": {
+        "etiqueta": "Tarifas 2027: información general que la IA puede usar al explicar las cartas (lo mismo para todos, p. ej. por qué se reajustan las tarifas este año, desde cuándo rige, cómo pagar). Déjalo vacío si la IA debe usar solo lo que dice cada carta",
+        "default": "",
+    },
     "plan_salud_activo": {
         "etiqueta": "Mi plan de salud: escribe si para mostrar la opción a todos los clientes, o no para mantenerla oculta (solo la ven los celulares de plan_salud_testers). Aplica al instante, sin desplegar",
         "default": "no",
@@ -6882,6 +6930,7 @@ _FLUJOS_BOT = (
     ("sctr_", "Venta de SCTR"),
     ("eps_", "Venta de EPS"),
     ("pases_", "Pase de atención"),
+    ("tarifas2027_", "Tarifas 2027"),
     ("mad_", "Médico a domicilio / Ambulancia"),
     ("med_", "Medicamentos"),
     ("medicamentos_", "Medicamentos"),
@@ -7677,6 +7726,33 @@ async def siniestralidad_documento(token: str, request: Request, lado: str = For
     return JSONResponse(r["body"], status_code=r["status"])
 
 
+@app.post("/siniestralidad/{token}/adjunto")
+async def siniestralidad_adjunto(token: str, request: Request, categoria: str = Form(...),
+                                 file: UploadFile = File(...)):
+    """Solicitud de reembolso: hoja del médico o comprobante (foto o PDF)."""
+    _limitar_push(request, "sin_adjunto", 20, 60)
+    contenido = await file.read(_MAX_FOTO_DOCUMENTO + 1)
+    if not contenido or len(contenido) > _MAX_FOTO_DOCUMENTO:
+        return JSONResponse({"ok": False, "motivo": "El archivo pesa demasiado (máximo 15 MB)."}, status_code=400)
+    if contenido[:5] == b"%PDF-":
+        extension, tipo = "pdf", "application/pdf"
+    else:
+        norm = await asyncio.to_thread(_normalizar_imagen, contenido, file.content_type or "", file.filename or "")
+        if norm is None or norm[1] not in ("jpg", "jpeg", "png", "webp"):
+            return JSONResponse({"ok": False, "motivo": "Sube una foto o un PDF."}, status_code=400)
+        contenido, extension, tipo = norm
+    r = await asyncio.to_thread(siniestralidad.guardar_adjunto, token, categoria, contenido, extension, tipo,
+                                file.filename or "")
+    return JSONResponse(r["body"], status_code=r["status"])
+
+
+@app.post("/siniestralidad/{token}/adjunto/borrar")
+async def siniestralidad_adjunto_borrar(token: str, request: Request, id: str = Form(...)):
+    _limitar_push(request, "sin_adjunto_borrar", 30, 60)
+    r = await asyncio.to_thread(siniestralidad.borrar_adjunto, token, id)
+    return JSONResponse(r["body"], status_code=r["status"])
+
+
 @app.post("/siniestralidad/{token}/leer")
 async def siniestralidad_leer(token: str, request: Request):
     _limitar_push(request, "sin_leer", 12, 60)
@@ -7718,12 +7794,14 @@ async def _entregar_siniestralidad(e: dict):
                             "respondido_a": None}})
         await manager.notificar_escuchas(conv, {
             "type": "mensaje_conversacion",
-            "payload": {"conversacion_id": conv, "emisor_tipo": "usuario", "texto": "📎 Autorización de siniestralidad firmada",
+            "payload": {"conversacion_id": conv, "emisor_tipo": "usuario",
+                        "texto": e.get("titulo_mensaje") or "📎 Autorización de siniestralidad firmada",
                         "ruta": e["ruta_pdf"], "mensaje_id": e["mensaje_id"]}})
         if e.get("texto_cliente"):
             await manager.enviar_a_widget(conv, {"type": "mensaje_bot", "payload": {"texto": e["texto_cliente"]}})
     aviso = {k: e.get(k) for k in ("solicitud_id", "conversacion_id", "ruta_pdf", "nombre_pdf", "nombre", "contrato",
-                                   "n_documento", "dependientes", "firmado", "alerta", "estado_conv")}
+                                   "n_documento", "dependientes", "firmado", "alerta", "estado_conv", "formato",
+                                   "texto_asesor")}
     aviso["en_conversacion"] = bool(e.get("mensaje_id")) and e.get("estado_conv") == "asignada"
     for asesor in {e.get("asesor_id"), e.get("asesor_actual") if e.get("estado_conv") == "asignada" else None} - {None}:
         with contextlib.suppress(Exception):
@@ -7731,12 +7809,14 @@ async def _entregar_siniestralidad(e: dict):
 
 
 async def _siniestralidad_asesor(tipo: str, payload: dict, asesor_id: int) -> dict:
-    """Acciones del botón "📄 Siniestr." de la consola del asesor."""
+    """Acciones del botón "📄 Formatos" de la consola del asesor (siniestralidad, latencia, reembolso)."""
     if tipo == "siniestralidad_abrir":
         bandeja = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
         return {"accion": "abrir", "ok": True, "correo_configurado": siniestralidad.correo_configurado(),
                 "conversacion_id": payload.get("conversacion_id"), "bandeja": bandeja,
-                "vigencia_horas": siniestralidad.VIGENCIA_HORAS}
+                "vigencia_horas": siniestralidad.VIGENCIA_HORAS,
+                "formatos": {k: {"titulo": v["titulo"], "vigencia_horas": v["vigencia_horas"]}
+                             for k, v in siniestralidad.FORMATOS.items()}}
     if tipo == "siniestralidad_anular":
         ok = await asyncio.to_thread(siniestralidad.anular, asesor_id, payload.get("id"))
         bandeja = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
@@ -7752,7 +7832,7 @@ async def _siniestralidad_asesor(tipo: str, payload: dict, asesor_id: int) -> di
         return {"accion": "enviar", "ok": False, "motivo": "Esta conversación ya no está a tu cargo."}
     r = await asyncio.to_thread(siniestralidad.crear_solicitud, conv, asesor_id, payload)
     if r.get("ok") and r.get("por_chat"):
-        texto = siniestralidad.texto_chat(r["url"], r["vence"])
+        texto = siniestralidad.texto_chat(r["url"], r["vence"], r.get("formato"))
         await asyncio.to_thread(_guardar_mensaje_bot_texto, conv, texto)
         await manager.enviar_a_widget(conv, {"type": "mensaje_bot", "payload": {"texto": texto}})
         await manager.notificar_escuchas(conv, {
@@ -7760,7 +7840,8 @@ async def _siniestralidad_asesor(tipo: str, payload: dict, asesor_id: int) -> di
             "payload": {"conversacion_id": conv, "emisor_tipo": "bot", "texto": texto}})
         await manager.enviar_a_asesor(asesor_id, {"type": "aviso_automatico_cliente",
                                                   "payload": {"conversacion_id": conv,
-                                                              "texto": "Enlace de autorización de siniestralidad"}})
+                                                              "texto": "Enlace: " + siniestralidad.FORMATOS[
+                                                                  siniestralidad.formato_de(r.get("formato"))]["titulo"]}})
     if r.get("ok"):
         r["bandeja"] = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
     return dict(r, accion="enviar", conversacion_id=conv)
@@ -8868,31 +8949,48 @@ def _buscar_conversaciones(query: str, campana_ids: list | None = None) -> list:
     m_id = re.fullmatch(r"#?\s*(\d{1,9})", query)
     conv_id_buscado = int(m_id.group(1)) if m_id else None
     solo_codigo = query.startswith("#") or (conv_id_buscado is not None and len(query) < 3)
+    # Documento (DNI 8 dígitos, CE hasta 12): además del titular de la conversación, se busca DENTRO de ella
+    # (variables del bot y lo que escribió el cliente). Así se encuentra al PACIENTE de un "Pase de atención",
+    # donde el usuario de la conversación es el admisionista de la clínica y no el paciente.
+    busca_dentro = not solo_codigo and re.fullmatch(r"\d{7,12}", query) is not None
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             comodin = f"%{query}%" if not solo_codigo else None
+            comodin_dentro = comodin if busca_dentro else None
             cur.execute(
                 """
                 SELECT c.id, u.nombre, u.telefono, u.dni, c.estado, cam.nombre,
                        c.iniciado_en, c.cerrado_en, c.entrada_cola, c.asignado_en,
-                       a.nombre_display, et.nombre, """ + _SQL_ASESORES_CONV + """, c.origen
+                       a.nombre_display, et.nombre, """ + _SQL_ASESORES_CONV + """, c.origen,
+                       (%s::text IS NOT NULL AND c.id <> COALESCE(%s, 0)
+                        AND COALESCE(u.nombre, '') NOT ILIKE %s AND COALESCE(u.telefono, '') NOT ILIKE %s
+                        AND COALESCE(u.dni, '') NOT ILIKE %s) AS dentro
                 FROM conversaciones c
                 JOIN usuarios_webchat u ON u.id = c.usuario_id
                 LEFT JOIN campanas cam ON cam.id = c.campana_id
                 LEFT JOIN asesores a ON a.id = c.asesor_id
                 LEFT JOIN etiquetas_cierre et ON et.id = c.etiqueta_cierre_id
-                WHERE (u.nombre ILIKE %s OR u.telefono ILIKE %s OR u.dni ILIKE %s OR c.id = %s)
+                WHERE (u.nombre ILIKE %s OR u.telefono ILIKE %s OR u.dni ILIKE %s OR c.id = %s
+                       OR (%s::text IS NOT NULL AND (
+                             c.variables_sesion::text ILIKE %s
+                             OR c.id IN (SELECT m.conversacion_id FROM mensajes m
+                                         WHERE m.emisor_tipo = 'usuario' AND m.contenido ILIKE %s))))
                   AND (%s::int[] IS NULL OR c.campana_id = ANY(%s::int[]))
                 ORDER BY (c.id = %s) DESC, c.iniciado_en DESC
                 LIMIT 50
                 """,
-                (comodin, comodin, comodin, conv_id_buscado, campana_ids, campana_ids, conv_id_buscado),
+                (comodin_dentro, conv_id_buscado, comodin, comodin, comodin,
+                 comodin, comodin, comodin, conv_id_buscado,
+                 comodin_dentro, comodin_dentro, comodin_dentro,
+                 campana_ids, campana_ids, conv_id_buscado),
             )
             resultado = []
             for (conv_id, nombre, telefono, dni, estado, campana, iniciado_en, cerrado_en,
-                 entrada_cola, asignado_en, asesor_nombre, etiqueta, atendieron, origen) in cur.fetchall():
+                 entrada_cola, asignado_en, asesor_nombre, etiqueta, atendieron, origen, dentro) in cur.fetchall():
                 resultado.append({
+                    # True = el dato NO es del titular: está dentro de la conversación (p. ej. paciente de un pase).
+                    "coincide_dentro": bool(dentro),
                     # Igual que en el historial: 📤 saliente = la abrió un SMS que le mandamos; 📥 entrante = nos buscó.
                     "direccion": "saliente" if origen in _ORIGENES_SALIENTES else "entrante",
                     "via": _VIA_ORIGEN.get(origen),

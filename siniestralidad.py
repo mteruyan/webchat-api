@@ -1,4 +1,8 @@
-"""siniestralidad.py — Autorización de entrega de reporte de siniestralidad, digital (nov-2026).
+"""siniestralidad.py — Formatos que el cliente firma desde el celular (nov-2026). Botón "📄 Formatos" del asesor.
+
+Formatos (FORMATOS): SINIESTRALIDAD (autorización de entrega de reporte de siniestros), LATENCIA (declaración
+jurada de latencia) y REEMBOLSO (solicitud de reembolso: datos, forma de pago, la hoja 2 llenada por el médico y
+los comprobantes). Todos comparten la tabla, el enlace /siniestralidad/<token>, la foto del documento y la firma.
 
 Antes: el asesor le pedía al cliente llenar un Word/PDF, imprimirlo, firmarlo y enviarlo escaneado.
 Ahora:
@@ -15,8 +19,8 @@ Correo: Danaconnect, conversation DANACONNECT_SINIESTRALIDAD_CONV (variables EMA
 con el mismo DANACONNECT_AUTH que ya usa el webchat. Si la variable no está configurada, el envío por
 correo queda deshabilitado (el enlace por chat sigue funcionando).
 
-Tabla: migracion_siniestralidad.sql. Archivos en el bucket bajo webchat/siniestralidad/<id>/ (nombres
-aleatorios, para que /archivo-receta los pueda abrir desde la consola).
+Tabla: migracion_siniestralidad.sql + migracion_formatos.sql (columnas formato y adjuntos). Archivos en el bucket
+bajo webchat/siniestralidad/<id>/ (nombres aleatorios, para que /archivo-receta los pueda abrir desde la consola).
 """
 
 import io
@@ -50,6 +54,23 @@ SUBIR = None
 DESCARGAR = None
 
 TIPOS_DOCUMENTO = {"DNI": "DNI", "CE": "CE", "OTRO": "Otro"}
+
+FORMATOS = {
+    "SINIESTRALIDAD": {"titulo": "Autorización de entrega de reporte de siniestralidad", "corto": "Siniestralidad",
+                       "vigencia_horas": 48, "archivo": "Autorizacion_siniestralidad"},
+    "LATENCIA": {"titulo": "Declaración jurada de latencia", "corto": "Latencia",
+                 "vigencia_horas": 48, "archivo": "Declaracion_jurada_latencia"},
+    "REEMBOLSO": {"titulo": "Solicitud de reembolso", "corto": "Reembolso",
+                  "vigencia_horas": 72, "archivo": "Solicitud_reembolso"},
+}
+# Reembolso: hoja 2 llenada por el médico y comprobantes (fotos o PDF)
+CATEGORIAS_ADJUNTO = {"medico": ("Hoja del médico tratante", 4), "sustento": ("Comprobantes y sustentos", 20)}
+BANCOS = {"BCP": "Banco de Crédito BCP", "BBVA": "BBVA Continental", "INTERBANK": "Interbank",
+          "SCOTIABANK": "Scotiabank", "OTRO": "Otro"}
+# Dígitos del N° de cuenta según la nota 1 del formato de reembolso: {banco: {tipo_cuenta: dígitos}}
+DIGITOS_CUENTA = {"BBVA": {"AHORROS": 20, "CORRIENTE": 20}, "BCP": {"AHORROS": 14, "CORRIENTE": 13},
+                  "SCOTIABANK": {"AHORROS": 10, "CORRIENTE": 10}, "INTERBANK": {"AHORROS": 13, "CORRIENTE": 13}}
+PARENTESCOS = {"TITULAR": "El mismo titular", "CONYUGE": "Cónyuge", "HIJO": "Hijo(a)", "PADRE": "Padre/Madre"}
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
          "octubre", "noviembre", "diciembre"]
 
@@ -58,9 +79,15 @@ _RE_NOMBRE = re.compile(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ' .\-]{3,120}$")
 _RE_CONTRATO = re.compile(r"^[A-Za-z0-9 /\-.]{1,30}$")
 _RE_CIUDAD = re.compile(r"^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ' .\-]{2,40}$")
 _RE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{20,40}$")
+_RE_TEXTO_LIBRE = re.compile(r"^[\w ÁÉÍÓÚÜÑáéíóúüñ'.,;:#°º\-/()&\"]{3,200}$")
 
 _ocr_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ocr-sin")
 _aviso_migracion = False
+
+
+def formato_de(valor) -> str:
+    f = str(valor or "SINIESTRALIDAD").strip().upper()
+    return f if f in FORMATOS else "SINIESTRALIDAD"
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +95,9 @@ _aviso_migracion = False
 # ---------------------------------------------------------------------------
 def _falta_migracion(e: Exception) -> bool:
     global _aviso_migracion
-    if "solicitudes_siniestralidad" in str(e):
+    if "solicitudes_siniestralidad" in str(e) or "formato" in str(e) or "adjuntos" in str(e):
         if not _aviso_migracion:
-            logger.warning("siniestralidad: falta ejecutar migracion_siniestralidad.sql")
+            logger.warning("siniestralidad: falta ejecutar migracion_siniestralidad.sql / migracion_formatos.sql")
             _aviso_migracion = True
         return True
     return False
@@ -129,6 +156,7 @@ def crear_solicitud(conversacion_id: int, asesor_id: int, datos: dict) -> dict:
     """Crea la solicitud y envía el correo (si corresponde). Devuelve {"ok", "motivo"|("id","url","vence",...)}.
     El texto para el chat lo publica main.py (necesita el WebSocket)."""
     datos = datos if isinstance(datos, dict) else {}
+    formato = formato_de(datos.get("formato"))
     por_correo = bool(datos.get("por_correo"))
     por_chat = bool(datos.get("por_chat"))
     if not por_correo and not por_chat:
@@ -143,8 +171,10 @@ def crear_solicitud(conversacion_id: int, asesor_id: int, datos: dict) -> dict:
     if por_correo and not correo:
         return {"ok": False, "motivo": "Escribe el correo del cliente."}
     contrato = _mayus(datos.get("contrato"), 30)
-    if not _RE_CONTRATO.match(contrato or ""):
+    if formato == "SINIESTRALIDAD" and not _RE_CONTRATO.match(contrato or ""):
         return {"ok": False, "motivo": "Escribe el N° de contrato (letras, números, - o /)."}
+    if contrato and not _RE_CONTRATO.match(contrato):
+        return {"ok": False, "motivo": "El N° de contrato no es válido (letras, números, - o /)."}
     tipo = str(datos.get("tipo_documento") or "DNI").upper()
     tipo = tipo if tipo in TIPOS_DOCUMENTO else "DNI"
     n_doc = None
@@ -158,48 +188,51 @@ def crear_solicitud(conversacion_id: int, asesor_id: int, datos: dict) -> dict:
 
     token = secrets.token_urlsafe(18)
     ahora = datetime.now(LIMA_TZ)
-    vence = ahora + timedelta(hours=VIGENCIA_HORAS)
+    vence = ahora + timedelta(hours=FORMATOS[formato]["vigencia_horas"])
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # Un enlace vigente por conversación: el anterior (sin firmar) se anula.
+            # Un enlace vigente por conversación y formato: el anterior (sin firmar) se anula.
             cur.execute("""UPDATE solicitudes_siniestralidad SET estado = 'anulado', anulado_en = %s
-                           WHERE conversacion_id = %s AND estado IN ('enviado', 'abierto')""",
-                        (ahora, conversacion_id))
+                           WHERE conversacion_id = %s AND formato = %s AND estado IN ('enviado', 'abierto')""",
+                        (ahora, conversacion_id, formato))
             cur.execute("""INSERT INTO solicitudes_siniestralidad
                              (token, conversacion_id, asesor_id, correo, nombre, tipo_documento, n_documento, contrato,
-                              por_correo, por_chat, creado_en, vence_en)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                        (token, conversacion_id, asesor_id, correo, nombre or None, tipo, n_doc, contrato,
-                         por_correo, por_chat, ahora, vence))
+                              por_correo, por_chat, creado_en, vence_en, formato)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                        (token, conversacion_id, asesor_id, correo, nombre or None, tipo, n_doc, contrato or None,
+                         por_correo, por_chat, ahora, vence, formato))
             sid = cur.fetchone()[0]
         conn.commit()
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         if _falta_migracion(e):
-            return {"ok": False, "motivo": "Falta ejecutar migracion_siniestralidad.sql."}
+            return {"ok": False, "motivo": "Falta ejecutar migracion_formatos.sql."}
         logger.exception("siniestralidad: no se pudo crear la solicitud (conversación %s)", conversacion_id)
         return {"ok": False, "motivo": "No se pudo crear la solicitud. Intenta de nuevo."}
     finally:
         release_connection(conn)
 
-    resultado = {"ok": True, "id": sid, "url": _url(token), "vence": _fecha_hora(vence),
+    resultado = {"ok": True, "id": sid, "url": _url(token), "vence": _fecha_hora(vence), "formato": formato,
                  "por_chat": por_chat, "por_correo": por_correo, "correo": correo}
     if por_correo:
-        ok, error = _enviar_correo(correo, nombre, _url(token), vence)
+        ok, error = _enviar_correo(correo, nombre, _url(token), vence, formato)
         _guardar_resultado_correo(sid, ok, error)
         resultado["correo_ok"] = ok
         if not ok:
             resultado["aviso"] = ("No se pudo enviar el correo" + (" (" + error + ")" if error else "") +
                                   ". Puedes enviarlo por el chat.")
-    logger.info("siniestralidad: solicitud %s creada (conversación %s, asesor %s, correo=%s, chat=%s)",
-                sid, conversacion_id, asesor_id, por_correo, por_chat)
+    logger.info("siniestralidad: solicitud %s (%s) creada (conversación %s, asesor %s, correo=%s, chat=%s)",
+                sid, formato, conversacion_id, asesor_id, por_correo, por_chat)
     return resultado
 
 
-def _enviar_correo(correo: str, nombre: str, url: str, vence: datetime) -> tuple[bool, str]:
+def _enviar_correo(correo: str, nombre: str, url: str, vence: datetime, formato: str = "SINIESTRALIDAD"
+                   ) -> tuple[bool, str]:
+    # FORMATO: nombre del documento a firmar (para una plantilla de correo que sirva a todos los formatos)
     payload = {"EMAIL": correo, "NOMBRE": _primer_nombre(nombre) or "cliente", "URL": url,
-               "VENCE": vence.astimezone(LIMA_TZ).strftime("%d/%m/%Y a las %H:%M")}
+               "VENCE": vence.astimezone(LIMA_TZ).strftime("%d/%m/%Y a las %H:%M"),
+               "FORMATO": FORMATOS[formato_de(formato)]["titulo"]}
     headers = {"Content-Type": "application/json", "Authorization": os.environ.get("DANACONNECT_AUTH", "")}
     endpoint = f"https://appserv.danaconnect.com/api/1.0/rest/conversation/{DANA_CONV}/start/data"
     error = ""
@@ -238,7 +271,8 @@ def bandeja_asesor(asesor_id: int, dias: int = 15) -> list:
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT id, conversacion_id, nombre, n_documento, contrato, correo, estado, por_correo,
-                                  por_chat, correo_ok, creado_en, vence_en, abierto_en, firmado_en, ruta_pdf, datos
+                                  por_chat, correo_ok, creado_en, vence_en, abierto_en, firmado_en, ruta_pdf, datos,
+                                  formato
                            FROM solicitudes_siniestralidad
                            WHERE asesor_id = %s AND creado_en >= now() - make_interval(days => %s)
                            ORDER BY creado_en DESC LIMIT 40""", (asesor_id, dias))
@@ -253,14 +287,15 @@ def bandeja_asesor(asesor_id: int, dias: int = 15) -> list:
     ahora = datetime.now(LIMA_TZ)
     salida = []
     for (sid, conv, nombre, ndoc, contrato, correo, estado, p_correo, p_chat, c_ok, creado, vence, abierto,
-         firmado, ruta_pdf, datos) in filas:
+         firmado, ruta_pdf, datos, formato) in filas:
         if estado in ("enviado", "abierto") and vence and vence < ahora:
             estado = "vencido"
         d = datos if isinstance(datos, dict) else {}
         salida.append({
             "id": sid, "conversacion_id": conv,
             "nombre": d.get("nombre") or nombre or "", "n_documento": d.get("n_documento") or ndoc or "",
-            "contrato": contrato, "correo": correo or "", "estado": estado,
+            "contrato": contrato or "", "correo": correo or "", "estado": estado,
+            "formato": formato_de(formato), "formato_nombre": FORMATOS[formato_de(formato)]["corto"],
             "por_correo": p_correo, "por_chat": p_chat, "correo_ok": c_ok,
             "creado": _fecha_hora(creado), "vence": _fecha_hora(vence), "abierto": _fecha_hora(abierto),
             "firmado": _fecha_hora(firmado), "ruta_pdf": ruta_pdf or "",
@@ -289,7 +324,16 @@ def anular(asesor_id: int, sid) -> bool:
         release_connection(conn)
 
 
-def texto_chat(url: str, vence: str) -> str:
+def texto_chat(url: str, vence: str, formato: str = "SINIESTRALIDAD") -> str:
+    formato = formato_de(formato)
+    if formato == "LATENCIA":
+        return ("📄 Para continuar con tu trámite necesitamos tu *Declaración Jurada de Latencia* firmada. "
+                "Complétala aquí desde tu celular (toma unos 3 minutos): sube la foto de tu documento, completa tus "
+                f"datos y firma en la pantalla.\n{url}\nEl enlace vence el {vence}.")
+    if formato == "REEMBOLSO":
+        return ("📄 Completa tu *Solicitud de Reembolso* desde tu celular (toma unos 5 minutos): sube la foto de tu "
+                "documento, completa tus datos y la forma de pago, adjunta la hoja llenada por tu médico y tus "
+                f"comprobantes, y firma en la pantalla.\n{url}\nEl enlace vence el {vence}.")
     return ("📄 Para enviarte tu reporte de siniestralidad necesitamos tu autorización firmada. "
             "Complétala aquí desde tu celular (toma unos 2 minutos): sube la foto de tu documento, "
             f"revisa tus datos y firma en la pantalla.\n{url}\nEl enlace vence el {vence}.")
@@ -302,14 +346,25 @@ def _cargar(cur, token: str, bloquear: bool = False):
     if not _RE_TOKEN.match(token or ""):
         return None
     cur.execute(f"""SELECT id, conversacion_id, asesor_id, correo, nombre, tipo_documento, n_documento, contrato,
-                           estado, vence_en, ruta_dni_anverso, ruta_dni_reverso, ocr, intentos_dni, datos, abierto_en
+                           estado, vence_en, ruta_dni_anverso, ruta_dni_reverso, ocr, intentos_dni, datos, abierto_en,
+                           formato, adjuntos
                     FROM solicitudes_siniestralidad WHERE token = %s {'FOR UPDATE' if bloquear else ''}""", (token,))
     f = cur.fetchone()
     if not f:
         return None
     claves = ("id", "conversacion_id", "asesor_id", "correo", "nombre", "tipo_documento", "n_documento", "contrato",
-              "estado", "vence_en", "ruta_dni_anverso", "ruta_dni_reverso", "ocr", "intentos_dni", "datos", "abierto_en")
-    return dict(zip(claves, f))
+              "estado", "vence_en", "ruta_dni_anverso", "ruta_dni_reverso", "ocr", "intentos_dni", "datos", "abierto_en",
+              "formato", "adjuntos")
+    sol = dict(zip(claves, f))
+    sol["formato"] = formato_de(sol["formato"])
+    adj = sol["adjuntos"]
+    if isinstance(adj, str):
+        try:
+            adj = json.loads(adj)
+        except ValueError:
+            adj = []
+    sol["adjuntos"] = adj if isinstance(adj, list) else []
+    return sol
 
 
 def _estado_no_disponible(sol) -> dict | None:
@@ -319,7 +374,7 @@ def _estado_no_disponible(sol) -> dict | None:
                                         "motivo": "Este enlace no es válido. Pídele uno nuevo a tu asesor."}}
     if sol["estado"] == "firmado":
         return {"status": 409, "body": {"ok": False, "estado": "firmado",
-                                        "motivo": "Ya firmaste esta autorización. Tu asesor ya la tiene."}}
+                                        "motivo": "Ya firmaste este documento. Tu asesor ya lo tiene."}}
     if sol["estado"] == "anulado":
         return {"status": 410, "body": {"ok": False, "estado": "anulado",
                                         "motivo": "Este enlace fue reemplazado por uno nuevo. Usa el último que te enviamos."}}
@@ -357,7 +412,81 @@ def datos_cliente(token: str) -> dict:
         "vence": _fecha_hora(sol["vence_en"]),
         "dni_anverso": bool(sol["ruta_dni_anverso"]), "dni_reverso": bool(sol["ruta_dni_reverso"]),
         "ocr": ocr, "max_dependientes": MAX_DEPENDIENTES,
+        "formato": sol["formato"], "titulo": FORMATOS[sol["formato"]]["titulo"],
+        "adjuntos": _adjuntos_publicos(sol["adjuntos"]),
+        "max_adjuntos": {k: v[1] for k, v in CATEGORIAS_ADJUNTO.items()},
     }}
+
+
+def _adjuntos_publicos(adjuntos: list) -> list:
+    """Lo que ve el cliente de sus adjuntos (sin la ruta del bucket)."""
+    return [{"id": a.get("id"), "categoria": a.get("categoria"), "nombre": a.get("nombre") or "archivo",
+             "pdf": a.get("tipo") == "application/pdf"} for a in adjuntos if isinstance(a, dict)]
+
+
+def guardar_adjunto(token: str, categoria: str, contenido: bytes, extension: str, content_type: str,
+                    nombre: str) -> dict:
+    """Reembolso: guarda una foto o PDF (hoja del médico o comprobante)."""
+    if categoria not in CATEGORIAS_ADJUNTO:
+        return {"status": 400, "body": {"ok": False, "motivo": "Tipo de archivo inválido."}}
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            sol = _cargar(cur, token, bloquear=True)
+            no = _estado_no_disponible(sol)
+            if no:
+                conn.rollback()
+                return no
+            if sol["formato"] != "REEMBOLSO":
+                conn.rollback()
+                return {"status": 400, "body": {"ok": False, "motivo": "Este formato no lleva adjuntos."}}
+            etiqueta, maximo = CATEGORIAS_ADJUNTO[categoria]
+            if sum(1 for a in sol["adjuntos"] if a.get("categoria") == categoria) >= maximo:
+                conn.rollback()
+                return {"status": 400, "body": {"ok": False,
+                                                "motivo": f"Llegaste al máximo de archivos en «{etiqueta}» ({maximo})."}}
+            ruta = f"webchat/siniestralidad/{sol['id']}/{uuid.uuid4().hex}.{extension}"
+            try:
+                SUBIR(ruta, contenido, content_type)
+            except Exception:  # noqa: BLE001
+                conn.rollback()
+                logger.exception("siniestralidad: no se pudo subir el adjunto (solicitud %s)", sol["id"])
+                return {"status": 500, "body": {"ok": False, "motivo": "No pudimos guardar el archivo. Intenta de nuevo."}}
+            nuevo = {"id": uuid.uuid4().hex[:12], "categoria": categoria, "ruta": ruta, "tipo": content_type,
+                     "nombre": _limpio(nombre, 80) or ("documento." + extension)}
+            adjuntos = sol["adjuntos"] + [nuevo]
+            cur.execute("UPDATE solicitudes_siniestralidad SET adjuntos = %s WHERE id = %s",
+                        (json.dumps(adjuntos, ensure_ascii=False), sol["id"]))
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("siniestralidad: error al guardar el adjunto")
+        return {"status": 500, "body": {"ok": False, "motivo": "No pudimos guardar el archivo. Intenta de nuevo."}}
+    finally:
+        release_connection(conn)
+    return {"status": 200, "body": {"ok": True, "adjuntos": _adjuntos_publicos(adjuntos)}}
+
+
+def borrar_adjunto(token: str, adjunto_id: str) -> dict:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            sol = _cargar(cur, token, bloquear=True)
+            no = _estado_no_disponible(sol)
+            if no:
+                conn.rollback()
+                return no
+            adjuntos = [a for a in sol["adjuntos"] if a.get("id") != str(adjunto_id or "")]
+            cur.execute("UPDATE solicitudes_siniestralidad SET adjuntos = %s WHERE id = %s",
+                        (json.dumps(adjuntos, ensure_ascii=False), sol["id"]))
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("siniestralidad: error al borrar el adjunto")
+        return {"status": 500, "body": {"ok": False, "motivo": "No pudimos quitar el archivo. Intenta de nuevo."}}
+    finally:
+        release_connection(conn)
+    return {"status": 200, "body": {"ok": True, "adjuntos": _adjuntos_publicos(adjuntos)}}
 
 
 def guardar_documento(token: str, lado: str, contenido: bytes, extension: str, content_type: str) -> dict:
@@ -492,12 +621,19 @@ def leer_documento(contenido: bytes, content_type: str) -> dict | None:
     tipo = str(d.get("tipo") or "").upper()
     numero = re.sub(r"[\s.\-]", "", str(d.get("numero") or "")).upper()[:20]
     nombre = _mayus(f"{d.get('nombres') or ''} {d.get('apellidos') or ''}")
+    nombres, apellidos = _mayus(d.get("nombres")), _mayus(d.get("apellidos"))
     return {"es_documento": bool(d.get("es_documento")), "legible": bool(d.get("legible", True)),
             "tipo": tipo if tipo in TIPOS_DOCUMENTO else "OTRO", "numero": numero,
-            "nombre": nombre if _RE_NOMBRE.match(nombre or "") else ""}
+            "nombre": nombre if _RE_NOMBRE.match(nombre or "") else "",
+            "nombres": nombres if _RE_NOMBRE.match(nombres or "") else "",
+            "apellidos": apellidos if _RE_NOMBRE.match(apellidos or "") else ""}
 
 
-def _validar_formulario(f: dict) -> tuple[dict | None, str]:
+def _validar_formulario(f: dict, formato: str = "SINIESTRALIDAD") -> tuple[dict | None, str]:
+    if formato == "LATENCIA":
+        return _validar_latencia(f if isinstance(f, dict) else {})
+    if formato == "REEMBOLSO":
+        return _validar_reembolso(f if isinstance(f, dict) else {})
     f = f if isinstance(f, dict) else {}
     ciudad = _limpio(f.get("ciudad"), 40).title()
     if not _RE_CIUDAD.match(ciudad or ""):
@@ -539,6 +675,147 @@ def _validar_formulario(f: dict) -> tuple[dict | None, str]:
             "parentesco": parentesco, "dependientes": dependientes}, ""
 
 
+def _texto(valor, minimo=3, maximo=200) -> str | None:
+    t = _limpio(valor, maximo)
+    return t if len(t) >= minimo and _RE_TEXTO_LIBRE.match(t) else None
+
+
+def _validar_latencia(f: dict) -> tuple[dict | None, str]:
+    nombre = _mayus(f.get("nombre"))
+    if not _RE_NOMBRE.match(nombre or "") or len(nombre.split(" ")) < 2:
+        return None, "Escribe tus nombres y apellidos completos."
+    tipo = str(f.get("tipo_documento") or "").upper()
+    if tipo not in ("DNI", "CE"):
+        return None, "Elige DNI o carné de extranjería."
+    n_doc = _validar_documento(tipo, f.get("n_documento"))
+    if not n_doc:
+        return None, "El número de documento no es válido (el DNI tiene 8 dígitos)."
+    domicilio = _texto(f.get("domicilio"), 8)
+    if not domicilio:
+        return None, "Escribe tu domicilio completo (calle, número, distrito)."
+    empleador = _texto(f.get("empleador"), 2, 150)
+    if not empleador:
+        return None, "Escribe el nombre de tu última entidad empleadora."
+    try:
+        cese = datetime.strptime(str(f.get("fecha_cese") or ""), "%Y-%m-%d").date()
+    except ValueError:
+        return None, "Indica la fecha en que cesaste."
+    hoy = datetime.now(LIMA_TZ).date()
+    if cese > hoy or cese.year < 1950:
+        return None, "La fecha de cese no es válida."
+    try:
+        aportes = int(str(f.get("aportes") or "").strip())
+    except ValueError:
+        return None, "Indica cuántos aportes hiciste a EsSalud (en números)."
+    if not 0 <= aportes <= 36:
+        return None, "Los aportes de los últimos tres años van de 0 a 36."
+    if not f.get("acepta"):
+        return None, "Debes aceptar la declaración para continuar."
+    return {"nombre": nombre, "tipo_documento": tipo, "n_documento": n_doc, "domicilio": domicilio.upper(),
+            "empleador": empleador.upper(), "fecha_cese": cese.isoformat(), "aportes": aportes, "correo": ""}, ""
+
+
+def _validar_persona(p: dict, quien: str, con_sexo: bool = False) -> tuple[dict | None, str]:
+    p = p if isinstance(p, dict) else {}
+    paterno, materno, nombres = _mayus(p.get("paterno"), 60), _mayus(p.get("materno"), 60), _mayus(p.get("nombres"), 80)
+    if not _RE_NOMBRE.match(paterno or "") or not _RE_NOMBRE.match(nombres or ""):
+        return None, f"Escribe el apellido paterno y los nombres del {quien}."
+    if materno and not _RE_NOMBRE.match(materno):
+        return None, f"Revisa el apellido materno del {quien}."
+    tipo = str(p.get("tipo_documento") or "DNI").upper()
+    tipo = tipo if tipo in TIPOS_DOCUMENTO else "DNI"
+    n_doc = _validar_documento(tipo, p.get("n_documento"))
+    if not n_doc:
+        return None, f"Revisa el N° de documento del {quien} (el DNI tiene 8 dígitos)."
+    try:
+        edad = int(str(p.get("edad") or "").strip())
+    except ValueError:
+        return None, f"Indica la edad del {quien}."
+    if not 0 <= edad <= 120:
+        return None, f"La edad del {quien} no es válida."
+    persona = {"paterno": paterno, "materno": materno, "nombres": nombres, "tipo_documento": tipo,
+               "n_documento": n_doc, "edad": edad}
+    if con_sexo:
+        sexo = str(p.get("sexo") or "").upper()
+        if sexo not in ("M", "F"):
+            return None, f"Indica el sexo del {quien}."
+        persona["sexo"] = sexo
+    return persona, ""
+
+
+def _validar_reembolso(f: dict) -> tuple[dict | None, str]:
+    titular, motivo = _validar_persona(f.get("titular"), "titular")
+    if not titular:
+        return None, motivo
+    es_titular = bool(f.get("paciente_es_titular"))
+    if es_titular:
+        sexo = str((f.get("paciente") or {}).get("sexo") or "").upper()
+        if sexo not in ("M", "F"):
+            return None, "Indica el sexo del paciente."
+        paciente = dict(titular, sexo=sexo, parentesco="TITULAR")
+    else:
+        paciente, motivo = _validar_persona(f.get("paciente"), "paciente", con_sexo=True)
+        if not paciente:
+            return None, motivo
+        parentesco = str((f.get("paciente") or {}).get("parentesco") or "").upper()
+        if parentesco not in PARENTESCOS or parentesco == "TITULAR":
+            return None, "Indica el parentesco del paciente con el titular."
+        paciente["parentesco"] = parentesco
+    registrada = bool(f.get("cuenta_registrada"))
+    pago = {}
+    if not registrada:
+        g = f.get("pago") if isinstance(f.get("pago"), dict) else {}
+        forma = str(g.get("forma") or "").upper()
+        if forma not in ("ABONO", "CHEQUE"):
+            return None, "Elige la forma de pago: abono en cuenta o cheque."
+        pago = {"forma": forma}
+        if forma == "ABONO":
+            banco = str(g.get("banco") or "").upper()
+            if banco not in BANCOS:
+                return None, "Elige el banco."
+            banco_otro = _mayus(g.get("banco_otro"), 40) if banco == "OTRO" else ""
+            if banco == "OTRO" and len(banco_otro) < 3:
+                return None, "Escribe el nombre del banco."
+            tipo_cuenta = str(g.get("tipo_cuenta") or "").upper()
+            if tipo_cuenta not in ("AHORROS", "CORRIENTE"):
+                return None, "Elige el tipo de cuenta."
+            cuenta = re.sub(r"\D", "", str(g.get("n_cuenta") or ""))
+            digitos = DIGITOS_CUENTA.get(banco, {}).get(tipo_cuenta)
+            if digitos and len(cuenta) != digitos:
+                return None, f"El N° de cuenta {tipo_cuenta.lower()} de {BANCOS[banco]} debe tener {digitos} dígitos."
+            if not digitos and not 6 <= len(cuenta) <= 20:
+                return None, "Revisa el N° de cuenta."
+            cci = re.sub(r"\D", "", str(g.get("cci") or ""))
+            if cci and len(cci) != 20:
+                return None, "El CCI debe tener 20 dígitos."
+            if banco == "OTRO" and not cci:
+                return None, "Para otros bancos, el CCI (20 dígitos) es obligatorio."
+            titular_cuenta = _mayus(g.get("titular_cuenta"))
+            if not _RE_NOMBRE.match(titular_cuenta or "") or len(titular_cuenta.split(" ")) < 2:
+                return None, "Escribe el nombre completo del titular de la cuenta."
+            doc_tipo = str(g.get("doc_tipo") or "").upper()
+            if doc_tipo not in ("DNI", "RUC", "CE"):
+                return None, "Elige el documento con el que se abrió la cuenta."
+            doc_num = re.sub(r"[\s.\-]", "", str(g.get("doc_numero") or "")).upper()
+            if not ((doc_tipo == "DNI" and re.fullmatch(r"\d{8}", doc_num)) or
+                    (doc_tipo == "RUC" and re.fullmatch(r"\d{11}", doc_num)) or
+                    (doc_tipo == "CE" and re.fullmatch(r"[A-Z0-9]{8,12}", doc_num))):
+                return None, "Revisa el N° del documento con el que se abrió la cuenta."
+            correo = _validar_correo(g.get("correo"))
+            if not correo:
+                return None, "Escribe un correo válido para el aviso del abono."
+            pago.update({"banco": banco, "banco_otro": banco_otro, "tipo_cuenta": tipo_cuenta, "n_cuenta": cuenta,
+                         "cci": cci, "titular_cuenta": titular_cuenta, "doc_tipo": doc_tipo, "doc_numero": doc_num,
+                         "correo": correo})
+    if not f.get("acepta"):
+        return None, "Debes aceptar las declaraciones para continuar."
+    nombre = " ".join(x for x in (titular["nombres"], titular["paterno"], titular["materno"]) if x)
+    return {"titular": titular, "paciente": paciente, "paciente_es_titular": es_titular,
+            "cuenta_registrada": registrada, "pago": pago, "nombre": nombre,
+            "tipo_documento": titular["tipo_documento"], "n_documento": titular["n_documento"],
+            "correo": pago.get("correo", "")}, ""
+
+
 def _validar_firma(png: bytes) -> bool:
     try:
         from PIL import Image
@@ -557,12 +834,6 @@ def _validar_firma(png: bytes) -> bool:
 def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str) -> dict:
     """Valida, genera el PDF, lo guarda y lo deja en la conversación (si no está cerrada).
     Devuelve {"status", "body"} para el cliente y, si salió bien, "entrega" con lo que main.py debe avisar."""
-    datos, motivo = _validar_formulario(formulario)
-    if not datos:
-        return {"status": 400, "body": {"ok": False, "motivo": motivo}}
-    if not _validar_firma(firma_png):
-        return {"status": 400, "body": {"ok": False, "motivo": "Dibuja tu firma en el recuadro."}}
-
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -573,8 +844,21 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
     no = _estado_no_disponible(sol)
     if no:
         return no
+    formato = sol["formato"]
+    datos, motivo = _validar_formulario(formulario, formato)
+    if not datos:
+        return {"status": 400, "body": {"ok": False, "motivo": motivo}}
+    if not _validar_firma(firma_png):
+        return {"status": 400, "body": {"ok": False, "motivo": "Dibuja tu firma en el recuadro."}}
     if not sol["ruta_dni_anverso"]:
         return {"status": 400, "body": {"ok": False, "motivo": "Primero sube la foto de tu documento."}}
+    if formato == "REEMBOLSO":
+        categorias = [a.get("categoria") for a in sol["adjuntos"]]
+        if "medico" not in categorias:
+            return {"status": 400, "body": {"ok": False,
+                                            "motivo": "Adjunta la foto de la hoja llenada y sellada por tu médico."}}
+        if "sustento" not in categorias:
+            return {"status": 400, "body": {"ok": False, "motivo": "Adjunta al menos un comprobante (factura o recibo)."}}
 
     ahora = datetime.now(LIMA_TZ)
     ocr = sol["ocr"] if isinstance(sol["ocr"], dict) else {}
@@ -582,7 +866,13 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
         fotos = [DESCARGAR(sol["ruta_dni_anverso"])]
         if sol["ruta_dni_reverso"]:
             fotos.append(DESCARGAR(sol["ruta_dni_reverso"]))
-        pdf = generar_pdf(datos, sol["contrato"], firma_png, fotos, ahora, sol["id"])
+        if formato == "LATENCIA":
+            pdf = _pdf_latencia(datos, firma_png, fotos, ahora, sol["id"])
+        elif formato == "REEMBOLSO":
+            adjuntos = [(a, DESCARGAR(a["ruta"])) for a in sol["adjuntos"] if a.get("ruta")]
+            pdf = _pdf_reembolso(datos, firma_png, fotos, adjuntos, ahora, sol["id"])
+        else:
+            pdf = generar_pdf(datos, sol["contrato"], firma_png, fotos, ahora, sol["id"])
         ruta_pdf = f"webchat/siniestralidad/{sol['id']}/{uuid.uuid4().hex}.pdf"
         ruta_firma = f"webchat/siniestralidad/{sol['id']}/{uuid.uuid4().hex}.png"
         SUBIR(ruta_firma, firma_png, "image/png")
@@ -591,15 +881,21 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
         logger.exception("siniestralidad: no se pudo generar o guardar el PDF (solicitud %s)", sol["id"])
         return {"status": 500, "body": {"ok": False, "motivo": "No pudimos generar tu documento. Intenta de nuevo."}}
 
-    nombre_pdf = f"Autorizacion_siniestralidad_{datos['n_documento']}.pdf"
+    nombre_pdf = f"{FORMATOS[formato]['archivo']}_{datos['n_documento']}.pdf"
     datos_guardar = dict(datos, ocr_numero=ocr.get("numero") or "",
                          ocr_coincide=(re.sub(r"\W", "", ocr.get("numero") or "").upper() == datos["n_documento"])
                          if ocr.get("numero") else None)
+    titulo = FORMATOS[formato]["titulo"]
+    texto_asesor = (f"✍️ {datos['nombre'] or 'El cliente'} firmó la autorización de siniestralidad "
+                    f"(contrato {sol['contrato']})." if formato == "SINIESTRALIDAD" else
+                    f"✍️ {datos['nombre'] or 'El cliente'} firmó la {titulo.lower()}.")
     entrega = {"solicitud_id": sol["id"], "conversacion_id": sol["conversacion_id"], "asesor_id": sol["asesor_id"],
                "ruta_pdf": ruta_pdf, "nombre_pdf": nombre_pdf, "nombre": datos["nombre"], "contrato": sol["contrato"],
-               "n_documento": datos["n_documento"], "dependientes": len(datos["dependientes"]),
+               "n_documento": datos["n_documento"], "dependientes": len(datos.get("dependientes") or []),
                "firmado": _fecha_hora(ahora), "mensaje_id": None, "asesor_actual": None, "estado_conv": None,
-               "texto_cliente": None, "alerta": None}
+               "texto_cliente": None, "alerta": None, "formato": formato,
+               "titulo_mensaje": ("📎 Autorización de siniestralidad firmada" if formato == "SINIESTRALIDAD"
+                                  else f"📎 {titulo} firmada"), "texto_asesor": texto_asesor}
     if datos_guardar["ocr_coincide"] is False:
         entrega["alerta"] = (f"El N° leído en la foto del documento ({datos_guardar['ocr_numero']}) no coincide con el "
                              f"N° escrito ({datos['n_documento']}). Revisa el PDF.")
@@ -611,7 +907,7 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
             if not fila or fila[0] not in ("enviado", "abierto"):
                 conn.rollback()
                 return {"status": 409, "body": {"ok": False, "estado": "firmado",
-                                                "motivo": "Esta autorización ya fue firmada."}}
+                                                "motivo": "Este documento ya fue firmado."}}
             cur.execute("""UPDATE solicitudes_siniestralidad
                            SET estado = 'firmado', firmado_en = %s, datos = %s, ruta_pdf = %s, ruta_firma = %s,
                                ip_firma = %s, agente_firma = %s
@@ -627,11 +923,19 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
                     cur.execute("""INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, metadata, enviado_en)
                                    VALUES (%s, 'usuario', 'archivo', %s, %s, %s) RETURNING id""",
                                 (sol["conversacion_id"], ruta_pdf,
-                                 json.dumps({"siniestralidad_id": sol["id"], "nombre": nombre_pdf}, ensure_ascii=False),
+                                 json.dumps({"siniestralidad_id": sol["id"], "formato": formato, "nombre": nombre_pdf},
+                                            ensure_ascii=False),
                                  ahora))
                     entrega["mensaje_id"] = cur.fetchone()[0]
-                    texto = ("✅ Recibimos tu autorización firmada para la entrega de tu reporte de siniestralidad "
-                             f"(contrato N° {sol['contrato']}). Tu asesor continuará con tu atención.")
+                    if formato == "LATENCIA":
+                        texto = ("✅ Recibimos tu Declaración Jurada de Latencia firmada. "
+                                 "Tu asesor continuará con tu atención.")
+                    elif formato == "REEMBOLSO":
+                        texto = ("✅ Recibimos tu Solicitud de Reembolso firmada con tus documentos. "
+                                 "Tu asesor continuará con tu atención.")
+                    else:
+                        texto = ("✅ Recibimos tu autorización firmada para la entrega de tu reporte de siniestralidad "
+                                 f"(contrato N° {sol['contrato']}). Tu asesor continuará con tu atención.")
                     cur.execute("""INSERT INTO mensajes (conversacion_id, emisor_tipo, tipo_contenido, contenido, enviado_en)
                                    VALUES (%s, 'bot', 'texto', %s, %s)""", (sol["conversacion_id"], texto, ahora))
                     entrega["texto_cliente"] = texto
@@ -650,8 +954,10 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
         return {"status": 500, "body": {"ok": False, "motivo": "No pudimos registrar tu firma. Intenta de nuevo."}}
     finally:
         release_connection(conn)
-    logger.info("siniestralidad: solicitud %s firmada (conversación %s)", sol["id"], sol["conversacion_id"])
-    return {"status": 200, "body": {"ok": True, "correo": datos["correo"]}, "entrega": entrega}
+    logger.info("siniestralidad: solicitud %s (%s) firmada (conversación %s)", sol["id"], formato,
+                sol["conversacion_id"])
+    return {"status": 200, "body": {"ok": True, "correo": datos.get("correo") or "", "formato": formato},
+            "entrega": entrega}
 
 
 # ---------------------------------------------------------------------------
@@ -776,3 +1082,332 @@ def generar_pdf(datos: dict, contrato: str, firma_png: bytes, fotos: list, ahora
                             author="Sanitas Perú S.A. EPS")
     doc.build(h)
     return salida.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# PDF de la declaración jurada de latencia y de la solicitud de reembolso
+# ---------------------------------------------------------------------------
+_UNIDADES = ["cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once", "doce",
+             "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno",
+             "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho",
+             "veintinueve"]
+_DECENAS = {3: "treinta", 4: "cuarenta", 5: "cincuenta", 6: "sesenta", 7: "setenta", 8: "ochenta", 9: "noventa"}
+
+
+def numero_letras(n: int) -> str:
+    """0..99 en letras ("treinta y uno")."""
+    n = int(n)
+    if n < 30:
+        return _UNIDADES[n]
+    d, u = divmod(n, 10)
+    return _DECENAS[d] + (f" y {_UNIDADES[u]}" if u else "")
+
+
+def _fecha_larga(fecha) -> str:
+    return f"{fecha.day} de {MESES[fecha.month - 1]} de {fecha.year}"
+
+
+def _estilos():
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+    from reportlab.lib.styles import ParagraphStyle
+    base = ParagraphStyle("base", fontName="Helvetica", fontSize=10.5, leading=15, alignment=TA_JUSTIFY)
+    return {
+        "base": base,
+        "titulo": ParagraphStyle("titulo", parent=base, fontName="Helvetica-Bold", fontSize=12.5, alignment=TA_CENTER,
+                                 spaceAfter=14),
+        "seccion": ParagraphStyle("seccion", parent=base, fontName="Helvetica-Bold", fontSize=10, leading=13,
+                                  textColor=colors.white),
+        "celda": ParagraphStyle("celda", parent=base, fontSize=9.5, leading=12, alignment=0),
+        "etiqueta": ParagraphStyle("etiqueta", parent=base, fontSize=8.5, leading=11, alignment=0,
+                                   textColor=colors.HexColor("#4A5B70")),
+        "chico": ParagraphStyle("chico", parent=base, fontSize=8, leading=10.5),
+        "pie": ParagraphStyle("pie", parent=base, fontSize=7.5, leading=10, textColor=colors.HexColor("#6B7A82")),
+        "centro": ParagraphStyle("centro", parent=base, alignment=TA_CENTER, leading=13),
+    }
+
+
+def _logo(h, ancho_cm=4.6):
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image as RLImage, Spacer
+    if os.path.isfile(LOGO):
+        w, hh = ImageReader(LOGO).getSize()
+        ancho = ancho_cm * cm
+        h.append(RLImage(LOGO, width=ancho, height=ancho * hh / w, hAlign="LEFT"))
+        h.append(Spacer(1, 8))
+
+
+def _bloque_firma(firma_png: bytes, lineas: list, est):
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image as RLImage, Paragraph, Table, TableStyle
+    fw, fh = ImageReader(io.BytesIO(firma_png)).getSize()
+    escala = min(6.5 * cm / fw, 2.6 * cm / fh)
+    filas = [[RLImage(io.BytesIO(firma_png), width=fw * escala, height=fh * escala)]]
+    filas += [[Paragraph(t, est["centro"])] for t in lineas]
+    t = Table(filas, colWidths=[9 * cm], hAlign="CENTER")
+    t.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                           ("LINEABOVE", (0, 1), (0, 1), 0.8, colors.black),
+                           ("TOPPADDING", (0, 1), (0, 1), 4)]))
+    return t
+
+
+def _paginas_documento(fotos: list, est, titulo="Documento de identidad del titular") -> list:
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image as RLImage, PageBreak, Paragraph, Spacer
+    h = [PageBreak(), Paragraph(titulo, est["titulo"])]
+    for i, foto in enumerate(fotos):
+        try:
+            w, hh = ImageReader(io.BytesIO(foto)).getSize()
+            esc = min(16 * cm / w, 10.5 * cm / hh)
+            h += [Paragraph("Anverso" if i == 0 else "Reverso", est["centro"]), Spacer(1, 4),
+                  RLImage(io.BytesIO(foto), width=w * esc, height=hh * esc), Spacer(1, 12)]
+        except Exception:  # noqa: BLE001
+            logger.warning("siniestralidad: no se pudo poner la foto %s en el PDF", i, exc_info=True)
+            h.append(Paragraph("(No se pudo mostrar la imagen del documento.)", est["centro"]))
+    return h
+
+
+def _construir(h, titulo: str) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate
+    salida = io.BytesIO()
+    SimpleDocTemplate(salida, pagesize=A4, leftMargin=2.2 * cm, rightMargin=2.2 * cm, topMargin=1.5 * cm,
+                      bottomMargin=1.5 * cm, title=titulo, author="Sanitas Perú S.A. EPS").build(h)
+    return salida.getvalue()
+
+
+def _pie_firma(ahora: datetime, solicitud_id, extra: str = "") -> str:
+    return (f"Documento firmado electrónicamente por el titular a través del webchat de Sanitas Perú el "
+            f"{ahora.strftime('%d/%m/%Y a las %H:%M')} (hora de Lima). Solicitud N° {solicitud_id}. {extra}").strip()
+
+
+def _pdf_latencia(datos: dict, firma_png: bytes, fotos: list, ahora: datetime, solicitud_id) -> bytes:
+    """Mismo texto del formato "DECLARACIÓN JURADA" de latencia, con los datos del cliente."""
+    from reportlab.platypus import KeepTogether, Paragraph, Spacer
+    est = _estilos()
+    base = est["base"]
+
+    def b(t):
+        return f"<b>{_esc(t)}</b>"
+
+    tipo_txt = "Documento Nacional de Identidad" if datos["tipo_documento"] == "DNI" else "Carné de Extranjería"
+    cese = datetime.strptime(datos["fecha_cese"], "%Y-%m-%d").date()
+    h = []
+    _logo(h)
+    h.append(Paragraph("<u>DECLARACIÓN JURADA</u>", est["titulo"]))
+    h.append(Paragraph(
+        f"Por el presente documento yo, {b(datos['nombre'])}, identificado/a con {tipo_txt} N° "
+        f"{b(datos['n_documento'])}, con domicilio real en {b(datos['domicilio'])}, <b>DECLARO BAJO JURAMENTO</b> "
+        "lo siguiente:", base))
+    h.append(Spacer(1, 8))
+    for n, texto in enumerate([
+            f"Mi última entidad empleadora fue {b(datos['empleador'])}.",
+            f"Haber cesado de dicha entidad empleadora el {b(_fecha_larga(cese))}.",
+            f"Haber realizado {b(numero_letras(datos['aportes']))} ({b(datos['aportes'])}) aportes a ESSALUD en los "
+            "últimos tres años previos a la fecha de mi cese."], 1):
+        h.append(Paragraph(f"{n}.&nbsp;&nbsp;{texto}", base))
+        h.append(Spacer(1, 4))
+    h.append(Spacer(1, 6))
+    h.append(Paragraph(
+        "Ello de conformidad con lo establecido en el Art. 37 del Decreto Supremo N° 009-97-SA Reglamento de la Ley "
+        "de Modernización de la Seguridad Social en Salud, relativo a la Latencia.", base))
+    h.append(Spacer(1, 8))
+    h.append(Paragraph(
+        "Formulo la presente declaración en honor a la verdad y al amparo de lo dispuesto por la ley N° 27444, ley de "
+        "simplificación administrativa, sus modificatorias y su reglamento, asumiendo expresa responsabilidad por la "
+        "veracidad de la presente declaración, relevando a terceros de ulteriores responsabilidades y en caso de "
+        "falsedad me someto a la normatividad administrativa y/o penal vigente, y las sanciones que establece la ley.",
+        base))
+    h.append(Spacer(1, 8))
+    h.append(Paragraph(
+        f"En señal de conformidad firmo y acompaño con la copia de mi documento de identidad, a los "
+        f"{numero_letras(ahora.day)} ({ahora.day}) días del mes de {MESES[ahora.month - 1]} del año {ahora.year}.",
+        base))
+    h.append(Spacer(1, 26))
+    h.append(KeepTogether([_bloque_firma(firma_png, [
+        _esc(datos["nombre"]), f"{tipo_txt} N° {_esc(datos['n_documento'])}"], est)]))
+    h.append(Spacer(1, 16))
+    h.append(Paragraph(_pie_firma(ahora, solicitud_id, "Se adjunta la imagen del documento de identidad."),
+                       est["pie"]))
+    h += _paginas_documento(fotos, est, "Documento de identidad del declarante")
+    return _construir(h, "Declaración jurada de latencia")
+
+
+def _tabla_campos(filas: list, est, ancho: float) -> list:
+    """filas: [[(etiqueta, valor), ...], ...] -> una tabla por fila (cada fila reparte el ancho entre sus campos)."""
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Table, TableStyle
+    tablas = []
+    for i, fila in enumerate(filas):
+        celdas = [Paragraph(f"<font size=7.5 color='#4A5B70'>{_esc(e)}</font><br/>{_esc(v) or '—'}", est["celda"])
+                  for e, v in fila]
+        t = Table([celdas], colWidths=[ancho / len(fila)] * len(fila))
+        t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#B8C7D3")),
+                               ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#B8C7D3")),
+                               ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                               ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+        tablas.append(t)
+    return tablas
+
+
+def _barra(texto: str, est):
+    from reportlab.lib import colors
+    from reportlab.platypus import Paragraph, Table, TableStyle
+    t = Table([[Paragraph(_esc(texto), est["seccion"])]], colWidths=["100%"])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1F4E79")),
+                           ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    return t
+
+
+def _pdf_reembolso(datos: dict, firma_png: bytes, fotos: list, adjuntos: list, ahora: datetime, solicitud_id) -> bytes:
+    """Hoja 1 del formato "SOLICITUD DE REEMBOLSO" con los datos del cliente y su firma; luego la hoja del médico,
+    los comprobantes (fotos o PDF) y el documento de identidad."""
+    from reportlab.lib.units import cm
+    from reportlab.platypus import KeepTogether, Paragraph, Spacer
+    est = _estilos()
+    t, p, g = datos["titular"], datos["paciente"], datos.get("pago") or {}
+    ancho = 16.6 * cm
+
+    def doc_txt(x):
+        return f"{TIPOS_DOCUMENTO.get(x['tipo_documento'], x['tipo_documento'])} {x['n_documento']}"
+
+    h = []
+    _logo(h, 4.2)
+    h.append(Paragraph("SOLICITUD DE REEMBOLSO", est["titulo"]))
+    h.append(Paragraph("<i>Completada por el afiliado en el webchat de Sanitas Perú</i>", est["etiqueta"]))
+    h.append(Spacer(1, 6))
+    h.append(_barra("DATOS DEL TITULAR", est))
+    h += _tabla_campos([[("Apellido paterno", t["paterno"]), ("Apellido materno", t["materno"]),
+                         ("Nombres", t["nombres"])],
+                        [("DNI/CE/Pasaporte", doc_txt(t)), ("Edad", str(t["edad"]))]], est, ancho)
+    h.append(Spacer(1, 6))
+    h.append(_barra("DATOS DEL PACIENTE", est))
+    h += _tabla_campos([[("Apellido paterno", p["paterno"]), ("Apellido materno", p["materno"]),
+                         ("Nombres", p["nombres"])],
+                        [("DNI/CE/Pasaporte", doc_txt(p)), ("Edad", str(p["edad"])),
+                         ("Sexo", "Masculino" if p["sexo"] == "M" else "Femenino"),
+                         ("Parentesco", PARENTESCOS.get(p["parentesco"], p["parentesco"]))]], est, ancho)
+    h.append(Spacer(1, 6))
+    h.append(Paragraph(
+        "De conformidad con lo establecido con la Ley Nro. 29733 – Ley de Protección de Datos Personales y su "
+        "Reglamento, quien suscribe el presente documento, queda informado y da su consentimiento libre, expreso, "
+        "inequívoco e informado, para el tratamiento y transferencia, nacional e internacional de sus datos "
+        "personales a la base de datos de SANITAS PERÚ S.A., conjuntamente con cualquier otro dato que pudiera "
+        "facilitarse a lo largo de la relación jurídica y aquellos obtenidos en fuentes accesibles al público, se "
+        "tratarán con las finalidades de analizar las circunstancias al celebrar contratos con SANITAS PERÚ S.A., "
+        "gestionar la contratación y evaluar la calidad del servicio. Los datos suministrados son esenciales para "
+        "las finalidades indicadas. Las bases de datos donde ellos se almacenan cuentan con estrictas medidas de "
+        "seguridad. En caso se decida no proporcionarlos, no será posible la prestación de servicios por parte de "
+        "SANITAS PERÚ S.A. Conforme a ley, el titular de la información está facultado a ejercitar los derechos de "
+        "información, acceso, rectificación, supresión o cancelación y oposición que se detallan en la Ley Nro. "
+        "29733 – Ley de Protección de Datos Personales y su Reglamento, mediante comunicación dirigida a SANITAS "
+        "PERÚ S.A.", est["chico"]))
+    h.append(Spacer(1, 6))
+    h.append(_barra("FORMA DE PAGO", est))
+    if datos.get("cuenta_registrada"):
+        h += _tabla_campos([[("¿Ya registraste tu cuenta en Sanitas?", "Sí (se usa la cuenta registrada)")]],
+                           est, ancho)
+    elif g.get("forma") == "CHEQUE":
+        h += _tabla_campos([[("¿Ya registraste tu cuenta en Sanitas?", "No"), ("Forma de pago", "Cheque")]],
+                           est, ancho)
+        h.append(Paragraph("El cheque deberá ser recogido en nuestras oficinas; solo se emiten los días martes y "
+                           "jueves a partir de las 03:00 p. m.", est["chico"]))
+    else:
+        banco = g.get("banco_otro") if g.get("banco") == "OTRO" else BANCOS.get(g.get("banco"), g.get("banco"))
+        h += _tabla_campos([
+            [("¿Ya registraste tu cuenta en Sanitas?", "No"), ("Forma de pago", "Abono en cuenta"),
+             ("Correo", g.get("correo"))],
+            [("Banco", banco), ("Tipo de cuenta", "Cuenta de ahorros" if g.get("tipo_cuenta") == "AHORROS"
+                                else "Cuenta corriente")],
+            [("N° de cuenta", g.get("n_cuenta")), ("CCI", g.get("cci"))],
+            [("Nombre del titular de la cuenta", g.get("titular_cuenta")),
+             ("Documento con el que abrió la cuenta", f"{g.get('doc_tipo')} {g.get('doc_numero')}")]], est, ancho)
+    h.append(Spacer(1, 4))
+    h.append(Paragraph(
+        "<sup>1</sup> Formato del número de cuenta: Banco Continental (cuenta corriente o de ahorro de 20 dígitos), "
+        "Banco de Crédito (cuenta corriente de 13 dígitos y de ahorro de 14 dígitos), Scotiabank (10 dígitos), "
+        "Interbank (13 dígitos). <sup>2</sup> El afiliado declara que todos los datos descritos en la presente "
+        "solicitud son válidos y que cualquier error en la información brindada sin previo aviso a Sanitas podrá "
+        "afectar el pago o el tiempo del reembolso; en dichos casos la responsabilidad recaerá directamente en el "
+        "AFILIADO.", est["chico"]))
+    h.append(Spacer(1, 6))
+    h.append(Paragraph(
+        "Las declaraciones anteriores son verdaderas y, en tal sentido, el afiliado/asegurado suscribe la presente "
+        "declaración, la cual tendrá el carácter de declaración jurada. Asimismo, de conformidad con el artículo 25 "
+        "inciso a) de la Ley General de Salud 26842, el afiliado/asegurado presta su consentimiento para que las "
+        "clínicas o médicos tratantes proporcionen a la compañía cualquier información del acto médico, relacionado "
+        "a la atención, tales como historia clínica, certificados e informes, dispensándolos de la reserva de "
+        "información. Sin perjuicio de lo expuesto el afiliado/asegurado reconoce que las clínicas o médicos "
+        "tratantes están exceptuados de la reserva de información, por lo que estos podrán brindar a la aseguradora "
+        "o a la administradora del financiamiento toda la información relacionada con el acto médico del "
+        "afiliado/asegurado, siempre que fuese con fines de reembolso, pago de beneficios, fiscalización o auditoría.",
+        est["chico"]))
+    h.append(Spacer(1, 8))
+    h.append(KeepTogether([_bloque_firma(firma_png, [
+        "Firma del titular de la Póliza de Salud",
+        f"{_esc(datos['nombre'])}<br/>{_esc(doc_txt(t))}"], est)]))
+    h.append(Spacer(1, 10))
+    n_med = sum(1 for a, _ in adjuntos if a.get("categoria") == "medico")
+    n_sus = sum(1 for a, _ in adjuntos if a.get("categoria") == "sustento")
+    h.append(Paragraph(_pie_firma(ahora, solicitud_id,
+                                  f"Se adjuntan: hoja del médico tratante ({n_med} archivo(s)), comprobantes y "
+                                  f"sustentos ({n_sus} archivo(s)) y el documento de identidad del titular."),
+                       est["pie"]))
+    principal = _construir(h, "Solicitud de reembolso")
+
+    partes = [principal]
+    for categoria in ("medico", "sustento"):
+        for a, contenido in adjuntos:
+            if a.get("categoria") == categoria:
+                partes.append(_pdf_adjunto(a, contenido, est))
+    partes.append(_construir(_paginas_documento(fotos, est)[1:], "Documento de identidad"))
+    return _unir_pdfs(partes)
+
+
+def _pdf_adjunto(adjunto: dict, contenido: bytes, est) -> bytes:
+    """Un adjunto como PDF: si ya es PDF va tal cual; si es foto, en una hoja con su título."""
+    from reportlab.lib.units import cm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image as RLImage, Paragraph, Spacer
+    titulo = (CATEGORIAS_ADJUNTO.get(adjunto.get("categoria"), ("Adjunto", 0))[0] + " — " +
+              (adjunto.get("nombre") or "archivo"))
+    if adjunto.get("tipo") == "application/pdf" or contenido[:5] == b"%PDF-":
+        return contenido
+    try:
+        w, hh = ImageReader(io.BytesIO(contenido)).getSize()
+        esc = min(16.6 * cm / w, 23 * cm / hh)
+        return _construir([Paragraph(_esc(titulo), est["etiqueta"]), Spacer(1, 4),
+                           RLImage(io.BytesIO(contenido), width=w * esc, height=hh * esc)], titulo)
+    except Exception:  # noqa: BLE001
+        logger.warning("siniestralidad: no se pudo poner el adjunto %s en el PDF", adjunto.get("id"), exc_info=True)
+        return _construir([Paragraph(_esc(titulo), est["etiqueta"]),
+                           Paragraph("(No se pudo mostrar este archivo.)", est["centro"])], titulo)
+
+
+def _unir_pdfs(partes: list) -> bytes:
+    from pypdf import PdfReader, PdfWriter
+    salida = PdfWriter()
+    for parte in partes:
+        try:
+            lector = PdfReader(io.BytesIO(parte))
+            if lector.is_encrypted:
+                lector.decrypt("")
+            for pagina in lector.pages:
+                salida.add_page(pagina)
+        except Exception:  # noqa: BLE001
+            logger.warning("siniestralidad: no se pudo unir un PDF adjunto", exc_info=True)
+            est = _estilos()
+            from reportlab.platypus import Paragraph
+            aviso = _construir([Paragraph("(Un archivo PDF adjunto no se pudo incluir: está dañado o protegido. "
+                                          "Pídele al cliente que lo envíe por el chat.)", est["centro"])], "Aviso")
+            for pagina in PdfReader(io.BytesIO(aviso)).pages:
+                salida.add_page(pagina)
+    salida.add_metadata({"/Title": "Solicitud de reembolso", "/Author": "Sanitas Perú S.A. EPS"})
+    buf = io.BytesIO()
+    salida.write(buf)
+    return buf.getvalue()

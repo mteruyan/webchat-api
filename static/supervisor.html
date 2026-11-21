@@ -1223,7 +1223,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <div id="modalBuscar">
       <h3>Buscar conversación</h3>
       <div id="buscarFila">
-        <input id="buscarInput" placeholder="Celular, DNI, nombre o código de conversación (ej. 6888)..." />
+        <input id="buscarInput" placeholder="Celular, DNI (también del paciente), nombre o código (ej. 6888)..." />
         <button id="btnEjecutarBusqueda">Buscar</button>
       </div>
       <div class="buscar-filtros" id="buscarFiltros" role="group" aria-label="Filtrar resultados" style="display:none">
@@ -3019,7 +3019,7 @@ function agregarMensajeEscucha(texto, emisorTipo, horaIso, ruta, extra) {
   hora.textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   div.appendChild(hora);
   // ✓ enviado / ✓✓ leído por la otra parte (cliente <-> asesor), igual que en el widget y el asesor.
-  if (extra.mensajeId && (emisorTipo === 'usuario' || emisorTipo === 'asesor' || emisorTipo === 'supervisor')) {
+  if ((extra.mensajeId || extra.mostrarCheck) && (emisorTipo === 'usuario' || emisorTipo === 'asesor' || emisorTipo === 'supervisor')) {
     const check = document.createElement('span');
     check.className = 'check-esc' + (extra.leido ? ' leido' : '');
     check.textContent = extra.leido ? '✓✓' : '✓';
@@ -4095,6 +4095,7 @@ function renderResultadosBusqueda(todos, soloFiltro) {
     div.innerHTML = `
       <div class="nombre">${htmlDireccionBusqueda(r)}${escapeHtml(r.usuario_nombre)}</div>
       <div class="datos">${escapeHtml(['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      ${r.coincide_dentro ? `<div class="via" title="El dato no es del que escribió (p. ej. admisionista de un pase): está en los datos o mensajes de la conversación">🔎 Encontrado dentro de la conversación (p. ej. paciente de un pase)</div>` : ''}
       ${r.via ? `<div class="via">📲 Llegó por ${escapeHtml(r.via)}</div>` : ''}
       ${r.atendieron ? `<div class="atendio">👤 Atendió: <b>${escapeHtml(r.atendieron)}</b></div>` : ''}
       <div class="fila-estado">
@@ -4166,7 +4167,7 @@ function pintarLecturaPanel(historial) {
     // Sin mensajeId: en solo lectura no hay menú para editar o eliminar.
     agregarMensajeEscucha(esArchivo ? '📎 Ver archivo enviado' : m.contenido, m.emisor_tipo, m.enviado_en,
       esArchivo ? m.contenido : null, { respondidoA: m.respondido_a, editadoEn: m.editado_en,
-        eliminadoEn: m.eliminado_en, eliminadoPor: m.eliminado_por });
+        eliminadoEn: m.eliminado_en, eliminadoPor: m.eliminado_por, mostrarCheck: true, leido: m.leido });
   });
   if (!historial.length) chat.innerHTML = '<div style="text-align:center;color:var(--texto-suave);padding:20px">Esta conversación no tiene mensajes.</div>';
   chat.scrollTop = chat.scrollHeight;

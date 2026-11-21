@@ -53,6 +53,8 @@
   .sep-dia { text-align: center; margin: 12px 0 8px; }
   .sep-dia span { display: inline-block; background: #EEF2F6; color: var(--texto-suave); font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 3px 10px; }
   .msg .hora-hist { display: block; font-size: 10.5px; opacity: .65; margin-top: 3px; text-align: right; }
+  .msg .hora-hist .check-hist.leido { font-weight: 700; color: #2B9BD6; }
+  .msg.asesor .hora-hist .check-hist.leido { color: #BFE9FF; }
   .cab-hist { font-size: 12.5px; color: var(--texto-suave); margin: 8px 0 4px; }
   #historialVacio { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 20px; }
   #historialFiltros { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -835,7 +837,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <button class="chico gris" id="btnArchivosEmpresa" title="Archivos de la empresa (por RUC): lo que envió el cliente y los que guardaste para su próxima renovación">📁 Archivos</button>
         <button class="chico gris" id="btnGuiaArchivos" title="Enviarle al cliente la guía con las formas de adjuntar su archivo (desde el celular, la computadora o WhatsApp)">📎 Guía</button>
         <button class="chico gris" id="btnPlantillaExpress" title="SCTR: enviarle al cliente el enlace de Plantilla Express para registrar a sus trabajadores desde el celular, sin llenar un Excel">📋 Plantilla</button>
-        <button class="chico gris" id="btnSiniestralidad" title="Enviarle al cliente el enlace para firmar la autorización de entrega de su reporte de siniestralidad (foto del DNI, datos y firma, sin imprimir nada)">📄 Siniestr.</button></div>
+        <button class="chico gris" id="btnSiniestralidad" title="Enviarle al cliente un formato para completar y firmar desde el celular, sin imprimir nada: autorización de siniestralidad, declaración jurada de latencia o solicitud de reembolso">📄 Formatos</button></div>
       </div>
       <div id="notaClienteBanner">
         <span class="nota-cliente-icono">📝</span>
@@ -1131,7 +1133,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <div class="modal-buscar">
       <h3>Buscar conversación</h3>
       <div class="buscar-fila">
-        <input id="buscarInput" placeholder="Celular, DNI, nombre o código de conversación (ej. 6888)..." />
+        <input id="buscarInput" placeholder="Celular, DNI (también del paciente), nombre o código (ej. 6888)..." />
         <button id="btnEjecutarBusqueda">Buscar</button>
       </div>
       <div class="buscar-filtros" id="buscarFiltros" role="group" aria-label="Filtrar resultados" style="display:none">
@@ -3148,7 +3150,15 @@ function resultadoPlantillaExpress(p) {
 }
 document.getElementById('btnPlantillaExpress').onclick = abrirPlantillaExpress;
 
-// ---- 📄 Autorización de siniestralidad: enlace para que el cliente suba su DNI, complete datos y firme ----
+// ---- 📄 Formatos: enlace para que el cliente suba su DNI, complete datos y firme (siniestralidad, latencia, reembolso) ----
+const FORMATOS_FIRMA = {
+  SINIESTRALIDAD: { titulo: 'Autorización de siniestralidad', vigencia: 48,
+    ayuda: 'El cliente sube la foto de su DNI, completa sus datos (y los de sus dependientes menores, si quiere) y firma.' },
+  LATENCIA: { titulo: 'Declaración jurada de latencia', vigencia: 48,
+    ayuda: 'El cliente sube la foto de su DNI, indica su domicilio, su último empleador, la fecha de cese y sus aportes a EsSalud, y firma.' },
+  REEMBOLSO: { titulo: 'Solicitud de reembolso', vigencia: 72,
+    ayuda: 'El cliente sube la foto de su DNI, completa los datos del titular y del paciente y la forma de pago, adjunta la hoja 2 llenada por el médico y sus comprobantes (fotos o PDF), y firma.' }
+};
 const ESTADOS_SINIESTRALIDAD = {
   enviado: ['Enviado', '#4A5B70', '#EEF2F6'], abierto: ['Abierto', '#8A5A00', '#FFF4DE'],
   firmado: ['Firmado', '#197A54', '#E3F5EC'], vencido: ['Vencido', '#8A97A6', '#F1F3F5'],
@@ -3165,10 +3175,16 @@ function abrirSiniestralidad() {
     caja.style.cssText = 'position:fixed;inset:0;background:rgba(10,30,50,.45);z-index:9000;display:flex;align-items:center;justify-content:center;padding:16px;';
     caja.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;max-height:92vh;overflow-y:auto;padding:18px 18px 16px;position:relative;box-shadow:0 20px 50px rgba(10,30,50,.3)">
       <button type="button" id="sinCerrar" aria-label="Cerrar" style="position:absolute;top:8px;right:10px;border:0;background:none;font-size:20px;cursor:pointer;color:#4A5B70">×</button>
-      <div style="font-weight:700;font-size:15px;margin-bottom:4px">📄 Autorización de siniestralidad</div>
-      <div style="font-size:12.5px;color:#4A5B70;margin-bottom:12px">El cliente recibe un enlace (vence en <span id="sinVigencia">48</span> h) para subir la foto de su DNI, completar sus datos y firmar desde el celular. El PDF firmado te llega a esta conversación.</div>
-      <label style="font-size:12.5px;font-weight:600">N° de contrato del plan de salud *</label>
-      <input id="sinContrato" maxlength="30" autocomplete="off" style="${campo}">
+      <div style="font-weight:700;font-size:15px;margin-bottom:8px">📄 Formatos para firmar</div>
+      <label style="font-size:12.5px;font-weight:600">Formato</label>
+      <select id="sinFormato" style="${campo};background:#fff">
+        <option value="SINIESTRALIDAD">Autorización de siniestralidad</option>
+        <option value="LATENCIA">Declaración jurada de latencia</option>
+        <option value="REEMBOLSO">Solicitud de reembolso</option>
+      </select>
+      <div style="font-size:12.5px;color:#4A5B70;margin-bottom:12px"><span id="sinAyuda"></span> El enlace vence en <span id="sinVigencia">48</span> h. El PDF firmado te llega a esta conversación.</div>
+      <div id="sinCajaContrato"><label style="font-size:12.5px;font-weight:600">N° de contrato del plan de salud *</label>
+      <input id="sinContrato" maxlength="30" autocomplete="off" style="${campo}"></div>
       <label style="font-size:12.5px;font-weight:600">Correo del cliente</label>
       <input id="sinCorreo" type="email" maxlength="120" autocomplete="off" placeholder="cliente@correo.com" style="${campo}">
       <label style="font-size:12.5px;font-weight:600">Nombres y apellidos <span style="font-weight:400;color:#6B7A8A">(opcional, el cliente los confirma)</span></label>
@@ -3195,14 +3211,16 @@ function abrirSiniestralidad() {
     caja.addEventListener('click', (e) => { if (e.target === caja) cerrar(); });
     document.getElementById('sinCerrar').onclick = cerrar;
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && caja.style.display !== 'none') cerrar(); });
+    document.getElementById('sinFormato').onchange = actualizarFormatoFirma;
     document.getElementById('sinEnviar').onclick = () => {
       const estado = document.getElementById('sinEstado');
-      const contrato = document.getElementById('sinContrato').value.trim();
+      const formato = document.getElementById('sinFormato').value;
+      const contrato = formato === 'SINIESTRALIDAD' ? document.getElementById('sinContrato').value.trim() : '';
       const correo = document.getElementById('sinCorreo').value.trim();
       const porChat = document.getElementById('sinPorChat').checked;
       const porCorreo = document.getElementById('sinPorCorreo').checked;
       const error = (m) => { estado.style.color = '#C0392B'; estado.textContent = m; };
-      if (!contrato) return error('Escribe el N° de contrato.');
+      if (formato === 'SINIESTRALIDAD' && !contrato) return error('Escribe el N° de contrato.');
       if (!porChat && !porCorreo) return error('Elige al menos un medio de envío.');
       if (porCorreo && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(correo)) return error('Escribe un correo válido.');
       if (correo && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(correo)) return error('El correo no es válido.');
@@ -3212,7 +3230,7 @@ function abrirSiniestralidad() {
       estado.style.color = '#4A5B70'; estado.textContent = '';
       document.getElementById('sinEnlace').style.display = 'none';
       ws.send(JSON.stringify({ type: 'siniestralidad_enviar', payload: {
-        conversacion_id: Number(caja.dataset.conv), contrato, correo,
+        conversacion_id: Number(caja.dataset.conv), formato, contrato, correo,
         nombre: document.getElementById('sinNombre').value.trim(),
         tipo_documento: document.getElementById('sinTipo').value,
         n_documento: document.getElementById('sinNumero').value.trim(),
@@ -3221,6 +3239,7 @@ function abrirSiniestralidad() {
   }
   const c = conversaciones[activaId] || {};
   caja.dataset.conv = String(activaId);
+  actualizarFormatoFirma();
   const nombre = String(c.resumen_usuario || '');
   document.getElementById('sinContrato').value = '';
   document.getElementById('sinCorreo').value = '';
@@ -3235,6 +3254,12 @@ function abrirSiniestralidad() {
   caja.style.display = 'flex';
   setTimeout(() => document.getElementById('sinContrato').focus(), 50);
   ws.send(JSON.stringify({ type: 'siniestralidad_abrir', payload: { conversacion_id: Number(activaId) } }));
+}
+function actualizarFormatoFirma() {
+  const f = FORMATOS_FIRMA[document.getElementById('sinFormato').value] || FORMATOS_FIRMA.SINIESTRALIDAD;
+  document.getElementById('sinAyuda').textContent = f.ayuda;
+  document.getElementById('sinVigencia').textContent = f.vigencia;
+  document.getElementById('sinCajaContrato').style.display = document.getElementById('sinFormato').value === 'SINIESTRALIDAD' ? '' : 'none';
 }
 function pintarBandejaSiniestralidad(lista) {
   const cont = document.getElementById('sinBandeja');
@@ -3253,7 +3278,7 @@ function pintarBandejaSiniestralidad(lista) {
         ? `<button type="button" data-anular="${s.id}" style="border:0;background:none;color:#C0392B;cursor:pointer;font-size:12px;padding:0">Anular</button>` : '');
     return `<div style="display:flex;gap:8px;align-items:flex-start;justify-content:space-between;padding:7px 0;border-top:1px solid #EEF2F6">
       <div style="min-width:0"><div style="font-weight:600;color:#1F2D3D">${escapeHtml(s.nombre || ('Conversación ' + s.conversacion_id))} ${chip}</div>
-      <div>Contrato ${escapeHtml(s.contrato)}${medios ? ' · ' + escapeHtml(medios) : ''}</div><div>${detalle}</div></div>
+      <div><b>${escapeHtml(s.formato_nombre || 'Siniestralidad')}</b>${s.contrato ? ' · Contrato ' + escapeHtml(s.contrato) : ''}${medios ? ' · ' + escapeHtml(medios) : ''}</div><div>${detalle}</div></div>
       <div style="flex-shrink:0;padding-top:2px">${acciones}</div></div>`;
   }).join('');
   cont.querySelectorAll('[data-anular]').forEach((b) => {
@@ -3269,7 +3294,10 @@ function resultadoSiniestralidad(p) {
   if (!caja) return;
   if (p.bandeja) pintarBandejaSiniestralidad(p.bandeja);
   if (p.accion === 'abrir') {
-    if (p.vigencia_horas) document.getElementById('sinVigencia').textContent = p.vigencia_horas;
+    if (p.formatos) {
+      Object.keys(p.formatos).forEach((k) => { if (FORMATOS_FIRMA[k]) FORMATOS_FIRMA[k].vigencia = p.formatos[k].vigencia_horas; });
+    }
+    actualizarFormatoFirma();
     const porCorreo = document.getElementById('sinPorCorreo');
     porCorreo.disabled = !p.correo_configurado;
     porCorreo.checked = !!p.correo_configurado;
@@ -3297,7 +3325,7 @@ function resultadoSiniestralidad(p) {
   };
 }
 function siniestralidadFirmada(p) {
-  const texto = `✍️ ${p.nombre || 'El cliente'} firmó la autorización de siniestralidad (contrato ${p.contrato}).`;
+  const texto = p.texto_asesor || `✍️ ${p.nombre || 'El cliente'} firmó la autorización de siniestralidad (contrato ${p.contrato}).`;
   if (p.en_conversacion && conversaciones[p.conversacion_id]) {
     agregarMensaje(p.conversacion_id, texto + (p.alerta ? '\n⚠️ ' + p.alerta : ''), 'bot');
   }
@@ -3309,7 +3337,7 @@ function siniestralidadFirmada(p) {
     document.body.appendChild(aviso);
   }
   const extra = p.en_conversacion ? 'El PDF ya está en la conversación.'
-    : 'La conversación ya no está abierta en tu consola; abre el PDF desde aquí o desde 📄 Siniestr.';
+    : 'La conversación ya no está abierta en tu consola; abre el PDF desde aquí o desde 📄 Formatos.';
   aviso.innerHTML = `<button type="button" aria-label="Cerrar" style="position:absolute;top:6px;right:8px;border:0;background:none;font-size:17px;cursor:pointer;color:#4A5B70">×</button>
     <div style="font-weight:700;margin-bottom:4px">${escapeHtml(texto)}</div>
     <div style="color:#4A5B70;margin-bottom:6px">${escapeHtml(extra)}</div>
@@ -3742,6 +3770,14 @@ function pintarMensajesSoloLectura(chat, mensajes) {
       const h = document.createElement('span');
       h.className = 'hora-hist';
       h.textContent = formatearHoraCorta(m.enviado_en);
+      // ✓ enviado / ✓✓ leído por la otra parte (cliente <-> asesor), igual que en el chat en vivo.
+      if (m.emisor_tipo === 'usuario' || m.emisor_tipo === 'asesor' || m.emisor_tipo === 'supervisor') {
+        const check = document.createElement('span');
+        check.className = 'check-hist' + (m.leido ? ' leido' : '');
+        check.title = m.leido ? 'Leído' : 'Enviado (no leído)';
+        check.textContent = m.leido ? ' ✓✓' : ' ✓';
+        h.appendChild(check);
+      }
       div.appendChild(h);
     }
     chat.appendChild(div);
@@ -4112,6 +4148,7 @@ function renderResultadosBusqueda(todos, soloFiltro) {
     div.innerHTML = `
       <div class="nombre">${htmlDireccionBusqueda(r)}${escapeHtml(r.usuario_nombre)}</div>
       <div class="datos">${escapeHtml(['#' + r.conversacion_id, r.telefono, r.dni ? 'DNI ' + r.dni : null].filter(Boolean).join(' · '))}</div>
+      ${r.coincide_dentro ? `<div class="via" title="El dato no es del que escribió (p. ej. admisionista de un pase): está en los datos o mensajes de la conversación">🔎 Encontrado dentro de la conversación (p. ej. paciente de un pase)</div>` : ''}
       ${r.via ? `<div class="via">📲 Llegó por ${escapeHtml(r.via)}</div>` : ''}
       ${r.atendieron ? `<div class="atendio">👤 Atendió: <b>${escapeHtml(r.atendieron)}</b></div>` : ''}
       <div class="fila-estado">
