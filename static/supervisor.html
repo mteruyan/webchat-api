@@ -596,6 +596,7 @@
   .pet-tag { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; }
   .pet-tag.carta { background: #FFF1E0; color: #8A4B00; }
   .pet-tag.cuida { background: #E8F1FB; color: #0A4C8C; }
+  .pet-tag.aut { background: #EAF6EF; color: #197A54; }
   #petAviso { color: var(--texto-suave); font-size: 13px; text-align: center; padding: 14px; }
   #petPie { font-size: 11.5px; color: var(--texto-suave); margin-top: 6px; }
   #petForm { display: none; }
@@ -1195,6 +1196,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
           <button type="button" data-pf="todos" class="activo">Todos</button>
           <button type="button" data-pf="carta">🛡️ Carta de garantía</button>
           <button type="button" data-pf="cuida">🩺 CUIDA</button>
+          <button type="button" data-pf="autorizacion">🔑 Con autorización</button>
           <button type="button" data-pf="ninguno">Sin requisitos</button>
         </div>
         <div id="petResultados"></div>
@@ -1208,6 +1210,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <div class="contador" id="petContador">0 / 100</div>
         <label class="check"><input type="checkbox" id="petCarta" /><span>Requiere carta de garantía<small>El medicamento necesita carta de garantía para cubrirse.</small></span></label>
         <label class="check"><input type="checkbox" id="petCuida" /><span>Requiere CUIDA<small>El medicamento está sujeto al programa CUIDA.</small></span></label>
+        <label class="check"><input type="checkbox" id="petAutorizacion" /><span>Con autorización<small>El medicamento se entrega con autorización.</small></span></label>
         <div id="petEstado"></div>
         <div id="petBotones">
           <button class="gris" id="btnPetVolver" type="button">← Volver a la lista</button>
@@ -3591,6 +3594,7 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
   const lista = document.getElementById('petLista'), form = document.getElementById('petForm');
   const input = document.getElementById('petInput'), aviso = document.getElementById('petAviso');
   const desc = document.getElementById('petDescripcion'), carta = document.getElementById('petCarta'), cuida = document.getElementById('petCuida');
+  const autorizacion = document.getElementById('petAutorizacion');
   const estado = document.getElementById('petEstado'), btnGuardar = document.getElementById('btnPetGuardar');
   let filtro = 'todos', actual = null;   // actual: medicamento en edición (null = nuevo)
   const enviarWs = (type, payload) => {
@@ -3613,6 +3617,7 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     desc.value = item ? item.descripcion : (input.value.trim() || '');
     carta.checked = !!(item && item.requiere_carta_garantia);
     cuida.checked = !!(item && item.requiere_cuida);
+    autorizacion.checked = !!(item && item.con_autorizacion);
     document.getElementById('petContador').textContent = `${desc.value.length} / 100`;
     mostrarEstado('', true);
     btnGuardar.disabled = false;
@@ -3645,7 +3650,8 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     btnGuardar.disabled = true;
     mostrarEstado('Guardando…', true);
     if (!enviarWs('petitorio_guardar', { id: actual ? actual.id : null, descripcion: d,
-                                         requiere_carta_garantia: carta.checked, requiere_cuida: cuida.checked })) btnGuardar.disabled = false;
+                                         requiere_carta_garantia: carta.checked, requiere_cuida: cuida.checked,
+                                         con_autorizacion: autorizacion.checked })) btnGuardar.disabled = false;
   };
 
   window.petitorioRecibir = (tipo, p) => {
@@ -3654,7 +3660,7 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
       cont.innerHTML = '';
       if (!p.ok) { aviso.textContent = p.motivo || 'No se pudo leer el petitorio.'; aviso.style.display = 'block'; return; }
       const r = p.resumen || {};
-      const etiquetas = { todos: `Todos (${r.total ?? '…'})`, carta: `🛡️ Carta de garantía (${r.carta ?? '…'})`, cuida: `🩺 CUIDA (${r.cuida ?? '…'})` };
+      const etiquetas = { todos: `Todos (${r.total ?? '…'})`, carta: `🛡️ Carta de garantía (${r.carta ?? '…'})`, cuida: `🩺 CUIDA (${r.cuida ?? '…'})`, autorizacion: `🔑 Con autorización (${r.autorizacion ?? '…'})` };
       document.querySelectorAll('#petFiltros [data-pf]').forEach(b => { if (etiquetas[b.dataset.pf]) b.textContent = etiquetas[b.dataset.pf]; });
       aviso.style.display = p.items.length ? 'none' : 'block';
       if (!p.items.length) aviso.textContent = p.query ? `No hay medicamentos que coincidan con «${p.query}». Puedes agregarlo con ➕ Nuevo.` : 'No hay medicamentos con ese filtro.';
@@ -3664,6 +3670,7 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
         div.innerHTML = `<div class="desc">${escapeHtml(it.descripcion)}</div>
           <div class="meta">${it.requiere_carta_garantia ? '<span class="pet-tag carta">🛡️ Carta de garantía</span>' : ''}
             ${it.requiere_cuida ? '<span class="pet-tag cuida">🩺 CUIDA</span>' : ''}
+            ${it.con_autorizacion ? '<span class="pet-tag aut">🔑 Con autorización</span>' : ''}
             <span>#${it.id}${it.actualizado ? ' · modificado ' + escapeHtml(it.actualizado) : ''}</span></div>`;
         div.onclick = () => verForm(it);
         cont.appendChild(div);
@@ -3683,7 +3690,7 @@ document.getElementById('btnGuardarInactividad').onclick = () => {
     } else if (tipo === 'petitorio_historial') {
       if (!actual || String(p.petitorio_id) !== String(actual.id)) return;
       const hist = document.getElementById('petHistorial');
-      const nombres = { descripcion: 'descripción', requiere_carta_garantia: 'carta de garantía', requiere_cuida: 'CUIDA' };
+      const nombres = { descripcion: 'descripción', requiere_carta_garantia: 'carta de garantía', requiere_cuida: 'CUIDA', con_autorizacion: 'con autorización' };
       const valor = (v) => v === true ? 'sí' : v === false ? 'no' : `«${v}»`;
       let html = `Creado: ${escapeHtml(actual.creado || '—')} · Última modificación: ${escapeHtml(actual.actualizado || '—')}`;
       if ((p.cambios || []).length) {

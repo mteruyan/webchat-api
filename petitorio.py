@@ -6,6 +6,7 @@ Tabla (la define otro sistema; aquí solo se lee y escribe):
     descripcion              varchar(100) not null
     requiere_carta_garantia  boolean not null default false
     requiere_cuida           boolean not null default false
+    con_autorizacion         boolean not null default false   (migracion_petitorio_autorizacion.sql, base recetas)
     created_at / updated_at  timestamp (sin zona) default now()
 
 Reglas:
@@ -29,17 +30,18 @@ logger = logging.getLogger(__name__)
 MAX_DESCRIPCION = 100
 MIN_DESCRIPCION = 3
 MAX_RESULTADOS = 300
-FILTROS = ("todos", "carta", "cuida", "ninguno")
+FILTROS = ("todos", "carta", "cuida", "autorizacion", "ninguno")
+CAMPOS = ("requiere_carta_garantia", "requiere_cuida", "con_autorizacion")   # banderas editables
 
 # created_at/updated_at no tienen zona: se interpretan con la zona de la base y se muestran en hora de Lima.
 _FECHA_LIMA = "to_char((({c}) AT TIME ZONE current_setting('TimeZone')) AT TIME ZONE 'America/Lima', 'DD/MM/YYYY HH24:MI')"
-_COLUMNAS = (f"id, descripcion, requiere_carta_garantia, requiere_cuida, "
+_COLUMNAS = (f"id, descripcion, requiere_carta_garantia, requiere_cuida, con_autorizacion, "
              f"{_FECHA_LIMA.format(c='created_at')}, {_FECHA_LIMA.format(c='updated_at')}")
 
 
 def _fila(r) -> dict:
     return {"id": r[0], "descripcion": r[1], "requiere_carta_garantia": bool(r[2]), "requiere_cuida": bool(r[3]),
-            "creado": r[4] or "", "actualizado": r[5] or ""}
+            "con_autorizacion": bool(r[4]), "creado": r[5] or "", "actualizado": r[6] or ""}
 
 
 def _limpiar(texto) -> str:
@@ -65,8 +67,10 @@ def listar(query=None, filtro="todos") -> dict:
         condiciones.append("requiere_carta_garantia")
     elif filtro == "cuida":
         condiciones.append("requiere_cuida")
+    elif filtro == "autorizacion":
+        condiciones.append("con_autorizacion")
     elif filtro == "ninguno":
-        condiciones.append("NOT requiere_carta_garantia AND NOT requiere_cuida")
+        condiciones.append("NOT requiere_carta_garantia AND NOT requiere_cuida AND NOT con_autorizacion")
     where = ("WHERE " + " AND ".join(condiciones)) if condiciones else ""
     conn = get_connection_recetas()
     try:
@@ -77,13 +81,15 @@ def listar(query=None, filtro="todos") -> dict:
                         params + [MAX_RESULTADOS])
             filas = [_fila(r) for r in cur.fetchall()]
             cur.execute("""SELECT count(*), count(*) FILTER (WHERE requiere_carta_garantia),
-                                  count(*) FILTER (WHERE requiere_cuida) FROM sofi_petitorio""")
-            tot, carta, cuida = cur.fetchone()
+                                  count(*) FILTER (WHERE requiere_cuida), count(*) FILTER (WHERE con_autorizacion)
+                           FROM sofi_petitorio""")
+            tot, carta, cuida, autorizacion = cur.fetchone()
         conn.rollback()
     finally:
         release_connection_recetas(conn)
     return {"ok": True, "query": query, "filtro": filtro, "total": total, "items": filas,
-            "limite": MAX_RESULTADOS, "resumen": {"total": tot, "carta": carta, "cuida": cuida}}
+            "limite": MAX_RESULTADOS, "resumen": {"total": tot, "carta": carta, "cuida": cuida,
+                                                         "autorizacion": autorizacion}}
 
 
 def _validar(datos: dict) -> tuple:
@@ -92,9 +98,7 @@ def _validar(datos: dict) -> tuple:
         return None, f"La descripción debe tener al menos {MIN_DESCRIPCION} caracteres."
     if len(descripcion) > MAX_DESCRIPCION:
         return None, f"La descripción puede tener como máximo {MAX_DESCRIPCION} caracteres."
-    return {"descripcion": descripcion,
-            "requiere_carta_garantia": bool((datos or {}).get("requiere_carta_garantia")),
-            "requiere_cuida": bool((datos or {}).get("requiere_cuida"))}, None
+    return {"descripcion": descripcion, **{c: bool((datos or {}).get(c)) for c in CAMPOS}}, None
 
 
 def _duplicado(cur, descripcion: str, excepto_id=None):
@@ -149,9 +153,7 @@ def guardar(datos: dict, supervisor_id: int) -> dict:
                     conn.rollback()
                     return {"ok": False, "motivo": "Ese medicamento ya no existe."}
                 antes = _fila(r)
-                if (antes["descripcion"] == limpios["descripcion"]
-                        and antes["requiere_carta_garantia"] == limpios["requiere_carta_garantia"]
-                        and antes["requiere_cuida"] == limpios["requiere_cuida"]):
+                if all(antes[k] == limpios[k] for k in limpios):
                     conn.rollback()
                     return {"ok": True, "item": antes, "creado": False, "sin_cambios": True}
             dup = _duplicado(cur, limpios["descripcion"], pid)
@@ -159,14 +161,18 @@ def guardar(datos: dict, supervisor_id: int) -> dict:
                 conn.rollback()
                 return {"ok": False, "motivo": f"Ya existe en el petitorio: «{dup[1]}» (id {dup[0]}).", "duplicado_id": dup[0]}
             if pid is None:
-                cur.execute(f"""INSERT INTO sofi_petitorio (descripcion, requiere_carta_garantia, requiere_cuida)
-                                VALUES (%s, %s, %s) RETURNING {_COLUMNAS}""",
-                            (limpios["descripcion"], limpios["requiere_carta_garantia"], limpios["requiere_cuida"]))
+                cur.execute(f"""INSERT INTO sofi_petitorio (descripcion, requiere_carta_garantia, requiere_cuida,
+                                                            con_autorizacion)
+                                VALUES (%s, %s, %s, %s) RETURNING {_COLUMNAS}""",
+                            (limpios["descripcion"], limpios["requiere_carta_garantia"], limpios["requiere_cuida"],
+                             limpios["con_autorizacion"]))
             else:
                 cur.execute(f"""UPDATE sofi_petitorio
-                                SET descripcion = %s, requiere_carta_garantia = %s, requiere_cuida = %s, updated_at = now()
+                                SET descripcion = %s, requiere_carta_garantia = %s, requiere_cuida = %s,
+                                    con_autorizacion = %s, updated_at = now()
                                 WHERE id = %s RETURNING {_COLUMNAS}""",
-                            (limpios["descripcion"], limpios["requiere_carta_garantia"], limpios["requiere_cuida"], pid))
+                            (limpios["descripcion"], limpios["requiere_carta_garantia"], limpios["requiere_cuida"],
+                             limpios["con_autorizacion"], pid))
             item = _fila(cur.fetchone())
         conn.commit()
     except Exception:
