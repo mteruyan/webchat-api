@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import time
+from psycopg2 import extensions as _ext
 from psycopg2 import pool
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ def _tomar(p, nombre: str = "webchat"):
         if _esta_viva(conn):
             return conn
         _ultimo_uso.pop(id(conn), None)
+        _cerrar_sin_lock(conn)
         try:
             p.putconn(conn, close=True)
         except Exception:  # noqa: BLE001
@@ -128,11 +130,38 @@ def _esta_viva(conn) -> bool:
         return False
 
 
-def _devolver(p, conn):
+def _cerrar_sin_lock(conn):
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _sanear_antes_de_devolver(conn) -> bool:
+    """Lleva la conexión a estado inactivo ANTES de devolverla al pool, fuera del lock del pool.
+    psycopg2 hace el rollback o el cierre dentro de su propio lock: si la base tarda, todos los hilos
+    (incluido el principal) esperan. Aquí se hace antes, y putconn solo mueve la conexión.
+    Devuelve False si la conexión ya no sirve."""
     if conn.closed:
-        _ultimo_uso.pop(id(conn), None)
-    else:
+        return False
+    try:
+        estado = conn.info.transaction_status
+        if estado == _ext.TRANSACTION_STATUS_UNKNOWN:
+            _cerrar_sin_lock(conn)
+            return False
+        if estado != _ext.TRANSACTION_STATUS_IDLE:
+            conn.rollback()
+        return True
+    except Exception:  # noqa: BLE001
+        _cerrar_sin_lock(conn)
+        return False
+
+
+def _devolver(p, conn):
+    if _sanear_antes_de_devolver(conn):
         _ultimo_uso[id(conn)] = time.monotonic()
+    else:
+        _ultimo_uso.pop(id(conn), None)
     p.putconn(conn)
 
 

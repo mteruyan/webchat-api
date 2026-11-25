@@ -101,7 +101,9 @@ async def vivo():
     servidor sin aceptar conexiones), Cloud Run reinicia el contenedor solo. Que la base falle no reinicia
     nada: eso no se arregla reiniciando y cortaría todos los WebSockets.
     Devuelve el id de esta instancia: _vigilar_drenaje lo usa para saber si Cloud Run le sigue mandando tráfico."""
-    return {"status": "ok", "instancia": monitoreo.INSTANCIA}
+    # revision: nombre de la revisión de Cloud Run (la pone la plataforma). Sirve para distinguir una instancia
+    # de la misma revisión (reparto normal) de una revisión vieja que ya no recibe tráfico tras un despliegue.
+    return {"status": "ok", "instancia": monitoreo.INSTANCIA, "revision": os.environ.get("K_REVISION", "")}
 
 
 @app.get("/health")
@@ -4204,11 +4206,16 @@ async def ws_widget(websocket: WebSocket, sesion_token: str | None = None):
                 # para siempre — se avisa y se le devuelven botones para reintentar.
                 logger.exception("Error procesando mensaje del widget (tipo=%s, conversacion_id=%s)",
                                   tipo, conversacion_id)
-                await websocket.send_json({
-                    "type": "mensaje_bot",
-                    "payload": {"texto": "⚠️ Ocurrió un error inesperado."},
-                })
-                await websocket.send_json({"type": "conversacion_cerrada", "payload": {"motivo": "error"}})
+                # Si el cliente ya cerró la conexión, no hay a quién avisar: no se intenta enviar.
+                try:
+                    await websocket.send_json({
+                        "type": "mensaje_bot",
+                        "payload": {"texto": "⚠️ Ocurrió un error inesperado."},
+                    })
+                    await websocket.send_json({"type": "conversacion_cerrada", "payload": {"motivo": "error"}})
+                except Exception:  # noqa: BLE001
+                    logger.info("Widget ya desconectado; no se pudo avisar del error (conversacion_id=%s)",
+                                conversacion_id)
 
     except WebSocketDisconnect:
         manager.disconnect_widget(conversacion_id, websocket)
@@ -5373,6 +5380,12 @@ def _confirmar_drenaje(intentos: int = DRENAJE_CONFIRMAR_INTENTOS) -> tuple:
             if otra == monitoreo.INSTANCIA:
                 return False, "Cloud Run sigue enviando tráfico a esta instancia"
             if otra:
+                # Otra instancia de la MISMA revisión: es el reparto normal entre instancias sanas, no un drenaje.
+                # Solo cuenta como drenaje si responde una revisión distinta (revisión vieja tras un despliegue).
+                # Sin revisión en la respuesta (instancia con la versión anterior de este cambio): no se reinicia.
+                rev_otra = datos.get("revision") or ""
+                if not rev_otra or rev_otra == os.environ.get("K_REVISION", ""):
+                    return False, "otra instancia de la misma revisión (reparto normal)"
                 otras.add(otra)
                 time.sleep(1)
                 continue
@@ -5429,6 +5442,15 @@ def _vigilar_drenaje():
             logger.exception("Drenaje: no se pudo revisar")
 
 
+def _pilas_hilos_trabajo(lineas: int = 6) -> str:
+    """Últimas líneas de la pila de cada hilo del pool de trabajo: muestra en qué se quedó cada uno."""
+    partes = []
+    for h in threading.enumerate():
+        if h.name.startswith("trabajo_"):
+            partes.append(f"[{h.name}]\n{_pila_del_hilo(h.ident, lineas)}")
+    return "\n".join(partes) or "(sin hilos de trabajo)"
+
+
 def _vigia():
     episodio_inicio = None
     episodio_hilos = None
@@ -5466,8 +5488,9 @@ def _vigia():
         if atraso_hilos > _VIGIA_HILOS_AVISO_SEG and episodio_hilos is None:
             episodio_hilos = pedido
             episodios_hilos += 1
-            logger.warning("Vigía: no hay hilos de trabajo libres hace %.0f s. %s. Hilos: %s",
-                           atraso_hilos, _resumen_conexiones(), _hilos_ocupados())
+            logger.warning("Vigía: no hay hilos de trabajo libres hace %.0f s. %s. Hilos: %s\nPilas de hilos de "
+                           "trabajo:\n%s",
+                           atraso_hilos, _resumen_conexiones(), _hilos_ocupados(), _pilas_hilos_trabajo())
         elif episodio_hilos is not None and not atraso_hilos:
             logger.warning("Vigía: hilos de trabajo disponibles otra vez")
             episodio_hilos = None
@@ -9251,7 +9274,8 @@ async def ws_asesor(websocket: WebSocket, token: str, pausado: int = 0):
                 # para no devolver medio historial con una sola letra (salvo un código: "#12").
                 consulta = (payload.get("query") or "").strip()
                 es_codigo = re.fullmatch(r"#?\s*\d{1,9}", consulta) is not None
-                resultados = _buscar_conversaciones(consulta) if (len(consulta) >= 3 or es_codigo) else []
+                resultados = (await asyncio.to_thread(_buscar_conversaciones, consulta)
+                              if (len(consulta) >= 3 or es_codigo) else [])
                 await manager.enviar_a_asesor(asesor_id, {
                     "type": "resultados_busqueda",
                     "payload": {"query": consulta, "resultados": resultados},
