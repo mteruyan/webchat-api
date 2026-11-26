@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturoTimeout
@@ -458,6 +459,8 @@ def guardar_adjunto(token: str, categoria: str, contenido: bytes, extension: str
             cur.execute("UPDATE solicitudes_siniestralidad SET adjuntos = %s WHERE id = %s",
                         (json.dumps(adjuntos, ensure_ascii=False), sol["id"]))
         conn.commit()
+        threading.Thread(target=_procesar_comprobante, args=(sol["id"], nuevo, contenido, content_type, categoria),
+                         daemon=True).start()
     except Exception:  # noqa: BLE001
         conn.rollback()
         logger.exception("siniestralidad: error al guardar el adjunto")
@@ -476,6 +479,8 @@ def borrar_adjunto(token: str, adjunto_id: str) -> dict:
             if no:
                 conn.rollback()
                 return no
+            cur.execute("DELETE FROM reembolso_comprobantes WHERE solicitud_id = %s AND adjunto_id = %s",
+                        (sol["id"], str(adjunto_id or "")))
             adjuntos = [a for a in sol["adjuntos"] if a.get("id") != str(adjunto_id or "")]
             cur.execute("UPDATE solicitudes_siniestralidad SET adjuntos = %s WHERE id = %s",
                         (json.dumps(adjuntos, ensure_ascii=False), sol["id"]))
@@ -627,6 +632,121 @@ def leer_documento(contenido: bytes, content_type: str) -> dict | None:
             "nombre": nombre if _RE_NOMBRE.match(nombre or "") else "",
             "nombres": nombres if _RE_NOMBRE.match(nombres or "") else "",
             "apellidos": apellidos if _RE_NOMBRE.match(apellidos or "") else ""}
+
+
+# ---------- Reembolso: datos, DNI y comprobantes a tablas (migracion_reembolsos.sql) ----------
+_PROMPT_COMPROBANTE = """Eres un lector de comprobantes de pago peruanos (factura, boleta o recibo por honorarios).
+Mira la imagen y responde SOLO un JSON con:
+{"es_comprobante": true|false,
+ "legible": true|false,
+ "tipo": "FACTURA"|"BOLETA"|"RECIBO"|"OTRO",
+ "ruc_emisor": "RUC del emisor, 11 dígitos",
+ "serie": "serie tal como aparece, por ejemplo F001 o B001",
+ "numero": "número correlativo tal como aparece",
+ "fecha": "fecha de emisión en formato AAAA-MM-DD",
+ "moneda": "PEN"|"USD"|"OTRO",
+ "monto_total": número con punto decimal (importe total a pagar),
+ "igv": número con punto decimal (IGV; 0 si no aparece),
+ "concepto": "descripción principal del servicio o producto, máximo 200 caracteres"}
+Si un dato no se lee, déjalo como cadena vacía o null. No inventes datos."""
+_RE_FECHA_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _numero_o_none(valor):
+    try:
+        return round(float(str(valor).replace(",", "")), 2) if str(valor or "").strip() else None
+    except (TypeError, ValueError):
+        return None
+
+
+def leer_comprobante(contenido: bytes, content_type: str) -> dict | None:
+    """Lee una factura, boleta o recibo con Gemini. None si falla o tarda más de OCR_TIEMPO_MAX_SEG."""
+    def _leer():
+        import planes
+        from google.genai import types
+        r, _modelo = planes._generar([types.Part.from_bytes(data=contenido, mime_type=content_type or "image/jpeg"),
+                                      _PROMPT_COMPROBANTE], paciencia=10, temperature=0,
+                                     response_mime_type="application/json", max_output_tokens=600)
+        texto = re.sub(r"^```(?:json)?|```$", "", (r.text or "").strip()).strip()
+        return json.loads(texto)
+    try:
+        d = _ocr_pool.submit(_leer).result(timeout=OCR_TIEMPO_MAX_SEG)
+    except FuturoTimeout:
+        logger.warning("reembolso: la lectura del comprobante tardó más de %s s", OCR_TIEMPO_MAX_SEG)
+        return None
+    except Exception:  # noqa: BLE001
+        logger.warning("reembolso: no se pudo leer el comprobante", exc_info=True)
+        return None
+    if not isinstance(d, dict):
+        return None
+    tipo = str(d.get("tipo") or "").upper()
+    ruc = re.sub(r"\D", "", str(d.get("ruc_emisor") or ""))
+    fecha = str(d.get("fecha") or "")[:10]
+    moneda = str(d.get("moneda") or "").upper()
+    return {"es_comprobante": bool(d.get("es_comprobante")), "legible": bool(d.get("legible", True)),
+            "tipo": tipo if tipo in ("FACTURA", "BOLETA", "RECIBO") else "OTRO",
+            "ruc_emisor": ruc if len(ruc) == 11 else "",
+            "serie": re.sub(r"[^A-Za-z0-9]", "", str(d.get("serie") or ""))[:10].upper(),
+            "numero": re.sub(r"[^A-Za-z0-9]", "", str(d.get("numero") or ""))[:20].upper(),
+            "fecha": fecha if _RE_FECHA_ISO.match(fecha) else "",
+            "moneda": moneda if moneda in ("PEN", "USD") else "OTRO",
+            "monto_total": _numero_o_none(d.get("monto_total")), "igv": _numero_o_none(d.get("igv")),
+            "concepto": re.sub(r"\s+", " ", str(d.get("concepto") or "")).strip()[:200]}
+
+
+def _procesar_comprobante(solicitud_id: int, adjunto: dict, contenido: bytes, content_type: str,
+                          categoria: str) -> None:
+    """Hilo aparte (la subida ya respondió al cliente): lee el comprobante si es sustento y guarda su fila en
+    reembolso_comprobantes. Si algo falla, queda registrado en el log y la fila sin OCR."""
+    ocr = leer_comprobante(contenido, content_type) if categoria == "sustento" else None
+    campos = ocr or {}
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO reembolso_comprobantes
+                             (solicitud_id, adjunto_id, categoria, nombre, ruta, tipo_archivo, ocr, legible, tipo,
+                              ruc_emisor, serie, numero, fecha_emision, moneda, monto_total, igv, concepto, leido_en)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (adjunto_id) DO UPDATE SET
+                             ocr = EXCLUDED.ocr, legible = EXCLUDED.legible, tipo = EXCLUDED.tipo,
+                             ruc_emisor = EXCLUDED.ruc_emisor, serie = EXCLUDED.serie, numero = EXCLUDED.numero,
+                             fecha_emision = EXCLUDED.fecha_emision, moneda = EXCLUDED.moneda,
+                             monto_total = EXCLUDED.monto_total, igv = EXCLUDED.igv,
+                             concepto = EXCLUDED.concepto, leido_en = EXCLUDED.leido_en""",
+                        (solicitud_id, adjunto["id"], categoria, adjunto.get("nombre") or "",
+                         adjunto.get("ruta") or "", content_type,
+                         json.dumps(ocr, ensure_ascii=False) if ocr else None, campos.get("legible"),
+                         campos.get("tipo"), campos.get("ruc_emisor") or None, campos.get("serie") or None,
+                         campos.get("numero") or None, campos.get("fecha") or None, campos.get("moneda"),
+                         campos.get("monto_total"), campos.get("igv"), campos.get("concepto") or None,
+                         datetime.now(LIMA_TZ) if ocr else None))
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        conn.rollback()
+        logger.exception("reembolso: no se pudo guardar el comprobante (solicitud %s)", solicitud_id)
+    finally:
+        release_connection(conn)
+
+
+def _guardar_reembolso_tablas(cur, solicitud_id: int, datos: dict, ocr: dict, coincide) -> None:
+    """Dentro de la transacción de la firma: datos del formulario y lectura del DNI a sus tablas."""
+    cur.execute("""INSERT INTO reembolso_solicitud (solicitud_id, datos, actualizado_en)
+                   VALUES (%s, %s, now())
+                   ON CONFLICT (solicitud_id) DO UPDATE SET datos = EXCLUDED.datos, actualizado_en = now()""",
+                (solicitud_id, json.dumps(datos, ensure_ascii=False)))
+    ocr = ocr if isinstance(ocr, dict) else {}
+    cur.execute("""INSERT INTO reembolso_dni (solicitud_id, tipo_documento, numero_documento, numero_leido,
+                                              nombres, apellidos, coincide, ocr, actualizado_en)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+                   ON CONFLICT (solicitud_id) DO UPDATE SET
+                     tipo_documento = EXCLUDED.tipo_documento, numero_documento = EXCLUDED.numero_documento,
+                     numero_leido = EXCLUDED.numero_leido, nombres = EXCLUDED.nombres,
+                     apellidos = EXCLUDED.apellidos, coincide = EXCLUDED.coincide, ocr = EXCLUDED.ocr,
+                     actualizado_en = now()""",
+                (solicitud_id, str(datos.get("tipo_documento") or ocr.get("tipo") or "DNI")[:10],
+                 str(datos.get("n_documento") or "")[:20], ocr.get("numero") or None,
+                 ocr.get("nombres") or None, ocr.get("apellidos") or None, coincide,
+                 json.dumps(ocr, ensure_ascii=False) if ocr else None))
 
 
 def _validar_formulario(f: dict, formato: str = "SINIESTRALIDAD") -> tuple[dict | None, str]:
@@ -914,6 +1034,8 @@ def firmar(token: str, formulario: dict, firma_png: bytes, ip: str, agente: str)
                            WHERE id = %s""",
                         (ahora, json.dumps(datos_guardar, ensure_ascii=False), ruta_pdf, ruta_firma,
                          (ip or "")[:60], (agente or "")[:300], sol["id"]))
+            if formato == "REEMBOLSO":
+                _guardar_reembolso_tablas(cur, sol["id"], datos, ocr, datos_guardar["ocr_coincide"])
             if sol["conversacion_id"]:
                 cur.execute("SELECT estado, asesor_id FROM conversaciones WHERE id = %s", (sol["conversacion_id"],))
                 conv = cur.fetchone()

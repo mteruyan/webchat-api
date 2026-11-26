@@ -704,7 +704,9 @@
     .retomar p { margin: 0 0 8px; font-size: calc(13.5px + var(--fs, 0px)); line-height: 1.45; color: ${TOKENS.texto}; }
     .retomar button { display: block; width: 100%; background: ${TOKENS.azul}; color: white; border: none; border-radius: 10px;
       padding: 10px 14px; font-size: calc(14px + var(--fs, 0px)); font-weight: 700; font-family: inherit; cursor: pointer; }
-    .retomar button.ret-no { background: none; color: ${TOKENS.textoSuave}; font-weight: 400; font-size: calc(12.5px + var(--fs, 0px)); padding: 6px; margin-top: 4px; }
+    .retomar .ret-acciones { display: flex; gap: 8px; }
+    .retomar .ret-acciones button { flex: 1; width: auto; min-width: 0; padding: 10px 8px; }
+    .retomar button.ret-no { background: #FFFFFF; color: ${TOKENS.azul}; border: 1px solid ${TOKENS.azul}; font-weight: 700; font-size: calc(14px + var(--fs, 0px)); }
     .formulario {
       background: white; border: 1px solid ${TOKENS.borde}; border-radius: 12px;
       padding: 14px; margin: 8px 0;
@@ -3494,9 +3496,12 @@
     no.className = "ret-no";
     no.textContent = "No, es otra consulta";
     no.onclick = () => card.remove();
+    const fila = document.createElement("div");
+    fila.className = "ret-acciones";
+    fila.appendChild(si);
+    fila.appendChild(no);
     card.appendChild(texto);
-    card.appendChild(si);
-    card.appendChild(no);
+    card.appendChild(fila);
     $cuerpo.appendChild(card);
     if (estaCercaDelFinal()) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }

@@ -11,7 +11,9 @@ Tabla (la define otro sistema; aquí solo se lee y escribe):
 
 Reglas:
 - No se borra nada (solo agregar y modificar).
-- La descripción no puede repetirse (sin distinguir mayúsculas, tildes ni espacios dobles).
+- La descripción no puede repetirse al crear ni al cambiar la descripción (sin distinguir mayúsculas, tildes ni
+  espacios dobles). Un registro que ya está repetido en la tabla sí se puede seguir manteniendo (banderas) mientras
+  no cambie su descripción.
 - Cada alta o cambio queda auditado en la tabla `auditoria_petitorio` de la base "webchat" (quién, cuándo, valores
   antes y después). Si falta esa tabla (migracion_auditoria_petitorio.sql), el cambio se hace igual y queda en el log.
 
@@ -156,7 +158,10 @@ def guardar(datos: dict, supervisor_id: int) -> dict:
                 if all(antes[k] == limpios[k] for k in limpios):
                     conn.rollback()
                     return {"ok": True, "item": antes, "creado": False, "sin_cambios": True}
-            dup = _duplicado(cur, limpios["descripcion"], pid)
+            # Al editar sin cambiar la descripción no se revisa duplicados: así se pueden mantener las banderas de un
+            # registro que ya está repetido en la tabla. Solo se bloquea si se crea o si la descripción cambia.
+            cambia_descripcion = antes is None or _clave(antes["descripcion"]) != _clave(limpios["descripcion"])
+            dup = _duplicado(cur, limpios["descripcion"], pid) if cambia_descripcion else None
             if dup:
                 conn.rollback()
                 return {"ok": False, "motivo": f"Ya existe en el petitorio: «{dup[1]}» (id {dup[0]}).", "duplicado_id": dup[0]}

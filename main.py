@@ -2438,6 +2438,30 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
     if cerrado_por in ("asesor", "supervisor"):
         _lanzar_aviso_cierre(conversacion_id)
 
+    # Invitación a Programas de Salud (Vive Sano/Krystal): si en esta conversación se
+    # procesó una receta con un diagnóstico de programa (ver procesar-receta,
+    # campo PROCESAR_RECETA.response.tiene_programa), se invita recién AQUÍ, al
+    # cerrar — no antes, para no interrumpir al cliente mientras resuelve su receta
+    # con la asesora. Mensaje de solo texto (no botones): la conversación ya está
+    # cerrada, así que no se reengancha la navegación del bot para esto.
+    try:
+        _, variables_cierre = _obtener_nodo_y_variables(conversacion_id)
+        receta_resp = (variables_cierre.get("PROCESAR_RECETA") or {}).get("response") or {}
+        if receta_resp.get("tiene_programa"):
+            texto_programa = (
+                supervisor.obtener_configuracion("mensaje_invita_programa")
+                or MENSAJES_AUTOMATICOS["mensaje_invita_programa"]["default"]
+            )
+            if texto_programa:
+                _guardar_mensaje_sistema(conversacion_id, texto_programa)
+                if manager.widget_conectado(conversacion_id):
+                    await manager.enviar_a_widget(conversacion_id, {
+                        "type": "mensaje_bot", "payload": {"texto": texto_programa},
+                    })
+    except Exception:
+        logger.warning("No se pudo enviar la invitación a Programas de Salud (conversación %s)",
+                        conversacion_id, exc_info=True)
+
     # Encuesta de satisfacción (solo campañas con la encuesta activada y si hubo un asesor; ver encuesta.py).
     # Si el cliente no tiene el chat abierto, queda pendiente y se le muestra al volver (dentro de 24 h).
     datos_encuesta = None
@@ -7245,6 +7269,10 @@ MENSAJES_AUTOMATICOS = {
     "mensaje_cierre_conversacion": {
         "etiqueta": "Mensaje al cerrar una conversación",
         "default": "",
+    },
+    "mensaje_invita_programa": {
+        "etiqueta": "Mensaje al cerrar una conversación donde se procesó una receta con diagnóstico de Programas de Salud (Vive Sano/Krystal). Se manda como mensaje aparte, antes de la encuesta de satisfacción. Déjalo vacío para no invitar",
+        "default": "💙 Vimos que tu receta tiene un tratamiento que puede beneficiarse de nuestros programas de salud: recordatorios, tips y seguimiento cercano, sin costo adicional. Si quieres inscribirte, ingresa al menú principal y entra a Consultas Generales > Programas de Salud.",
     },
     "widget_url": {
         "etiqueta": "URL pública donde vive el widget (la página del sitio de Sanitas que tiene el script del webchat) — se usa para armar el enlace del SMS saliente",

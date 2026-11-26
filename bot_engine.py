@@ -871,11 +871,71 @@ def _captura_varias_imagenes(cur, conversacion_id: int, nodo: dict, validacion: 
     return preguntar(f"Ya tengo {n} {'imagen' if n == 1 else 'imágenes'} de tu receta.")
 
 
+# Texto libre que pide un pase de atención (p. ej. "PASE DE ATENCION PARA ... POR UN SCTR"): en vez de caer en
+# consultas generales, va directo a la opción "Pase de atención" del menú.
+_PASE_ATENCION_RE = re.compile(r"\bpase\s+de\s+atencion\b")
+_NODOS_DONDE_SE_DERIVA_PASE = ("webchat_menu_principal", "webchat_bienvenida")
+
+
+def _sin_tildes_minusculas(texto) -> str:
+    t = unicodedata.normalize("NFKD", str(texto or "").lower())
+    return "".join(ch for ch in t if not unicodedata.combining(ch))
+
+
+def _derivar_si_pase_de_atencion(conversacion_id: int, texto: str):
+    """Si el cliente escribe que quiere un pase de atención, lo lleva a esa opción del menú y devuelve sus eventos.
+    None = no aplica (no escribió el pase, no está en el menú ni en consultas, o la opción no está disponible
+    ahora): sigue el flujo normal."""
+    if not _PASE_ATENCION_RE.search(_sin_tildes_minusculas(texto)):
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT nodo_actual FROM conversaciones WHERE id = %s AND estado = 'bot'", (conversacion_id,))
+            fila = cur.fetchone()
+            nodo = fila[0] if fila else None
+            if not nodo or not (nodo in _NODOS_DONDE_SE_DERIVA_PASE or nodo.startswith("consultas_")
+                                or nodo == NODO_SOFI):
+                conn.rollback()
+                return None
+            cur.execute("SELECT codigo, opciones FROM bot_menus WHERE activo = TRUE AND opciones::text ILIKE '%pase de atenci%' "
+                        "ORDER BY (codigo = 'webchat_menu_principal') DESC")
+            menus = cur.fetchall()
+            variables = dict(_obtener_conversacion(cur, conversacion_id)["variables_sesion"])
+            destino = None
+            for _codigo, opciones in menus:
+                for o in opciones or []:
+                    if (isinstance(o, dict) and o.get("next_codigo")
+                            and _PASE_ATENCION_RE.search(_sin_tildes_minusculas(o.get("label")))
+                            and _opciones_visibles(cur, conversacion_id, [o], variables)):
+                        destino = o["next_codigo"]
+                        break
+                if destino:
+                    break
+            conn.rollback()
+    finally:
+        release_connection(conn)
+    if not destino:
+        return None
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            _guardar_mensaje(cur, conversacion_id, "usuario", "texto", texto)
+        conn.commit()
+    finally:
+        release_connection(conn)
+    return entrar_a_nodo(conversacion_id, destino)   # None si el nodo no existe: sigue el flujo normal
+
+
 def recibir_entrada_usuario(conversacion_id: int, texto: str = None,
                              opcion_id: str = None, archivo_url: str = None,
                              archivo_ruta: str = None, valores: dict = None,
                              ubicacion: dict = None, ubicacion_error: str = None) -> list:
     """Punto de entrada cuando llega mensaje_usuario, click_opcion o formulario_completado desde el widget."""
+    if texto and not opcion_id and not archivo_url:
+        derivado = _derivar_si_pase_de_atencion(conversacion_id, texto)
+        if derivado is not None:
+            return derivado
     resultado = _recibir_entrada_usuario_arbol(
         conversacion_id, texto, opcion_id, archivo_url, archivo_ruta, valores, ubicacion, ubicacion_error)
     if isinstance(resultado, _TurnoIA):

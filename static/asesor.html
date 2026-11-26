@@ -2936,11 +2936,32 @@ function renderRespuestasRapidas() {
       const r = respuestasRapidas.find(x => String(x.id) === item.dataset.id);
       if (!r) return;
       const input = document.getElementById('texto');
-      input.value = r.cuerpo;
+      input.value = rellenarRespuestaRapida(r.cuerpo, activaId);
       input.focus();
       pop.classList.remove('abierto');
     };
   });
+}
+
+// Respuestas rápidas dinámicas: {nombre}, {dni} y {celular} se reemplazan con los datos de la conversación
+// activa. Es solo un borrador en el campo de texto: el asesor lo revisa antes de enviar.
+// Si el cliente no tiene ese dato, el hueco queda vacío y el asesor puede completarlo a mano.
+function datosRespuestaRapida(convId) {
+  const c = conversaciones[convId] || {};
+  // El servidor pone «Usuario N» cuando el cliente no escribió su nombre: no se usa como nombre.
+  const nombre = (c.resumen_usuario && !/^Usuario \d+$/.test(c.resumen_usuario)) ? c.resumen_usuario : '';
+  // Celular de 9 dígitos (sin el 51 del código de país ni espacios). Si no llega a 9 dígitos, queda vacío.
+  const digitos = String(c.telefono || '').replace(/\D/g, '');
+  const celular = digitos.length >= 9 ? digitos.slice(-9) : '';
+  return { nombre, dni: c.dni || '', celular };
+}
+
+function rellenarRespuestaRapida(cuerpo, convId) {
+  const datos = datosRespuestaRapida(convId);
+  return String(cuerpo || '')
+    .replace(/\{(nombre|dni|celular)\}/g, (_, k) => datos[k])
+    .replace(/[ \t]+([,.;:!?])/g, '$1')   // "Hola , " -> "Hola, " cuando el nombre falta
+    .replace(/ {2,}/g, ' ');
 }
 
 document.getElementById('btnRespuestasRapidas').onclick = (e) => {

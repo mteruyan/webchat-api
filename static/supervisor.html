@@ -1093,6 +1093,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <input type="text" id="nuevaRrTitulo" placeholder="Título (ej: Horario de atención)" />
         <select id="nuevaRrCampana"></select>
         <textarea id="nuevaRrCuerpo" placeholder="Cuerpo del mensaje..." rows="3"></textarea>
+        <p style="margin:4px 0 8px;font-size:12px;color:var(--texto-suave);">Puedes usar <b>{nombre}</b>, <b>{dni}</b> y <b>{celular}</b>: el asesor los verá reemplazados con los datos del cliente al usar la respuesta.</p>
         <button id="btnAgregarRespuestaRapida" style="width:100%;">Agregar respuesta rápida</button>
       </div>
 
@@ -2500,6 +2501,7 @@ function escuchar(conversacionId, nombre, telefono, entradaCola, asignadoEn, dni
   document.getElementById('phNombre').textContent = nombre;
   document.getElementById('phTelefono').textContent = telefono || '';
   document.getElementById('phDni').textContent = dni ? ('DNI: ' + dni) : '';
+  datosEscuchada = { nombre: nombre || '', telefono: telefono || '', dni: dni || '' };
   document.getElementById('phFecha').textContent = '#' + conversacionId;
   document.getElementById('btnDescargarPdf').href =
     `${urlBaseGuardada}/conversacion-pdf?conversacion_id=${encodeURIComponent(conversacionId)}&token=${encodeURIComponent(tokenArchivo || tokenGuardado)}`;
@@ -3099,6 +3101,20 @@ function aplicarReaccionEscucha(p) {
   if (div) pintarReaccionesEscucha(div, p.reacciones);
 }
 
+// Datos del cliente de la conversación que se escucha: {dni}, {celular} y {nombre} se reemplazan al usar una
+// respuesta rápida (igual que en la consola del asesor). Si falta un dato, el hueco queda vacío.
+let datosEscuchada = null;
+function rellenarRespuestaRapidaChat(cuerpo) {
+  const d = datosEscuchada || {};
+  const nombre = (d.nombre && !/^Usuario \d+$/.test(d.nombre)) ? d.nombre : '';
+  const digitos = String(d.telefono || '').replace(/\D/g, '');
+  const datos = { nombre, dni: d.dni || '', celular: digitos.length >= 9 ? digitos.slice(-9) : '' };
+  return String(cuerpo || '')
+    .replace(/\{(nombre|dni|celular)\}/g, (_, k) => datos[k])
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/ {2,}/g, ' ');
+}
+
 // ---- Respuestas rápidas al escribir en una conversación: las activas; primero las de la campaña de esta
 // conversación y luego las de las demás. Al elegir una se carga en el texto para revisarla antes de enviar. ----
 function renderRRChat() {
@@ -3130,7 +3146,7 @@ function renderRRChat() {
       const r = activas.find(x => String(x.id) === item.dataset.id);
       if (!r) return;
       const input = document.getElementById('accionTexto');
-      input.value = r.cuerpo;
+      input.value = rellenarRespuestaRapidaChat(r.cuerpo);
       input.dispatchEvent(new Event('input', { bubbles: true }));   // ajusta el alto del cuadro
       input.focus();
       pop.classList.remove('abierto');
