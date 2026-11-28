@@ -767,7 +767,7 @@ function barrasHora(items, campo, fmt, colorFn) {
   }).join('');
   return `<div class="rh-chart">${barras}</div><div class="rh-escala">máximo: <b>${fmt(max)}</b></div>`;
 }
-function diagnosticoRend(p, limiteMb, bdMax) {
+function diagnosticoRend(p, limiteMb, bdMax) {   // bdMax: tope de conexiones del webchat sumando todas las instancias
   const lineas = [];
   const ok = (t) => lineas.push(`<li class="ok">✅ ${t}</li>`);
   const ojo = (t) => lineas.push(`<li class="ojo">⚠️ ${t}</li>`);
@@ -777,19 +777,21 @@ function diagnosticoRend(p, limiteMb, bdMax) {
   else ok(`Memoria: el pico fue ${fmtMb(p.memoria_max_mb)} (${Math.round(memPct)}% del límite).`);
   if (p.cpu_prom != null && p.cpu_prom >= 60) ojo(`CPU: promedio de ${fmtCpu(p.cpu_prom)}; el servidor está trabajando cerca de su capacidad.`);
   else ok(`CPU: promedio ${fmtCpu(p.cpu_prom)}, picos de ${fmtCpu(p.cpu_max)} (los picos cortos son normales al leer PDF).`);
-  // Un reinicio del vigía termina el proceso y Cloud Run lo vuelve a arrancar: ese arranque ya está en p.reinicios.
-  const otros = Math.max((p.reinicios || 0) - (p.reinicios_vigia || 0), 0);
-  if (p.reinicios_vigia) ojo(`El vigía reinició el servidor ${p.reinicios_vigia} ${p.reinicios_vigia === 1 ? 'vez' : 'veces'} por un cuelgue (ver «Arranques y reinicios»).`);
-  if (otros) ojo(`Cloud Run reinició el servidor ${otros} ${otros === 1 ? 'vez' : 'veces'} sin deploy (posible falta de memoria o mantenimiento de Google).`);
-  if (!p.reinicios && !p.reinicios_vigia) ok('Sin reinicios inesperados: solo los deploys.');
+  // Con dos instancias, que Cloud Run suba otra instancia no es un reinicio. Reinicio = el propio servidor se
+  // terminó (vigía por cuelgue, retiro de Cloud Run o autoprueba).
+  if (p.reinicios_vigia) ojo(`El vigía reinició una instancia ${p.reinicios_vigia} ${p.reinicios_vigia === 1 ? 'vez' : 'veces'} por un cuelgue (ver «Arranques y reinicios»).`);
+  if (p.reinicios_drenaje) ojo(`Una instancia se reinició ${p.reinicios_drenaje} ${p.reinicios_drenaje === 1 ? 'vez' : 'veces'} porque Cloud Run dejó de mandarle tráfico (drenaje).`);
+  if (p.reinicios_autoprueba) ojo(`Una instancia se reinició ${p.reinicios_autoprueba} ${p.reinicios_autoprueba === 1 ? 'vez' : 'veces'} porque dejó de responder a su propia autoprueba.`);
+  if (!p.reinicios) ok('Sin reinicios provocados por el servidor: solo deploys' + (p.instancias_nuevas ? ' e instancias nuevas.' : '.'));
+  if (p.instancias_nuevas) ok(`Cloud Run arrancó ${p.instancias_nuevas} ${p.instancias_nuevas === 1 ? 'instancia' : 'instancias'} adicional${p.instancias_nuevas === 1 ? '' : 'es'} (normal con dos instancias; un cierre por falta de memoria también se vería así, por eso conviene mirar la memoria).`);
   if (p.bloqueos) (p.bloqueo_max_s >= 5 ? ojo : ok)(`El servidor se demoró más de 1 s en responder ${p.bloqueos} ${p.bloqueos === 1 ? 'vez' : 'veces'} (la más larga: ${p.bloqueo_max_s} s).`);
   else ok('El servidor nunca se trabó.');
   if (p.sin_hilos) ojo(`Se quedó sin hilos de trabajo ${p.sin_hilos} ${p.sin_hilos === 1 ? 'vez' : 'veces'} (operaciones lentas acumuladas).`);
   const errPct = p.peticiones ? p.errores_5xx / p.peticiones * 100 : 0;
   if (errPct >= 1) ojo(`Errores del servidor: ${p.errores_5xx} de ${p.peticiones.toLocaleString('es-PE')} peticiones (${errPct.toFixed(1)}%).`);
   else ok(`Errores del servidor: ${p.errores_5xx} de ${(p.peticiones || 0).toLocaleString('es-PE')} peticiones.`);
-  if (p.bd_max != null && p.bd_max >= bdMax * 0.8) ojo(`Base de datos: llegó a ${p.bd_max} de ${bdMax} conexiones a la vez.`);
-  else if (p.bd_max != null) ok(`Base de datos: como máximo ${p.bd_max} de ${bdMax} conexiones a la vez.`);
+  if (p.bd_max != null && p.bd_max >= bdMax * 0.8) ojo(`Base de datos: el webchat llegó a ${p.bd_max} de ${bdMax} conexiones a la vez (suma de las instancias).`);
+  else if (p.bd_max != null) ok(`Base de datos: el webchat usó como máximo ${p.bd_max} de ${bdMax} conexiones a la vez (suma de las instancias).`);
   if (p.lat_p95_max_ms != null && p.lat_p95_max_ms >= 3000) ojo(`Lentitud: en la peor ventana de 5 min, 1 de cada 20 peticiones tardó más de ${fmtMs(p.lat_p95_max_ms)}.`);
   else if (p.lat_p95_max_ms != null) ok(`Rapidez: la mitad de las peticiones responde en ${fmtMs(p.lat_p50_ms)}.`);
   if (p.ia_saturado) ojo(`IA del plan de salud: Google estuvo saturado ${p.ia_saturado} ${p.ia_saturado === 1 ? 'vez' : 'veces'} (se reintenta solo).`);
@@ -802,15 +804,29 @@ function tablaRend(filas, cols) {
 }
 function renderRendimiento(d, desde, hasta) {
   const a = d.ahora || {};
-  const limite = a.memoria_limite_mb || 1024;   // deploy.sh: --memory=1Gi
-  const memPct = a.memoria_mb != null ? a.memoria_mb / limite * 100 : null;
-  let html = `<div class="panel"><h2>Ahora <span class="sub">en vivo · revisión ${escapaHtml(a.revision || '')} · encendido hace ${fmtDuracion(a.minutos_encendido)}</span></h2>
+  const limite = a.memoria_limite_mb || 1024;   // deploy.sh: --memory=1Gi (por instancia)
+  const inst = (d.instancias && d.instancias.length) ? d.instancias : [Object.assign({ en_vivo: true }, a)];
+  const suma = (campo) => inst.reduce((t, x) => t + (x[campo] || 0), 0);
+  const bdPorInstancia = a.bd_max || 10;                       // tamaño del pool de cada instancia
+  const bdTope = bdPorInstancia * Math.max(inst.length, 2);    // con dos instancias, el webchat puede usar hasta el doble
+  const bdUso = suma('bd_en_uso');
+  const revs = [...new Set(inst.map(x => x.revision).filter(Boolean))].join(', ');
+  let html = `<div class="panel"><h2>Ahora <span class="sub">${inst.length} ${inst.length === 1 ? 'instancia' : 'instancias'} · revisión ${escapaHtml(revs)} · totales de todas las instancias</span></h2>
     <div class="kpis">
-      ${kpiRend(fmtMb(a.memoria_mb), 'Memoria en uso', `${memPct == null ? '' : Math.round(memPct) + '% '}de ${fmtMb(limite)}${a.fuente_memoria === 'contenedor' ? '' : ' · medida del proceso'}`, semaforo(memPct, 70, 85))}
-      ${kpiRend(fmtCpu(a.cpu_pct), 'CPU', `últimos 5 segundos${a.fuente_cpu === 'proceso' ? ' · medida del proceso' : ''}`, semaforo(a.cpu_pct, 60, 85))}
-      ${kpiRend(`${a.bd_en_uso ?? '–'} / ${a.bd_max ?? 20}`, 'Conexiones a la base', 'del webchat, en uso ahora', semaforo((a.bd_en_uso || 0) / (a.bd_max || 20) * 100, 60, 80))}
-      ${kpiRend(a.ws_widget ?? '–', 'Clientes con el chat abierto', `${a.ws_asesores ?? 0} asesores · ${a.ws_supervisores ?? 0} supervisores`)}
-    </div></div>`;
+      ${kpiRend(suma('ws_widget'), 'Clientes con el chat abierto', `${suma('ws_asesores')} asesores · ${suma('ws_supervisores')} supervisores`)}
+      ${kpiRend(`${bdUso} / ${bdTope}`, 'Conexiones del webchat a la base', `suma de instancias · cada una hasta ${bdPorInstancia}`, semaforo(bdUso / bdTope * 100, 60, 80))}
+      ${kpiRend(inst.length, 'Instancias activas', 'con medición en los últimos 7 minutos', inst.length < 2 ? COLOR_OJO : COLOR_OK)}
+    </div>
+    <h3 style="margin:14px 0 6px">Por instancia</h3>
+    ${tablaRend(inst, [
+      ['Instancia', r => escapaHtml(r.instancia || '') + (r.en_vivo ? ' <span class="sub">(la que respondió ahora)</span>' : '')],
+      ['Encendida hace', r => r.minutos_encendido == null ? '–' : fmtDuracion(r.minutos_encendido), 'num'],
+      ['Memoria', r => r.memoria_mb == null ? '–' : `${fmtMb(r.memoria_mb)} (${Math.round(r.memoria_mb / limite * 100)}%)`, 'num'],
+      ['CPU', r => fmtCpu(r.cpu_pct), 'num'],
+      ['Clientes', r => r.ws_widget ?? '–', 'num'], ['Asesores', r => r.ws_asesores ?? '–', 'num'],
+      ['Conex. BD', r => `${r.bd_en_uso ?? '–'} / ${bdPorInstancia}`, 'num'],
+      ['Dato', r => r.en_vivo ? 'en vivo' : `hace ${Math.max(0, Math.round(r.hace_min))} min`]])}
+    <p class="nota-panel">La instancia que respondió muestra valores en vivo; las demás, su última medición (se guarda cada 5 minutos). La memoria y el 85% de alerta son por instancia (${fmtMb(limite)} cada una).</p></div>`;
   if (!d.disponible) {
     return html + '<div class="panel"><div class="vacio-panel">Aún no hay historial: falta ejecutar <b>migracion_monitoreo.sql</b> en la base de datos. Desde que se ejecute, el servidor guarda una medición cada 5 minutos.</div></div>';
   }
@@ -818,21 +834,22 @@ function renderRendimiento(d, desde, hasta) {
   if (!p.muestras) {
     html += `<div class="panel"><div class="vacio-panel">Todavía no hay mediciones guardadas entre ${desde} y ${hasta}. El servidor guarda una cada 5 minutos desde que se ejecutó la migración.</div></div>`;
   } else {
-    html += `<div class="panel"><h2>Estabilidad del período <span class="sub">${desde} a ${hasta} · ${p.muestras} mediciones de 5 minutos (~${fmtDuracion(p.muestras * 5)})</span></h2>
-      ${diagnosticoRend(p, limite, a.bd_max || 20)}
+    html += `<div class="panel"><h2>Estabilidad del período <span class="sub">${desde} a ${hasta} · ${p.ventanas || p.muestras} ventanas de 5 minutos (~${fmtDuracion((p.ventanas || p.muestras) * 5)}) · ${p.muestras} mediciones de todas las instancias</span></h2>
+      ${diagnosticoRend(p, limite, bdTope)}
       <div class="kpis">
-        ${kpiRend(p.reinicios, 'Reinicios inesperados', `${p.reinicios_vigia} por el vigía · ${p.deploys} deploys`, p.reinicios || p.reinicios_vigia ? COLOR_OJO : COLOR_OK)}
+        ${kpiRend(p.reinicios, 'Reinicios del servidor', `${p.reinicios_vigia} vigía · ${p.reinicios_drenaje || 0} drenaje · ${p.reinicios_autoprueba || 0} autoprueba`, p.reinicios ? COLOR_OJO : COLOR_OK)}
+        ${kpiRend(p.deploys, 'Deploys', `${p.instancias_nuevas || 0} instancias nuevas de Cloud Run`)}
         ${kpiRend(p.bloqueos, 'Veces que se trabó (>1 s)', `la más larga: ${p.bloqueo_max_s ?? 0} s · sin hilos: ${p.sin_hilos}`, p.bloqueos ? (p.bloqueo_max_s >= 5 ? COLOR_OJO : 'var(--azul)') : COLOR_OK)}
         ${kpiRend(p.errores_5xx, 'Errores del servidor (5xx)', `de ${(p.peticiones || 0).toLocaleString('es-PE')} peticiones`, p.peticiones && p.errores_5xx / p.peticiones >= 0.01 ? COLOR_OJO : COLOR_OK)}
         ${kpiRend(fmtMs(p.lat_p50_ms), 'Tiempo de respuesta típico', `peor ventana (p95): ${fmtMs(p.lat_p95_max_ms)}`, semaforo(p.lat_p95_max_ms, 2000, 5000))}
         ${kpiRend(fmtMb(p.memoria_max_mb), 'Pico de memoria', `promedio ${fmtMb(p.memoria_prom_mb)}`, semaforo(p.memoria_max_mb / limite * 100, 70, 85))}
         ${kpiRend(fmtCpu(p.cpu_max), 'Pico de CPU', `promedio ${fmtCpu(p.cpu_prom)}`, semaforo(p.cpu_prom, 50, 70))}
-        ${kpiRend(p.ws_widget_max ?? '–', 'Pico de clientes con el chat abierto', `pico de asesores: ${p.ws_asesores_max ?? '–'}`)}
-        ${kpiRend(`${p.bd_max ?? '–'} / ${a.bd_max || 20}`, 'Pico de conexiones a la base', 'del webchat')}
+        ${kpiRend(p.ws_widget_max ?? '–', 'Pico de clientes con el chat abierto', `pico de asesores: ${p.ws_asesores_max ?? '–'} · suma de instancias`)}
+        ${kpiRend(`${p.bd_max ?? '–'} / ${bdTope}`, 'Pico de conexiones a la base', 'del webchat, suma de instancias')}
       </div></div>
-      <div class="panel"><h2>Memoria por hora <span class="sub">máximo de cada hora · línea de alerta: 85% de ${fmtMb(limite)}</span></h2>
+      <div class="panel"><h2>Memoria por hora <span class="sub">máximo de cada hora entre las instancias · línea de alerta: 85% de ${fmtMb(limite)} por instancia</span></h2>
         ${barrasHora(d.por_hora, 'memoria_max_mb', fmtMb, v => semaforo(v / limite * 100, 70, 85))}</div>
-      <div class="panel"><h2>Clientes con el chat abierto por hora <span class="sub">máximo de cada hora</span></h2>
+      <div class="panel"><h2>Clientes con el chat abierto por hora <span class="sub">máximo de cada hora, sumando las instancias</span></h2>
         ${barrasHora(d.por_hora, 'ws_widget', v => (v ?? 0) + ' clientes')}</div>
       <div class="panel"><h2>CPU por hora <span class="sub">pico de cada hora (% de 1 CPU)</span></h2>
         ${barrasHora(d.por_hora, 'cpu_max', fmtCpu, v => semaforo(v, 70, 90))}</div>
@@ -845,8 +862,9 @@ function renderRendimiento(d, desde, hasta) {
         ['BD máx.', r => r.bd_max ?? '–', 'num'], ['Clientes máx.', r => r.ws_widget_max ?? '–', 'num'], ['Asesores máx.', r => r.ws_asesores_max ?? '–', 'num'],
         ['IA saturada', r => r.ia_saturado, 'num']])}</div>`;
   }
-  const tipos = { deploy: '🚀 Deploy', reinicio: '🔄 Reinicio de Cloud Run', reinicio_vigia: '🛑 Reinicio del vigía (cuelgue)' };
-  html += `<div class="panel"><h2>Arranques y reinicios <span class="sub">el primero de cada revisión es un deploy; otro arranque de la misma revisión es un reinicio</span></h2>
+  const tipos = { deploy: '🚀 Deploy', instancia_nueva: '➕ Instancia nueva de Cloud Run', reinicio: '🔄 Arranque tras un reinicio',
+    reinicio_vigia: '🛑 Reinicio del vigía (cuelgue)', reinicio_drenaje: '🚰 Reinicio por drenaje', reinicio_autoprueba: '🩺 Reinicio por autoprueba' };
+  html += `<div class="panel"><h2>Arranques y reinicios <span class="sub">el primero de cada revisión es un deploy; otro arranque sin reinicio previo es una instancia nueva (normal con dos instancias)</span></h2>
     ${tablaRend((d.eventos || []).slice().reverse(), [
       ['Cuándo', r => escapaHtml(r.cuando)], ['Qué pasó', r => tipos[r.tipo] || escapaHtml(r.tipo)],
       ['Revisión', r => escapaHtml(r.revision || '')], ['Detalle', r => escapaHtml(r.detalle || '')]])}</div>`;

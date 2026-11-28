@@ -597,7 +597,7 @@ body.sofi th { font-weight: 700; color: var(--texto-suave); }
 .sofi-card, body.sofi .panel, body.sofi .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 16px; }
 
 /* Acciones movidas a la barra lateral: los botones originales siguen en el DOM (los usa el JS) pero ya no ocupan la cabecera */
-body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
+body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnFormatosEnviar, body.sofi #barraConectado #btnFormatosBuscar, body.sofi #barraConectado #btnAyudarBot,
 body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
 body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi { display: none !important; }
 body.sofi .sofi-contenido { grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow-y: auto; }
@@ -767,7 +767,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
   </div>
   <nav class="sofi-nav" aria-label="Menú principal">
     <div class="nav-logo"><img class="sello" src="/static/imagenes/sofi-cara-chica.png" alt="Sofi" width="40" height="40"><b>Sofi Desk</b><button type="button" class="nav-toggle" id="navToggle" aria-expanded="true" aria-label="Reducir barra lateral" title="Reducir barra lateral"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></button></div>
-    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Conversaciones</span><span class="insignia" id="insigAsesor" style="display:none"></span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnBuscarSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 6h4"/><path d="M9.5 11h5M9.5 14h3"/></svg><span>Buscar SMS</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
+    <div class="nav-links"><a href="#" class="actual" onclick="return false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Conversaciones</span><span class="insignia" id="insigAsesor" style="display:none"></span></a><a href="#" data-click="btnBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar conversación</span></a><a href="#" data-click="btnBuscarSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 6h4"/><path d="M9.5 11h5M9.5 14h3"/></svg><span>Buscar SMS</span></a><a href="#" data-click="btnSmsInvitacion"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>Invitar por SMS</span></a><a href="#" data-click="btnArchivoSms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"/></svg><span>Enviar archivo</span></a><a href="#" data-click="btnFormatosEnviar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg><span>Formatos por correo</span></a><a href="#" data-click="btnFormatosBuscar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="2.5"/><path d="m14 15 2 2"/></svg><span>Formatos firmados</span></a><a href="#" data-click="btnAyudarBot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></svg><span>Ayudar en el bot</span></a></div>
     <div class="nav-seccion">Ir a</div>
     <div class="nav-links"><a href="/supervisor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>Supervisor</span></a><a href="/editor" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span>Editor</span></a><a href="/dashboard" class=""><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Dashboard</span></a></div>
     <div class="nav-usuario"><div class="fila"><div class="avatar-nav" id="navAvatar">--</div><div style="min-width:0"><b id="navNombre">Usuario</b><small>Asesor</small></div></div>
@@ -783,6 +783,8 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
     <button class="chico gris" id="btnBuscarSms" title="Ver los SMS enviados a un celular">📲 Buscar SMS</button>
     <button class="chico gris" id="btnSmsInvitacion" title="Invitar por SMS a un número nuevo a escribirnos por el webchat">📲 Invitar por SMS</button>
     <button class="chico gris" id="btnArchivoSms" title="Subir un PDF o imagen y enviarle al cliente un enlace único por SMS">📎 Enviar archivo</button>
+    <button class="chico gris" id="btnFormatosEnviar" title="Enviar un formato para firmar por correo (cliente sin conversación abierta)">📄 Formatos por correo</button>
+    <button class="chico gris" id="btnFormatosBuscar" title="Buscar los formatos firmados de un cliente por correo, celular o DNI">🗂️ Formatos firmados</button>
     <button class="chico gris" id="btnAyudarBot" title="Ayudar a una persona que todavía está navegando el bot o en cola">🧭 Ayudar en el bot</button>
     <button id="btnPausa">⏸ Pausar</button>
     <button class="btn-salir" id="btnSalir">Cerrar sesión</button>
@@ -838,7 +840,7 @@ body.sofi.nav-compacta .sofi-nav .nav-usuario a#navSalir:hover { background: rgb
         <button class="chico gris" id="btnArchivosEmpresa" title="Archivos de la empresa (por RUC): lo que envió el cliente y los que guardaste para su próxima renovación">📁 Archivos</button>
         <button class="chico gris" id="btnGuiaArchivos" title="Enviarle al cliente la guía con las formas de adjuntar su archivo (desde el celular, la computadora o WhatsApp)">📎 Guía</button>
         <button class="chico gris" id="btnPlantillaExpress" title="SCTR: enviarle al cliente el enlace de Plantilla Express para registrar a sus trabajadores desde el celular, sin llenar un Excel">📋 Plantilla</button>
-        <button class="chico gris" id="btnSiniestralidad" title="Enviarle al cliente un formato para completar y firmar desde el celular, sin imprimir nada: autorización de siniestralidad, declaración jurada de latencia o solicitud de reembolso">📄 Formatos</button></div>
+        <button class="chico gris" id="btnSiniestralidad" title="Enviarle al cliente un formato para completar y firmar desde el celular, sin imprimir nada: autorización de siniestralidad, declaración jurada de latencia, solicitud de reembolso, renovación de contrato o desafiliación">📄 Formatos</button></div>
       </div>
       <div id="notaClienteBanner">
         <span class="nota-cliente-icono">📝</span>
@@ -2689,6 +2691,12 @@ function conectarWs() {
       case 'error_transferencia':
         alert(p.motivo || 'No se pudo transferir la conversación.');
         break;
+      case 'pausa_por_supervisor': {
+        // El supervisor pausó o reanudó al asesor: se refleja igual que la pausa propia.
+        if (p.pausado) aplicarEstadoPausaUI(true, 'otro', 'Pausado por supervisor');
+        else aplicarEstadoPausaUI(false);
+        break;
+      }
       case 'conversacion_pausada': {
         if (p.ok === false) break;
         const conv = conversaciones[p.conversacion_id];
@@ -3184,6 +3192,10 @@ const FORMATOS_FIRMA = {
     ayuda: 'El cliente sube la foto de su DNI, completa sus datos (y los de sus dependientes menores, si quiere) y firma.' },
   LATENCIA: { titulo: 'Declaración jurada de latencia', vigencia: 48,
     ayuda: 'El cliente sube la foto de su DNI, indica su domicilio, su último empleador, la fecha de cese y sus aportes a EsSalud, y firma.' },
+  RENOVACION: { titulo: 'Constancia de renovación de contrato', vigencia: 48,
+    ayuda: 'Tú indicas el periodo y el % de incremento; el cliente sube la foto de su DNI, revisa sus datos y firma la constancia de aceptación.' },
+  DESAFILIACION: { titulo: 'Solicitud de desafiliación', vigencia: 48,
+    ayuda: 'El cliente sube la foto de su DNI, indica los nombres y documentos de los usuarios a desafiliar (hasta 5) y firma.' },
   REEMBOLSO: { titulo: 'Solicitud de reembolso', vigencia: 72,
     ayuda: 'El cliente sube la foto de su DNI, completa los datos del titular y del paciente y la forma de pago, adjunta la hoja 2 llenada por el médico y sus comprobantes (fotos o PDF), y firma.' }
 };
@@ -3208,11 +3220,19 @@ function abrirSiniestralidad() {
       <select id="sinFormato" style="${campo};background:#fff">
         <option value="SINIESTRALIDAD">Autorización de siniestralidad</option>
         <option value="LATENCIA">Declaración jurada de latencia</option>
+        <option value="RENOVACION">Constancia de renovación de contrato</option>
+        <option value="DESAFILIACION">Solicitud de desafiliación</option>
         <option value="REEMBOLSO">Solicitud de reembolso</option>
       </select>
       <div style="font-size:12.5px;color:#4A5B70;margin-bottom:12px"><span id="sinAyuda"></span> El enlace vence en <span id="sinVigencia">48</span> h. El PDF firmado te llega a esta conversación.</div>
-      <div id="sinCajaContrato"><label style="font-size:12.5px;font-weight:600">N° de contrato del plan de salud *</label>
+      <div id="sinCajaContrato"><label style="font-size:12.5px;font-weight:600">N° de contrato del plan de salud <span id="sinContratoOpc" style="font-weight:400;color:#6B7A8A;display:none">(opcional)</span><span id="sinContratoObl"> *</span></label>
       <input id="sinContrato" maxlength="30" autocomplete="off" style="${campo}"></div>
+      <div id="sinCajaRenovacion" style="display:none;gap:8px">
+        <div style="flex:1"><label style="font-size:12.5px;font-weight:600">Periodo (año) *</label>
+          <input id="sinPeriodo" type="number" min="2026" max="2100" inputmode="numeric" placeholder="2027" style="${campo}"></div>
+        <div style="flex:1"><label style="font-size:12.5px;font-weight:600">Incremento (%) *</label>
+          <input id="sinIncremento" type="number" min="0.01" max="100" step="0.01" inputmode="decimal" placeholder="7.5" style="${campo}"></div>
+      </div>
       <label style="font-size:12.5px;font-weight:600">Correo del cliente</label>
       <input id="sinCorreo" type="email" maxlength="120" autocomplete="off" placeholder="cliente@correo.com" style="${campo}">
       <label style="font-size:12.5px;font-weight:600">Nombres y apellidos <span style="font-weight:400;color:#6B7A8A">(opcional, el cliente los confirma)</span></label>
@@ -3243,12 +3263,18 @@ function abrirSiniestralidad() {
     document.getElementById('sinEnviar').onclick = () => {
       const estado = document.getElementById('sinEstado');
       const formato = document.getElementById('sinFormato').value;
-      const contrato = formato === 'SINIESTRALIDAD' ? document.getElementById('sinContrato').value.trim() : '';
+      const contrato = formato === 'REEMBOLSO' || formato === 'LATENCIA' ? '' : document.getElementById('sinContrato').value.trim();
+      const periodo = document.getElementById('sinPeriodo').value.trim();
+      const incremento = document.getElementById('sinIncremento').value.trim().replace(',', '.');
       const correo = document.getElementById('sinCorreo').value.trim();
       const porChat = document.getElementById('sinPorChat').checked;
       const porCorreo = document.getElementById('sinPorCorreo').checked;
       const error = (m) => { estado.style.color = '#C0392B'; estado.textContent = m; };
-      if (formato === 'SINIESTRALIDAD' && !contrato) return error('Escribe el N° de contrato.');
+      if ((formato === 'SINIESTRALIDAD' || formato === 'DESAFILIACION') && !contrato) return error('Escribe el N° de contrato.');
+      if (formato === 'RENOVACION') {
+        if (!/^\d{4}$/.test(periodo)) return error('Indica el periodo (año de 4 dígitos, por ejemplo 2027).');
+        if (!(Number(incremento) > 0 && Number(incremento) <= 100)) return error('Indica el % de incremento (mayor que 0, por ejemplo 7.5).');
+      }
       if (!porChat && !porCorreo) return error('Elige al menos un medio de envío.');
       if (porCorreo && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(correo)) return error('Escribe un correo válido.');
       if (correo && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(correo)) return error('El correo no es válido.');
@@ -3258,7 +3284,7 @@ function abrirSiniestralidad() {
       estado.style.color = '#4A5B70'; estado.textContent = '';
       document.getElementById('sinEnlace').style.display = 'none';
       ws.send(JSON.stringify({ type: 'siniestralidad_enviar', payload: {
-        conversacion_id: Number(caja.dataset.conv), formato, contrato, correo,
+        conversacion_id: Number(caja.dataset.conv), formato, contrato, correo, periodo, incremento,
         nombre: document.getElementById('sinNombre').value.trim(),
         tipo_documento: document.getElementById('sinTipo').value,
         n_documento: document.getElementById('sinNumero').value.trim(),
@@ -3270,6 +3296,8 @@ function abrirSiniestralidad() {
   actualizarFormatoFirma();
   const nombre = String(c.resumen_usuario || '');
   document.getElementById('sinContrato').value = '';
+  document.getElementById('sinPeriodo').value = String(new Date().getFullYear() + 1);
+  document.getElementById('sinIncremento').value = '';
   document.getElementById('sinCorreo').value = '';
   document.getElementById('sinNombre').value = /^usuario\s/i.test(nombre) ? '' : nombre;
   document.getElementById('sinTipo').value = 'DNI';
@@ -3287,7 +3315,11 @@ function actualizarFormatoFirma() {
   const f = FORMATOS_FIRMA[document.getElementById('sinFormato').value] || FORMATOS_FIRMA.SINIESTRALIDAD;
   document.getElementById('sinAyuda').textContent = f.ayuda;
   document.getElementById('sinVigencia').textContent = f.vigencia;
-  document.getElementById('sinCajaContrato').style.display = document.getElementById('sinFormato').value === 'SINIESTRALIDAD' ? '' : 'none';
+  const fm = document.getElementById('sinFormato').value;
+  document.getElementById('sinCajaContrato').style.display = (fm === 'SINIESTRALIDAD' || fm === 'DESAFILIACION' || fm === 'RENOVACION') ? '' : 'none';
+  document.getElementById('sinContratoObl').style.display = fm === 'RENOVACION' ? 'none' : '';
+  document.getElementById('sinContratoOpc').style.display = fm === 'RENOVACION' ? '' : 'none';
+  document.getElementById('sinCajaRenovacion').style.display = fm === 'RENOVACION' ? 'flex' : 'none';
 }
 function pintarBandejaSiniestralidad(lista) {
   const cont = document.getElementById('sinBandeja');
@@ -4989,7 +5021,7 @@ window.sofi2fa = function (data, urlBase) {
   body.sofi #barraConectado .estado { flex: 0 0 auto; font-size: 12px; }
   body.sofi #barraConectado .nombre-asesor { display: none; }
   /* Los atajos que el escritorio deja en la barra lateral, aquí vuelven a la barra */
-  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnAyudarBot,
+  body.sofi #barraConectado #btnBuscar, body.sofi #barraConectado #btnBuscarSms, body.sofi #barraConectado #btnSmsInvitacion, body.sofi #barraConectado #btnArchivoSms, body.sofi #barraConectado #btnFormatosEnviar, body.sofi #barraConectado #btnFormatosBuscar, body.sofi #barraConectado #btnAyudarBot,
   body.sofi #barraConectado #btnCola, body.sofi #barraConectado #btnAsesoresAdmin, body.sofi #barraConectado #btnEtiquetas,
   body.sofi #barraConectado #btnRespuestasRapidas, body.sofi #barraConectado #btnHorarios, body.sofi #barraConectado #btnUsuariosSofi,
   body.sofi #barraConectado #btnReporte { display: inline-flex !important; align-items: center; }
@@ -5183,5 +5215,6 @@ window.sofi2fa = function (data, urlBase) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', preparar); else preparar();
 })();
 </script>
+<script src="/static/formatos_menu.js"></script>
 </body>
 </html>

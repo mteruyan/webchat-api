@@ -286,6 +286,24 @@ input.corto { max-width: 130px; }
         <div class="nota">Aportes: cuántos meses aportaste a EsSalud en los tres años antes de tu cese (de 0 a 36).</div>
       </div>
 
+      <!-- Constancia de renovación: periodo e incremento los fija el asesor -->
+      <div class="bloque-formato" id="datosRENOVACION">
+        <div class="nota" style="margin-top:10px;">Revisa tus datos. Esta constancia confirma tu aceptación de la renovación de tu contrato:</div>
+        <div class="resumen-fijo" style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
+          Periodo: <b id="renPeriodo"></b><br>Incremento: <b id="renIncremento"></b> %
+        </div>
+      </div>
+
+      <!-- Solicitud de desafiliación -->
+      <div class="bloque-formato" id="datosDESAFILIACION">
+        <label for="desContrato">N° de contrato</label>
+        <input type="text" id="desContrato" readonly>
+        <div class="subtitulo-seccion" style="margin-top:14px;">Usuarios a desafiliar</div>
+        <div class="nota">Nombres completos y documento de cada persona que se desafilia (puedes incluirte).</div>
+        <div id="listaUsuarios"></div>
+        <button type="button" class="btn-secundario btn-chico" id="btnAgregarUsuario" style="margin-top:10px;">➕ Agregar usuario</button>
+      </div>
+
       <!-- Solicitud de reembolso -->
       <div class="bloque-formato" id="datosREEMBOLSO">
         <div class="subtitulo-seccion">Datos del titular</div>
@@ -343,11 +361,11 @@ input.corto { max-width: 130px; }
       <div id="reBloqueForma" style="display:none">
         <label>Forma de pago</label>
         <div class="opciones">
-          <label class="opcion"><input type="radio" name="reForma" value="ABONO"> 🏦 Abono en cuenta</label>
-          <label class="opcion"><input type="radio" name="reForma" value="CHEQUE"> 🧾 Cheque</label>
+          <label class="opcion"><input type="radio" name="reForma" value="ABONO"> Abono en cuenta</label>
+          <label class="opcion"><input type="radio" name="reForma" value="CHEQUE"> Cheque</label>
         </div>
-        <div id="reBloqueCheque" class="nota" style="display:none">El cheque se recoge en nuestras oficinas; solo se emiten los días martes y jueves a partir de las 3:00 p. m.</div>
-        <div id="reBloqueAbono" style="display:none">
+        <div class="nota" id="reNotaCheque" style="display:none">El cheque se recoge en nuestras oficinas (solo martes y jueves desde las 3:00 p. m.). Aun así, la cuenta y el CCI son obligatorios.</div>
+        <div id="reBloqueAbono">
           <label for="reBanco">Banco</label>
           <select id="reBanco"><option value="">Elige tu banco…</option><option value="BCP">Banco de Crédito BCP</option><option value="BBVA">BBVA Continental</option><option value="INTERBANK">Interbank</option><option value="SCOTIABANK">Scotiabank</option><option value="OTRO">Otro</option></select>
           <div id="reBancoOtroCaja" style="display:none"><label for="reBancoOtro">Nombre del banco</label><input type="text" id="reBancoOtro" maxlength="40"></div>
@@ -356,10 +374,10 @@ input.corto { max-width: 130px; }
             <label class="opcion"><input type="radio" name="reTipoCuenta" value="AHORROS"> Ahorros</label>
             <label class="opcion"><input type="radio" name="reTipoCuenta" value="CORRIENTE"> Corriente</label>
           </div>
-          <label for="reCuenta">N° de cuenta</label>
+          <label for="reCuenta">N° de cuenta *</label>
           <input type="text" id="reCuenta" maxlength="24" inputmode="numeric" autocomplete="off">
           <div class="nota" id="reNotaCuenta"></div>
-          <label for="reCci">CCI (código de cuenta interbancario, 20 dígitos)</label>
+          <label for="reCci">CCI (código de cuenta interbancario, 20 dígitos) *</label>
           <input type="text" id="reCci" maxlength="24" inputmode="numeric" autocomplete="off">
           <label for="reTitularCuenta">Nombre del titular de la cuenta</label>
           <input type="text" id="reTitularCuenta" maxlength="120">
@@ -459,6 +477,7 @@ input.corto { max-width: 130px; }
   var info = null;            // datos del servidor
   var formato = 'SINIESTRALIDAD';
   var PASOS = { SINIESTRALIDAD: ['pasoDoc', 'pasoDatos', 'pasoFirma'], LATENCIA: ['pasoDoc', 'pasoDatos', 'pasoFirma'],
+                RENOVACION: ['pasoDoc', 'pasoDatos', 'pasoFirma'], DESAFILIACION: ['pasoDoc', 'pasoDatos', 'pasoFirma'],
                 REEMBOLSO: ['pasoDoc', 'pasoDatos', 'pasoPago', 'pasoAdjuntos', 'pasoFirma'] };
   var TODAS = ['pasoDoc', 'pasoDatos', 'pasoPago', 'pasoAdjuntos', 'pasoFirma'];
   var pasos = PASOS.SINIESTRALIDAD;
@@ -469,7 +488,8 @@ input.corto { max-width: 130px; }
   var adjuntos = [];
   var maxAdjuntos = { medico: 4, sustento: 20 };
   var subiendoAdjunto = false;
-  var DIGITOS = { BBVA: { AHORROS: 20, CORRIENTE: 20 }, BCP: { AHORROS: 14, CORRIENTE: 13 },
+  var CODIGO_ENTIDAD = { BCP: '002', INTERBANK: '003', SCOTIABANK: '009', BBVA: '011' };
+  var DIGITOS = { BBVA: { AHORROS: 18, CORRIENTE: 18 }, BCP: { AHORROS: 14, CORRIENTE: 13 },
                   SCOTIABANK: { AHORROS: 10, CORRIENTE: 10 }, INTERBANK: { AHORROS: 13, CORRIENTE: 13 } };
   var BANCOS = { BCP: 'Banco de Crédito BCP', BBVA: 'BBVA Continental', INTERBANK: 'Interbank', SCOTIABANK: 'Scotiabank', OTRO: 'Otro' };
   var PARENTESCOS = { TITULAR: 'El mismo titular', CONYUGE: 'Cónyuge', HIJO: 'Hijo(a)', PADRE: 'Padre/Madre' };
@@ -545,14 +565,23 @@ input.corto { max-width: 130px; }
     document.title = (info.titulo || 'Firma tu documento') + ' - Sanitas Perú';
     $('barraPasos').innerHTML = pasos.map(function () { return '<span></span>'; }).join('');
     pasos.forEach(function (id, i) { var n = $(id).querySelector('.num'); if (n) n.textContent = (i + 1) + '. '; });
-    ['SINIESTRALIDAD', 'LATENCIA', 'REEMBOLSO'].forEach(function (f) { $('datos' + f).style.display = f === formato ? 'block' : 'none'; });
+    ['SINIESTRALIDAD', 'LATENCIA', 'RENOVACION', 'DESAFILIACION', 'REEMBOLSO'].forEach(function (f) { $('datos' + f).style.display = f === formato ? 'block' : 'none'; });
     $('datosComunes').style.display = formato === 'REEMBOLSO' ? 'none' : 'block';
-    if (formato === 'LATENCIA') {
+    if (formato === 'LATENCIA' || formato === 'RENOVACION' || formato === 'DESAFILIACION') {
       $('inTipo').querySelector('option[value="OTRO"]').remove();
-      $('latCese').max = new Date().toISOString().slice(0, 10);
     }
+    if (formato === 'LATENCIA') $('latCese').max = new Date().toISOString().slice(0, 10);
+    if (formato === 'RENOVACION') {
+      $('renPeriodo').textContent = (info.parametros && info.parametros.periodo) || '';
+      $('renIncremento').textContent = (info.parametros && info.parametros.incremento) || '';
+    }
+    if (formato === 'DESAFILIACION') $('desContrato').value = info.contrato || '';
     $('textoAcepto').textContent = formato === 'LATENCIA'
       ? 'Leí la declaración jurada y declaro que los datos son verdaderos.'
+      : formato === 'RENOVACION'
+      ? 'Leí la constancia y acepto la renovación de mi contrato en los términos indicados.'
+      : formato === 'DESAFILIACION'
+      ? 'Leí la solicitud y declaro que los datos de los usuarios a desafiliar son verdaderos.'
       : (formato === 'REEMBOLSO'
         ? 'Leí la solicitud, las declaraciones y la Ley N° 29733 de Protección de Datos Personales, y declaro que los datos son verdaderos.'
         : 'Leí la autorización y la Ley N° 29733 de Protección de Datos Personales, y autorizo a Sanitas Perú S.A. EPS a entregarme mi reporte de siniestralidad.');
@@ -563,8 +592,10 @@ input.corto { max-width: 130px; }
     if (!x.r.ok || !x.d.ok) { noDisponible(x.d); return; }
     info = x.d;
     maxDep = info.max_dependientes || 5;
+    maxUsuarios = info.max_usuarios || 5;
     if (info.max_adjuntos) maxAdjuntos = info.max_adjuntos;
     prepararFormato();
+    if (formato === 'DESAFILIACION') $('btnAgregarUsuario').onclick();
     $('inNombre').value = info.nombre || '';
     $('inTipo').value = info.tipo_documento === 'CE' ? 'CE' : (formato === 'LATENCIA' ? 'DNI' : (info.tipo_documento || 'DNI'));
     $('inNumero').value = info.n_documento || '';
@@ -750,6 +781,24 @@ input.corto { max-width: 130px; }
     numerarDependientes();
     f.querySelector('.dep-nombre').focus();
   };
+  var maxUsuarios = 5;
+  function numerarUsuarios() {
+    var filas = $('listaUsuarios').querySelectorAll('.dependiente');
+    filas.forEach(function (f, i) {
+      f.querySelector('.titulo-dep').textContent = 'Usuario ' + (i + 1);
+      f.querySelector('.quitar').style.display = filas.length > 1 ? '' : 'none';
+    });
+    $('btnAgregarUsuario').style.display = filas.length >= maxUsuarios ? 'none' : '';
+  }
+  $('btnAgregarUsuario').onclick = function () {
+    if ($('listaUsuarios').children.length >= maxUsuarios) return;
+    var f = filaDependiente();
+    f.querySelector('.quitar').onclick = function () { f.remove(); numerarUsuarios(); };
+    f.querySelector('.quitar').setAttribute('aria-label', 'Quitar usuario');
+    $('listaUsuarios').appendChild(f);
+    numerarUsuarios();
+    if ($('listaUsuarios').children.length > 1) f.querySelector('.dep-nombre').focus();
+  };
   $('chkDependientes').onchange = function () {
     var si = this.checked;
     $('bloqueDependientes').style.display = si ? 'block' : 'none';
@@ -773,17 +822,16 @@ input.corto { max-width: 130px; }
         r.closest('label').classList.toggle('elegida', r.checked);
       });
       if (e.target.name === 'reRegistrada') $('reBloqueForma').style.display = e.target.value === 'no' ? 'block' : 'none';
-      if (e.target.name === 'reForma') {
-        $('reBloqueAbono').style.display = e.target.value === 'ABONO' ? 'block' : 'none';
-        $('reBloqueCheque').style.display = e.target.value === 'CHEQUE' ? 'block' : 'none';
-      }
       if (e.target.name === 'reTipoCuenta') notaCuenta();
+      if (e.target.name === 'reForma') $('reNotaCheque').style.display = e.target.value === 'CHEQUE' ? 'block' : 'none';
     }
   });
   $('reBanco').onchange = function () { $('reBancoOtroCaja').style.display = this.value === 'OTRO' ? 'block' : 'none'; notaCuenta(); };
   function notaCuenta() {
     var d = (DIGITOS[$('reBanco').value] || {})[radio('reTipoCuenta')];
-    $('reNotaCuenta').textContent = d ? 'Debe tener ' + d + ' dígitos.' : '';
+    var b = $('reBanco').value;
+    $('reNotaCuenta').textContent = b === 'BBVA' ? 'Debe tener 18 dígitos y empezar con 0011.'
+      : (d ? 'Debe tener ' + d + ' dígitos.' : '');
   }
 
   function persona(prefijo) {
@@ -797,6 +845,18 @@ input.corto { max-width: 130px; }
       return { nombre: valor('inNombre'), tipo_documento: $('inTipo').value,
                n_documento: $('inNumero').value.trim().replace(/[\s.\-]/g, ''), domicilio: valor('latDomicilio'),
                empleador: valor('latEmpleador'), fecha_cese: $('latCese').value, aportes: $('latAportes').value.trim() };
+    }
+    if (formato === 'RENOVACION' || formato === 'DESAFILIACION') {
+      var base2 = { nombre: valor('inNombre'), tipo_documento: $('inTipo').value,
+                    n_documento: $('inNumero').value.trim().replace(/[\s.\-]/g, '') };
+      if (formato === 'DESAFILIACION') {
+        base2.usuarios = [];
+        $('listaUsuarios').querySelectorAll('.dependiente').forEach(function (f) {
+          var n = f.querySelector('.dep-nombre').value.trim(), d = f.querySelector('.dep-doc').value.trim().replace(/[\s.\-]/g, '');
+          if (n || d) base2.usuarios.push({ nombre: n, n_documento: d });
+        });
+      }
+      return base2;
     }
     if (formato === 'REEMBOLSO') {
       var pac = persona('rePac');
@@ -860,6 +920,19 @@ input.corto { max-width: 130px; }
     if (d.nombre.split(' ').length < 2 || d.nombre.length < 5) return 'Escribe tus nombres y apellidos completos.';
     e = validarDocumento(d.tipo_documento, d.n_documento, '');
     if (e) return e.replace('El DNI debe', 'El DNI debe');
+    if (formato === 'DESAFILIACION') {
+      if (!d.usuarios.length) return 'Agrega al menos un usuario a desafiliar.';
+      var vistos = {};
+      for (var k = 0; k < d.usuarios.length; k++) {
+        var u = d.usuarios[k];
+        if (u.nombre.split(/\s+/).length < 2) return 'Escribe nombres y apellidos completos del usuario ' + (k + 1) + '.';
+        if (!/^[A-Za-z0-9]{5,20}$/.test(u.n_documento)) return 'Revisa el N° de documento del usuario ' + (k + 1) + '.';
+        if (vistos[u.n_documento.toUpperCase()]) return 'El usuario ' + (k + 1) + ' está repetido.';
+        vistos[u.n_documento.toUpperCase()] = true;
+      }
+      return '';
+    }
+    if (formato === 'RENOVACION') return '';
     if (formato === 'LATENCIA') {
       if (d.domicilio.length < 8) return 'Escribe tu domicilio completo (calle, número, distrito).';
       if (d.empleador.length < 2) return 'Escribe el nombre de tu última entidad empleadora.';
@@ -883,20 +956,47 @@ input.corto { max-width: 130px; }
   }
 
   // ---------- Paso: forma de pago (reembolso) ----------
+  // Dígitos de control del CCI (módulo 10, pesos 1-2): el 1.º verifica entidad+oficina; el 2.º, los 12 de la cuenta.
+  function digitoControlCci(b) {
+    var suma = 0;
+    for (var i = 0; i < b.length; i++) { var p = parseInt(b.charAt(i), 10) * (i % 2 === 0 ? 1 : 2); suma += p > 9 ? p - 9 : p; }
+    return (10 - suma % 10) % 10;
+  }
+  function cciControlOk(c) {
+    return c.length === 20 && digitoControlCci(c.slice(0, 6)) === +c.charAt(18) && digitoControlCci(c.slice(6, 18)) === +c.charAt(19);
+  }
+  function cciCuentaCoincide(banco, cuenta, c) {   // mismas reglas que el servidor
+    var bloque = c.slice(6, 18);
+    if (banco === 'BBVA') return cuenta.length !== 18 || (c.slice(3, 6) === cuenta.slice(5, 8) && c.slice(8, 18) === cuenta.slice(8, 18));
+    if (banco === 'SCOTIABANK') return bloque.slice(bloque.length - cuenta.length) === cuenta;
+    var resto = cuenta.slice(3);
+    return cuenta.length > 3 && c.slice(3, 6) === cuenta.slice(0, 3) && bloque.slice(bloque.length - resto.length) === resto;
+  }
   function validarPago() {
     var d = leerDatos(), g = d.pago;
     if (!radio('reRegistrada')) return 'Indica si ya registraste tu cuenta en Sanitas.';
     if (d.cuenta_registrada) return '';
     if (!g.forma) return 'Elige la forma de pago: abono en cuenta o cheque.';
-    if (g.forma === 'CHEQUE') return '';
     if (!g.banco) return 'Elige el banco.';
     if (g.banco === 'OTRO' && g.banco_otro.length < 3) return 'Escribe el nombre del banco.';
     if (!g.tipo_cuenta) return 'Elige el tipo de cuenta.';
     var dig = (DIGITOS[g.banco] || {})[g.tipo_cuenta];
-    if (dig && g.n_cuenta.length !== dig) return 'El N° de cuenta debe tener ' + dig + ' dígitos.';
-    if (!dig && (g.n_cuenta.length < 6 || g.n_cuenta.length > 20)) return 'Revisa el N° de cuenta.';
-    if (g.cci && g.cci.length !== 20) return 'El CCI debe tener 20 dígitos.';
-    if (g.banco === 'OTRO' && !g.cci) return 'Para otros bancos, el CCI (20 dígitos) es obligatorio.';
+    if (g.banco === 'BBVA') {
+      if (!((g.n_cuenta.length === 18 && g.n_cuenta.indexOf('0011') === 0) || (g.n_cuenta.length === 20 && g.n_cuenta.indexOf('011') === 0)))
+        return 'El N° de cuenta BBVA debe tener 18 dígitos y empezar con 0011.';
+    } else {
+      if (dig && g.n_cuenta.length !== dig) return 'El N° de cuenta debe tener ' + dig + ' dígitos.';
+      if (!dig && (g.n_cuenta.length < 6 || g.n_cuenta.length > 20)) return 'Revisa el N° de cuenta.';
+    }
+    if (!g.n_cuenta) return 'Escribe el N° de cuenta.';
+    if (!g.cci) return 'El CCI (20 dígitos) es obligatorio.';
+    if (g.cci.length !== 20) return 'El CCI debe tener 20 dígitos.';
+    if (g.cci && CODIGO_ENTIDAD[g.banco] && g.cci.indexOf(CODIGO_ENTIDAD[g.banco]) !== 0)
+      return 'El CCI de ' + BANCOS[g.banco] + ' debe empezar con ' + CODIGO_ENTIDAD[g.banco] + '. Revisa el banco o el CCI.';
+    if (g.banco === 'BCP' || g.banco === 'INTERBANK' || g.banco === 'BBVA' || g.banco === 'SCOTIABANK') {
+      if (!cciControlOk(g.cci)) return 'El CCI no es válido (falla su dígito de control). Revisa que lo hayas escrito completo y sin errores.';
+      if (!cciCuentaCoincide(g.banco, g.n_cuenta, g.cci)) return 'El N° de cuenta y el CCI no corresponden entre sí. Revisa ambos números.';
+    }
     if (g.titular_cuenta.split(' ').length < 2) return 'Escribe el nombre completo del titular de la cuenta.';
     var dn = g.doc_numero.replace(/[\s.\-]/g, '');
     if ((g.doc_tipo === 'DNI' && !/^\d{8}$/.test(dn)) || (g.doc_tipo === 'RUC' && !/^\d{11}$/.test(dn)) ||
@@ -1002,13 +1102,33 @@ input.corto { max-width: 130px; }
       $('textoAutorizacion').innerHTML = h;
       return;
     }
+    if (formato === 'RENOVACION') {
+      var tdoc = d.tipo_documento === 'DNI' ? 'DNI' : 'CE';
+      $('textoAutorizacion').innerHTML = '<p style="text-align:center"><b>CONSTANCIA DE ACEPTACIÓN DE RENOVACIÓN DE CONTRATO</b></p>' +
+        '<p>Yo, <b>' + esc(d.nombre.toUpperCase()) + '</b>, identificado(a) con ' + tdoc + ' N.° <b>' + esc(d.n_documento.toUpperCase()) +
+        '</b>, manifiesto expresamente mi conformidad y aceptación de los términos y condiciones establecidos para la renovación de mi contrato correspondiente al periodo <b>' +
+        esc(info.parametros && info.parametros.periodo) + '</b>, incluyendo el incremento del <b>' + esc(info.parametros && info.parametros.incremento) + '</b> %.</p>' +
+        '<p>En señal de conformidad, suscribo el presente documento.</p><p>Fecha: ' + hoy.getDate() + ' de ' + MESES[hoy.getMonth()] + ' del ' + hoy.getFullYear() + '</p>';
+      return;
+    }
+    if (formato === 'DESAFILIACION') {
+      var tdoc2 = d.tipo_documento === 'DNI' ? 'DNI' : 'CE';
+      $('textoAutorizacion').innerHTML = '<p style="text-align:center"><b>SOLICITUD DE DESAFILIACIÓN</b></p>' +
+        '<p>Por medio del presente, yo, <b>' + esc(d.nombre.toUpperCase()) + '</b>, identificado(a) con ' + tdoc2 + ' N.° <b>' + esc(d.n_documento.toUpperCase()) +
+        '</b>, solicito formalmente la desafiliación del/de los usuario(s) que se detallan a continuación:</p>' +
+        '<table><tr><th>Nombres y apellidos</th><th>N° documento</th></tr>' +
+        d.usuarios.map(function (x) { return '<tr><td>' + esc(x.nombre.toUpperCase()) + '</td><td>' + esc(x.n_documento.toUpperCase()) + '</td></tr>'; }).join('') +
+        '</table><p>La presente solicitud corresponde a la desafiliación del/de los usuario(s) antes mencionado(s), quien(es) se encuentra(n) registrado(s) bajo el contrato N.° <b>' +
+        esc(info.contrato) + '</b>.</p><p>Agradezco se sirvan realizar las gestiones correspondientes para efectuar la desafiliación solicitada.</p>' +
+        '<p>En señal de conformidad, suscribo el presente documento.</p>';
+      return;
+    }
     if (formato === 'REEMBOLSO') {
       var t = d.titular, p = d.paciente_es_titular ? t : d.paciente, g = d.pago;
       var nom = function (x) { return esc([x.nombres, x.paterno, x.materno].filter(Boolean).join(' ').toUpperCase()); };
       var pagoTxt = d.cuenta_registrada ? 'Cuenta ya registrada en Sanitas'
-        : (g.forma === 'CHEQUE' ? 'Cheque (se recoge en nuestras oficinas)'
-          : 'Abono en cuenta ' + (g.tipo_cuenta === 'AHORROS' ? 'de ahorros' : 'corriente') + ' ' +
-            esc(g.banco === 'OTRO' ? g.banco_otro : BANCOS[g.banco] || '') + ' N° ' + esc(g.n_cuenta) + (g.cci ? ' (CCI ' + esc(g.cci) + ')' : ''));
+        : (g.forma === 'CHEQUE' ? 'Cheque (recojo en oficinas) · cuenta ' : 'Abono en cuenta ') + (g.tipo_cuenta === 'AHORROS' ? 'de ahorros' : 'corriente') + ' ' +
+            esc(g.banco === 'OTRO' ? g.banco_otro : BANCOS[g.banco] || '') + ' N° ' + esc(g.n_cuenta) + ' (CCI ' + esc(g.cci) + ')';
       h = '<p style="text-align:center"><b>SOLICITUD DE REEMBOLSO</b></p>' +
         '<table><tr><th>Titular</th><td>' + nom(t) + ' · ' + esc(t.tipo_documento) + ' ' + esc(t.n_documento) + ' · ' + esc(t.edad) + ' años</td></tr>' +
         '<tr><th>Paciente</th><td>' + nom(p) + ' · ' + esc(p.tipo_documento) + ' ' + esc(p.n_documento) + ' · ' + esc(p.edad) + ' años · ' +
@@ -1131,6 +1251,12 @@ input.corto { max-width: 130px; }
             $('textoExito').innerHTML = 'Tu asesor ya la tiene y te enviará tu reporte de siniestralidad a <b>' + esc(x.d.correo || datos.correo) + '</b>.';
           } else if (formato === 'LATENCIA') {
             $('tituloExito').textContent = '¡Listo! Recibimos tu declaración jurada';
+            $('textoExito').textContent = 'Tu asesor ya la tiene y continuará con tu trámite.';
+          } else if (formato === 'RENOVACION') {
+            $('tituloExito').textContent = '¡Listo! Recibimos tu constancia de renovación';
+            $('textoExito').textContent = 'Tu asesor ya la tiene y continuará con la renovación de tu contrato.';
+          } else if (formato === 'DESAFILIACION') {
+            $('tituloExito').textContent = '¡Listo! Recibimos tu solicitud de desafiliación';
             $('textoExito').textContent = 'Tu asesor ya la tiene y continuará con tu trámite.';
           } else {
             $('tituloExito').textContent = '¡Listo! Recibimos tu solicitud de reembolso';

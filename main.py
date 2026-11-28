@@ -585,8 +585,8 @@ _HEADERS_CONSOLA = {
 # su pantalla (asesor.html / supervisor.html), muestra "Hay una versión nueva · Actualizar".
 # ---------------------------------------------------------------------------
 VERSION_SERVIDOR = os.environ.get("K_REVISION") or f"local-{int(time.time())}"
-_ARCHIVOS_PANTALLA = {"asesor": ("static/asesor.html",),
-                      "supervisor": ("static/supervisor.html", "static/supervisor_resumen.js")}
+_ARCHIVOS_PANTALLA = {"asesor": ("static/asesor.html", "static/formatos_menu.js"),
+                      "supervisor": ("static/supervisor.html", "static/supervisor_resumen.js", "static/formatos_menu.js")}
 _hash_pantallas: dict = {}
 
 
@@ -619,6 +619,12 @@ def consola_asesor():
 def supervisor_resumen_js():
     """Tabla resumen de asesores de la consola de supervisor (se carga desde supervisor.html)."""
     return FileResponse("static/supervisor_resumen.js", media_type="application/javascript", headers=_HEADERS_CONSOLA)
+
+
+@app.get("/static/formatos_menu.js")
+def formatos_menu_js():
+    """Menú «Formatos» (envío por correo y búsqueda de firmados) de las consolas de asesor y supervisor."""
+    return FileResponse("static/formatos_menu.js", media_type="application/javascript", headers=_HEADERS_CONSOLA)
 
 
 @app.get("/supervisor")
@@ -2437,30 +2443,6 @@ async def _cerrar_y_notificar(conversacion_id: int, etiqueta_cierre_id, cerrado_
     })
     if cerrado_por in ("asesor", "supervisor"):
         _lanzar_aviso_cierre(conversacion_id)
-
-    # Invitación a Programas de Salud (Vive Sano/Krystal): si en esta conversación se
-    # procesó una receta con un diagnóstico de programa (ver procesar-receta,
-    # campo PROCESAR_RECETA.response.tiene_programa), se invita recién AQUÍ, al
-    # cerrar — no antes, para no interrumpir al cliente mientras resuelve su receta
-    # con la asesora. Mensaje de solo texto (no botones): la conversación ya está
-    # cerrada, así que no se reengancha la navegación del bot para esto.
-    try:
-        _, variables_cierre = _obtener_nodo_y_variables(conversacion_id)
-        receta_resp = (variables_cierre.get("PROCESAR_RECETA") or {}).get("response") or {}
-        if receta_resp.get("tiene_programa"):
-            texto_programa = (
-                supervisor.obtener_configuracion("mensaje_invita_programa")
-                or MENSAJES_AUTOMATICOS["mensaje_invita_programa"]["default"]
-            )
-            if texto_programa:
-                _guardar_mensaje_sistema(conversacion_id, texto_programa)
-                if manager.widget_conectado(conversacion_id):
-                    await manager.enviar_a_widget(conversacion_id, {
-                        "type": "mensaje_bot", "payload": {"texto": texto_programa},
-                    })
-    except Exception:
-        logger.warning("No se pudo enviar la invitación a Programas de Salud (conversación %s)",
-                        conversacion_id, exc_info=True)
 
     # Encuesta de satisfacción (solo campañas con la encuesta activada y si hubo un asesor; ver encuesta.py).
     # Si el cliente no tiene el chat abierto, queda pendiente y se le muestra al volver (dentro de 24 h).
@@ -4804,6 +4786,12 @@ def _enviar_sms_respuesta(accion: dict) -> bool:
 _espera_enviada: dict = {}   # conversacion_id -> último payload mandado al widget (solo se reenvía si cambia)
 
 
+def _espera_activa() -> bool:
+    """Tarjeta de espera (posición, tiempo estimado y "Avísame") en el widget. Retirada en nov-2026 porque la
+    estimación no reflejaba la realidad; se reactiva con la configuración espera_cola_activa = si."""
+    return (supervisor.obtener_configuracion("espera_cola_activa") or "no").strip().lower() in ("si", "sí")
+
+
 def _umbral_aviso_cola() -> int:
     return _cfg_entero("cola_aviso_minutos", 1, 240, espera_cola.UMBRAL_DEFECTO)
 
@@ -4816,6 +4804,18 @@ async def _enviar_espera(conversacion_id: int, websocket=None):
         logger.warning("No se pudo estimar la espera de %s", conversacion_id, exc_info=True)
         return
     if not lista:
+        return
+    if not _espera_activa():
+        # Retirada: no se muestra posición ni tiempo (y se limpia una tarjeta que haya quedado de antes).
+        evento = {"type": "espera_cola", "payload": {}}
+        if websocket is not None:
+            try:
+                await websocket.send_json(evento)
+            except Exception:
+                pass
+        else:
+            await manager.enviar_a_widget(conversacion_id, evento)
+        await _invitar_actualizacion(conversacion_id, "espera", websocket)
         return
     payload = espera_cola.para_widget(lista[0])
     _espera_enviada[conversacion_id] = payload
@@ -5015,6 +5015,8 @@ async def _revisar_colas():
         await asignacion.reintentar_cola(manager)
     except Exception:  # noqa: BLE001
         logger.exception("Falló el reintento de asignación de la cola")
+    if not _espera_activa():
+        return   # tarjeta de espera retirada; la reasignación de arriba sí sigue corriendo
     lista = await asyncio.to_thread(espera_cola.estado_colas, _umbral_aviso_cola())
     vigentes = set()
     for e in lista:
@@ -6379,7 +6381,8 @@ RETOMAR_HORAS = 24
 
 def _retomable(conversacion_id: int) -> dict | None:
     """Última conversación del mismo cliente (mismo navegador o mismo celular verificado) cerrada por un asesor o
-    supervisor en las últimas RETOMAR_HORAS, si la actual sigue en el bot."""
+    supervisor en las últimas RETOMAR_HORAS, si la actual sigue en el bot. No se ofrece si esa conversación fue un
+    "Pase de atención" (campaña con código que empieza por pases_)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -6397,6 +6400,7 @@ def _retomable(conversacion_id: int) -> dict | None:
                           OR (NULLIF(u.telefono, '') IS NOT NULL AND u2.telefono = u.telefono))
                      AND c2.estado = 'cerrada' AND c2.cerrado_por IN ('asesor', 'supervisor')
                      AND c2.asesor_id IS NOT NULL AND c2.cerrado_en > %s
+                     AND LEFT(cam.codigo, 7) <> 'pases_'
                    ORDER BY c2.cerrado_en DESC LIMIT 1""",
                 (conversacion_id, datetime.now(LIMA_TZ) - timedelta(hours=RETOMAR_HORAS)))
             fila = cur.fetchone()
@@ -7238,6 +7242,14 @@ MENSAJES_AUTOMATICOS = {
         "etiqueta": "Encuesta con nota 1 o 2: escribe si para que el asesor que atendió también reciba la alerta (la misma que el supervisor; si no está conectado, le llega al entrar), o no para que solo la reciba el supervisor",
         "default": "si",
     },
+    "tope_sin_respuesta": {
+        "etiqueta": "Tope de clientes sin primera respuesta por asesora: quien ya tiene tantos clientes esperando que le escriban no recibe más, y el cliente espera en la cola hasta que una asesora se libere. 0 = sin tope",
+        "default": "3",
+    },
+    "espera_cola_activa": {
+        "etiqueta": "Tarjeta de espera en el chat (posición, tiempo estimado y \"Avísame cuando me toque\"). Retirada porque la estimación no era confiable. Escribe si para volver a mostrarla o no para ocultarla",
+        "default": "no",
+    },
     "cola_aviso_minutos": {
         "etiqueta": "Clientes que esperan asesor (en cola o en la bandeja de su asesora sin primera respuesta): desde cuántos minutos de espera estimada se les ofrece \"Avísame cuando me toque\" (push y SMS cuando quede 1 persona antes que ellos). Solo el número, p. ej. 15",
         "default": "15",
@@ -7269,10 +7281,6 @@ MENSAJES_AUTOMATICOS = {
     "mensaje_cierre_conversacion": {
         "etiqueta": "Mensaje al cerrar una conversación",
         "default": "",
-    },
-    "mensaje_invita_programa": {
-        "etiqueta": "Mensaje al cerrar una conversación donde se procesó una receta con diagnóstico de Programas de Salud (Vive Sano/Krystal). Se manda como mensaje aparte, antes de la encuesta de satisfacción. Déjalo vacío para no invitar",
-        "default": "💙 Vimos que tu receta tiene un tratamiento que puede beneficiarse de nuestros programas de salud: recordatorios, tips y seguimiento cercano, sin costo adicional. Si quieres inscribirte, ingresa al menú principal y entra a Consultas Generales > Programas de Salud.",
     },
     "widget_url": {
         "etiqueta": "URL pública donde vive el widget (la página del sitio de Sanitas que tiene el script del webchat) — se usa para armar el enlace del SMS saliente",
@@ -8474,6 +8482,48 @@ async def _siniestralidad_asesor(tipo: str, payload: dict, asesor_id: int) -> di
     if r.get("ok"):
         r["bandeja"] = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id)
     return dict(r, accion="enviar", conversacion_id=conv)
+
+
+# ---- Menú «Formatos» (asesor y supervisor): envío por correo sin conversación y búsqueda de firmados ----
+@app.get("/formatos/opciones")
+async def formatos_opciones(authorization: str | None = Header(None)):
+    asesor_id = await asyncio.to_thread(_verificar_staff, authorization)
+    return {"ok": True, "correo_configurado": siniestralidad.correo_configurado(),
+            "formatos": {k: {"titulo": v["titulo"], "vigencia_horas": v["vigencia_horas"]}
+                         for k, v in siniestralidad.FORMATOS.items()},
+            "enviados": await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id, 15, True)}
+
+
+@app.post("/formatos/enviar")
+async def formatos_enviar(request: Request, authorization: str | None = Header(None)):
+    asesor_id = await asyncio.to_thread(_verificar_staff, authorization)
+    try:
+        datos = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Solicitud inválida")
+    r = await asyncio.to_thread(siniestralidad.enviar_por_correo, asesor_id, datos if isinstance(datos, dict) else {})
+    if r.get("ok"):
+        r["enviados"] = await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id, 15, True)
+    return r
+
+
+@app.post("/formatos/anular")
+async def formatos_anular(request: Request, authorization: str | None = Header(None)):
+    asesor_id = await asyncio.to_thread(_verificar_staff, authorization)
+    try:
+        datos = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Solicitud inválida")
+    ok = await asyncio.to_thread(siniestralidad.anular, asesor_id, (datos or {}).get("id"))
+    return {"ok": ok, "motivo": "" if ok else "Ese enlace ya no se puede anular.",
+            "enviados": await asyncio.to_thread(siniestralidad.bandeja_asesor, asesor_id, 15, True)}
+
+
+@app.get("/formatos/firmados")
+async def formatos_firmados(q: str = "", authorization: str | None = Header(None)):
+    """Formatos firmados de un cliente, por correo, celular o documento (búsqueda exacta)."""
+    await asyncio.to_thread(_verificar_staff, authorization)
+    return await asyncio.to_thread(siniestralidad.buscar_firmados, q)
 
 
 @app.get("/dashboard/rendimiento")
@@ -9967,6 +10017,34 @@ async def ws_supervisor(websocket: WebSocket, token: str):
                 asesor_id_objetivo = payload.get("asesor_id")
                 nuevo_cupo = payload.get("nuevo_cupo")
                 _cambiar_cupo_asesor(asesor_id_objetivo, nuevo_cupo)
+                await supervisor.notificar_cambio_asesor(asesor_id_objetivo, manager)
+
+            elif tipo == "cambiar_pausa_asesor":
+                # El supervisor pausa o reanuda a un asesor conectado. Usa la misma pausa que el
+                # asesor (queda registrada en asesor_pausas con motivo "otro" y el detalle indicado).
+                try:
+                    asesor_id_objetivo = int(payload.get("asesor_id"))
+                except (TypeError, ValueError):
+                    continue
+                pausar = bool(payload.get("pausado"))
+                if not manager.asesor_conectado(asesor_id_objetivo):
+                    await manager.enviar_a_supervisor(supervisor_id, {
+                        "type": "error_pausa_asesor",
+                        "payload": {"asesor_id": asesor_id_objetivo,
+                                    "motivo": "El asesor no está conectado."},
+                    })
+                    continue
+                _cambiar_pausa_asesor(
+                    asesor_id_objetivo, pausar, "otro" if pausar else None,
+                    "Pausado por supervisor" if pausar else None,
+                )
+                await manager.enviar_a_asesor(asesor_id_objetivo, {
+                    "type": "pausa_por_supervisor",
+                    "payload": {"pausado": pausar},
+                })
+                if not pausar:
+                    # al reanudar, intenta tomar de la cola de inmediato (igual que el asesor)
+                    await asignacion.asignar_desde_cola_para_asesor(asesor_id_objetivo, manager)
                 await supervisor.notificar_cambio_asesor(asesor_id_objetivo, manager)
 
             elif tipo == "crear_etiqueta":

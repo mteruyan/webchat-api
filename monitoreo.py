@@ -286,10 +286,15 @@ def datos(desde, hasta, ahora: dict) -> dict:
                   "fuente_cpu": _FUENTE_CPU},
         "disponible": True,
     }
+    propia = {"instancia": INSTANCIA, "revision": REVISION, "memoria_mb": resultado["ahora"]["memoria_mb"],
+              "cpu_pct": resultado["ahora"]["cpu_pct"], "ws_widget": ahora.get("ws_widget"),
+              "ws_asesores": ahora.get("ws_asesores"), "ws_supervisores": ahora.get("ws_supervisores"),
+              "bd_en_uso": ahora.get("bd_en_uso"), "minutos_encendido": resultado["ahora"]["minutos_encendido"]}
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             tz = "America/Lima"
+            resultado["instancias"] = _instancias_activas(cur, propia)
             totales = _consultar(cur, """
                 SELECT count(*), COALESCE(sum(bloqueos), 0), max(bloqueo_max_s), COALESCE(sum(sin_hilos), 0),
                        COALESCE(sum(peticiones), 0), COALESCE(sum(errores_5xx), 0), max(memoria_mb), avg(memoria_mb),
@@ -331,20 +336,29 @@ def datos(desde, hasta, ahora: dict) -> dict:
                     "ws_asesores": f[4], "peticiones": int(f[5] or 0), "errores_5xx": int(f[6] or 0),
                     "bloqueos": int(f[7] or 0), "bd_max": f[8]} for f in filas]
                 # Arranques: el primero de cada revisión es un deploy; los siguientes de la misma revisión, reinicios.
+                picos_p, picos_d, picos_h = _picos_sumados(cur, desde, hasta, tz)
+                resultado["periodo"].update({k: v for k, v in picos_p.items() if v is not None})
+                for r in resultado["por_dia"]:
+                    r.update({k: v for k, v in picos_d.get(r["dia"], {}).items() if v is not None})
+                for r in resultado["por_hora"]:
+                    r.update({k: v for k, v in picos_h.get(r["hora"], {}).items() if v is not None})
+                # Arranques: se clasifican en Python (ver _clasificar_arranques); hace falta la historia completa
+                # para saber cuál fue el primero de cada revisión.
                 filas = _consultar(cur, f"""
                     SELECT to_char(ocurrido_en AT TIME ZONE '{tz}', 'YYYY-MM-DD HH24:MI'), tipo, revision, instancia,
-                           detalle, ocurrido_en >= %s AND ocurrido_en < %s,
-                           CASE WHEN tipo = 'arranque' AND row_number() OVER (PARTITION BY revision, tipo
-                                                                              ORDER BY ocurrido_en) = 1
-                                THEN 'deploy' WHEN tipo = 'arranque' THEN 'reinicio' ELSE tipo END
+                           detalle, ocurrido_en >= %s AND ocurrido_en < %s, ocurrido_en
                     FROM servidor_eventos WHERE ocurrido_en < %s ORDER BY ocurrido_en""", (desde, hasta, hasta)) or []
-                eventos = [{"cuando": f[0], "tipo": f[6], "revision": f[2], "instancia": f[3], "detalle": f[4]}
-                           for f in filas if f[5]]
+                eventos = [e for e in _clasificar_arranques(filas) if e["en_periodo"]]
+                for e in eventos:
+                    e.pop("en_periodo", None)
                 resultado["eventos"] = eventos[-60:]
                 resultado["periodo"].update(
                     deploys=sum(e["tipo"] == "deploy" for e in eventos),
-                    reinicios=sum(e["tipo"] == "reinicio" for e in eventos),
-                    reinicios_vigia=sum(e["tipo"] == "reinicio_vigia" for e in eventos))
+                    instancias_nuevas=sum(e["tipo"] == "instancia_nueva" for e in eventos),
+                    reinicios=sum(e["tipo"].startswith("reinicio_") for e in eventos),
+                    reinicios_vigia=sum(e["tipo"] == "reinicio_vigia" for e in eventos),
+                    reinicios_drenaje=sum(e["tipo"] == "reinicio_drenaje" for e in eventos),
+                    reinicios_autoprueba=sum(e["tipo"] == "reinicio_autoprueba" for e in eventos))
             resultado["bd"] = _datos_bd(cur)
             ia = _consultar(cur, f"""
                 SELECT to_char(date_trunc('day', creado_en AT TIME ZONE '{tz}'), 'YYYY-MM-DD'), count(*),
@@ -357,6 +371,83 @@ def datos(desde, hasta, ahora: dict) -> dict:
     finally:
         release_connection(conn)
     return resultado
+
+
+# Con varias instancias cada una guarda su propia fila cada 5 minutos. Para "cuántos clientes hay en total" hay que
+# SUMAR las instancias dentro de la misma ventana de 5 minutos y recién entonces tomar el máximo (max() sobre las
+# filas sueltas daría solo el pico de una instancia).
+_VENTANAS = """WITH v AS (
+    SELECT to_timestamp(floor(extract(epoch FROM registrado_en) / 300) * 300) AS t,
+           sum(ws_widget) AS w, sum(ws_asesores) AS a, sum(bd_max) AS bd
+    FROM monitoreo_servidor WHERE registrado_en >= %s AND registrado_en < %s GROUP BY 1)"""
+
+
+def _picos_sumados(cur, desde, hasta, tz: str) -> tuple:
+    """(periodo, {dia: {...}}, {hora: {...}}) con los picos del TOTAL de instancias."""
+    f = _consultar(cur, _VENTANAS + " SELECT max(w), max(a), max(bd), count(*) FROM v", (desde, hasta))
+    periodo = ({"ws_widget_max": f[0][0], "ws_asesores_max": f[0][1], "bd_max": f[0][2], "ventanas": f[0][3]}
+               if f else {})
+    filas = _consultar(cur, _VENTANAS + f"""
+        SELECT to_char(date_trunc('day', t AT TIME ZONE '{tz}'), 'YYYY-MM-DD'), max(w), max(a), max(bd)
+        FROM v GROUP BY 1""", (desde, hasta)) or []
+    por_dia = {x[0]: {"ws_widget_max": x[1], "ws_asesores_max": x[2], "bd_max": x[3]} for x in filas}
+    filas = _consultar(cur, _VENTANAS + f"""
+        SELECT to_char(date_trunc('hour', t AT TIME ZONE '{tz}'), 'YYYY-MM-DD"T"HH24'), max(w), max(a), max(bd)
+        FROM v GROUP BY 1""", (desde, hasta)) or []
+    por_hora = {x[0]: {"ws_widget": x[1], "ws_asesores": x[2], "bd_max": x[3]} for x in filas}
+    return periodo, por_dia, por_hora
+
+
+def _instancias_activas(cur, propia: dict) -> list:
+    """Una entrada por instancia que guardó una medición en los últimos 7 minutos (las que siguen vivas), con su
+    última medición. La instancia que responde esta consulta se muestra con sus valores EN VIVO."""
+    filas = _consultar(cur, """
+        SELECT DISTINCT ON (m.instancia) m.instancia, m.revision, m.memoria_mb, m.cpu_prom, m.cpu_max, m.ws_widget,
+               m.ws_asesores, m.ws_supervisores, m.bd_max,
+               extract(epoch FROM (now() - m.registrado_en)) / 60.0,
+               (SELECT extract(epoch FROM (now() - min(e.ocurrido_en))) / 60.0
+                  FROM servidor_eventos e WHERE e.instancia = m.instancia AND e.tipo = 'arranque')
+        FROM monitoreo_servidor m WHERE m.registrado_en > now() - interval '7 minutes'
+        ORDER BY m.instancia, m.registrado_en DESC""") or []
+    lista = [{"instancia": f[0], "revision": f[1], "memoria_mb": _num(f[2]), "cpu_pct": _num(f[3]),
+              "ws_widget": f[5], "ws_asesores": f[6], "ws_supervisores": f[7], "bd_en_uso": f[8],
+              "hace_min": round(float(f[9] or 0), 1), "minutos_encendido": int(f[10]) if f[10] is not None else None,
+              "en_vivo": False} for f in filas]
+    for x in lista:
+        if x["instancia"] == propia["instancia"]:
+            x.update(propia, en_vivo=True, hace_min=0)
+            break
+    else:
+        lista.append(dict(propia, en_vivo=True, hace_min=0))   # recién arrancada: aún sin filas guardadas
+    lista.sort(key=lambda x: (not x["en_vivo"], x["instancia"]))
+    return lista
+
+
+def _clasificar_arranques(filas: list) -> list:
+    """filas: (cuando, tipo, revision, instancia, detalle, en_periodo, ocurrido_en) ordenadas por fecha.
+    Con dos instancias, que arranque otra de la misma revisión NO es un reinicio. Tipos resultantes:
+      deploy          primer arranque de una revisión
+      instancia_nueva arranque posterior de la misma revisión sin un reinicio propio justo antes (Cloud Run subió
+                      otra instancia o reemplazó una; un cierre por falta de memoria también se ve así)
+      reinicio        arranque que sigue (≤10 min) a un reinicio provocado por el servidor
+      reinicio_vigia / reinicio_drenaje / reinicio_autoprueba   el propio servidor se reinició"""
+    vistas, ultimo_reinicio, salida = set(), {}, []
+    for cuando, tipo, rev, inst, detalle, en_periodo, ts in filas:
+        if tipo == "arranque":
+            if rev not in vistas:
+                clase = "deploy"
+            elif rev in ultimo_reinicio and (ts - ultimo_reinicio[rev]).total_seconds() <= 600:
+                clase = "reinicio"
+            else:
+                clase = "instancia_nueva"
+            vistas.add(rev)
+        else:
+            clase = tipo
+            if tipo.startswith("reinicio_"):
+                ultimo_reinicio[rev] = ts
+        salida.append({"cuando": cuando, "tipo": clase, "revision": rev, "instancia": inst, "detalle": detalle,
+                       "en_periodo": en_periodo})
+    return salida
 
 
 def _datos_bd(cur) -> dict:

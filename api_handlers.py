@@ -1117,7 +1117,7 @@ TIPOS_SMS = {
     "turno": "⏳ Aviso de turno", "encuesta": "⭐ Encuesta", "plan": "📋 Plan de salud",
     "recordatorio_receta": "💊 Recordatorio de receta", "aviso_cierre": "🔔 Aviso al cerrar", "seguimiento": "📣 Seguimiento", "otro": "✉️ SMS",
 }
-_sms_sin_tabla_avisado = False
+_sms_sin_registrar = 0   # SMS enviados que no se pudieron registrar (para avisar en el log, no solo una vez)
 
 
 def _registrar_sms(*args):
@@ -1128,7 +1128,7 @@ def _registrar_sms(*args):
 
 def _registrar_sms_ahora(celular, texto, ok, error, tipo, conversacion_id, enviado_por):
     """Nunca interrumpe el envío: si falta la tabla, avisa una vez en el log."""
-    global _sms_sin_tabla_avisado
+    global _sms_sin_registrar
     digitos = "".join(ch for ch in str(celular or "") if ch.isdigit())
     conn = None
     try:
@@ -1145,11 +1145,13 @@ def _registrar_sms_ahora(celular, texto, ok, error, tipo, conversacion_id, envia
     except Exception as e:  # noqa: BLE001
         if conn:
             conn.rollback()
-        if "sms_enviados" in str(e) and not _sms_sin_tabla_avisado:
-            _sms_sin_tabla_avisado = True
-            logger.warning("Falta ejecutar migracion_sms_enviados.sql: los SMS no quedan registrados")
-        elif "sms_enviados" not in str(e):
-            logger.warning("No se pudo registrar el SMS enviado: %s", str(e)[:200])
+        _sms_sin_registrar += 1
+        # ERROR (no WARNING) y repetido cada 25 SMS: un SMS sin registro es un hueco en la contabilidad.
+        if _sms_sin_registrar == 1 or _sms_sin_registrar % 25 == 0:
+            if "sms_enviados" in str(e):
+                logger.error("SMS SIN REGISTRAR (%s en total): falta ejecutar migracion_sms_enviados.sql", _sms_sin_registrar)
+            else:
+                logger.error("SMS SIN REGISTRAR (%s en total): %s", _sms_sin_registrar, str(e)[:200])
     finally:
         if conn:
             release_connection(conn)
@@ -1164,11 +1166,18 @@ def enviar_sms_danaconnect(celular: str, mensaje: str, tipo: str = "otro", conve
     cliente que le escriban de vuelta (nuestro reemplazo de los mensajes
     salientes de WhatsApp, ya que un webchat no tiene push nativo)."""
     payload = {"NUM": f" {celular}", "TEXT": mensaje, "URL": ""}
+    auth = os.environ.get("DANACONNECT_AUTH", "").strip()
+    if not auth:
+        # Sin credencial no se puede enviar: igual queda registrado como fallido (auditoria completa).
+        logger.error("SMS no enviado a %s: falta DANACONNECT_AUTH", celular)
+        _registrar_sms(celular, texto_registro or mensaje, False, "Falta DANACONNECT_AUTH", tipo,
+                       conversacion_id, enviado_por)
+        return False
     headers = {
         "Content-Type": "application/json",
-        "Authorization": os.environ["DANACONNECT_AUTH"],
+        "Authorization": auth,
     }
-    # Queda registrado (ok o falló) para "Buscar SMS"; texto_registro permite guardar el código enmascarado.
+    # Queda registrado (ok o falló) para "Buscar SMS" y contabilidad; texto_registro permite guardar el código enmascarado.
     # Danaconnect a veces responde 404/5xx sueltos (nov-2026: ~2-3% de los códigos, repartidos en el día, sin
     # caída): el código se reintenta UNA vez, solo si Danaconnect respondió con error (rápido). Si no responde
     # (timeout), NO se reintenta: el código se manda dentro del turno del bot, con una conexión de la base tomada,

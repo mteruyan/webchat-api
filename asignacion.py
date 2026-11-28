@@ -6,9 +6,12 @@ Reglas:
   (desconectado_en IS NULL) — la marca main.py al abrir/cerrar el WebSocket de /ws/asesor.
 - Un asesor solo recibe conversaciones de campañas en su perfil (asesor_campanas).
 - Se respeta asesores.max_conversaciones_simultaneas (parametrizable, default 5).
-- Entre los candidatos válidos, se asigna al que tenga MENOS conversaciones activas
-  ahora mismo; en caso de empate, al que lleve menos asignadas en el día (Lima); si
-  persiste, al que lleve más tiempo sin recibir una.
+- Entre los candidatos válidos, se asigna al que tenga MENOS conversaciones sin primera respuesta (clientes
+  esperando que le escriban); luego al que tenga menos en su bandeja principal, menos activas, menos asignadas
+  en el día (Lima) y, si persiste, al que lleve más tiempo sin recibir una.
+- Tope de espera por asesora (configuración tope_sin_respuesta, 3 por defecto, 0 = sin tope): quien ya tiene
+  tantos clientes sin primera respuesta no recibe más; el cliente espera en la cola y lo toma la primera asesora
+  que se libere (así una asesora atrasada no acumula clientes mientras otra está libre).
 - La cola (conversaciones en estado='en_cola') se atiende en orden FIFO por
   entrada_cola dentro de cada campaña.
 - Además de asignarse al derivar y cuando la asesora se conecta, sale de pausa o cierra, main.py llama a
@@ -54,14 +57,33 @@ def _historial(cur, conversacion_id: int) -> list:
     ]
 
 
+TOPE_SIN_RESPUESTA_DEFECTO = 3
+
+_SIN_PRIMERA_RESPUESTA = """c.estado = 'asignada' AND c.pausada_en IS NULL AND c.asignado_en IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM mensajes m WHERE m.conversacion_id = c.id
+                               AND m.emisor_tipo IN ('asesor', 'supervisor') AND m.enviado_en >= c.asignado_en)"""
+
+
+def _tope_sin_respuesta(cur) -> int:
+    """Máximo de clientes sin primera respuesta por asesora (0 = sin tope). Se lee con el mismo cursor."""
+    try:
+        cur.execute("SELECT valor FROM configuracion_global WHERE clave = 'tope_sin_respuesta'")
+        fila = cur.fetchone()
+        return max(0, min(50, int(str(fila[0]).strip()))) if fila and str(fila[0]).strip() else TOPE_SIN_RESPUESTA_DEFECTO
+    except Exception:  # noqa: BLE001 — valor inválido: se usa el defecto
+        return TOPE_SIN_RESPUESTA_DEFECTO
+
+
 def _buscar_mejor_asesor(cur, campana_id: int):
     """Devuelve (asesor_id, nombre_display) del mejor candidato conectado, con
-    cupo y que NO esté en pausa, o None."""
+    cupo, que NO esté en pausa y que no haya llegado al tope de clientes sin primera respuesta, o None."""
+    tope = _tope_sin_respuesta(cur)
     cur.execute(
-        """
+        f"""
         SELECT a.id, a.nombre_display, a.max_conversaciones_simultaneas,
                COUNT(c.id) FILTER (WHERE c.estado = 'asignada' AND c.pausada_en IS NULL) AS en_principal,
                COUNT(c.id) FILTER (WHERE c.estado = 'asignada') AS activas,
+               COALESCE(sr.n, 0) AS sin_respuesta,
                COUNT(c.id) FILTER (WHERE c.asignado_en >= date_trunc('day', NOW() AT TIME ZONE 'America/Lima')
                                                           AT TIME ZONE 'America/Lima') AS asignadas_hoy,
                MAX(c.asignado_en) AS ultima_asignacion
@@ -69,17 +91,21 @@ def _buscar_mejor_asesor(cur, campana_id: int):
         JOIN asesor_campanas ac ON ac.asesor_id = a.id AND ac.campana_id = %s
         JOIN asesor_sesiones s ON s.asesor_id = a.id AND s.desconectado_en IS NULL
         LEFT JOIN conversaciones c ON c.asesor_id = a.id
+        LEFT JOIN (SELECT c.asesor_id, COUNT(*) AS n FROM conversaciones c
+                   WHERE {_SIN_PRIMERA_RESPUESTA} GROUP BY c.asesor_id) sr ON sr.asesor_id = a.id
         WHERE a.activo = TRUE AND a.en_pausa = FALSE
-        GROUP BY a.id, a.nombre_display, a.max_conversaciones_simultaneas
+        GROUP BY a.id, a.nombre_display, a.max_conversaciones_simultaneas, sr.n
         HAVING COUNT(c.id) FILTER (WHERE c.estado = 'asignada') < a.max_conversaciones_simultaneas
+           AND (%s = 0 OR COALESCE(sr.n, 0) < %s)
+        -- 0) menos clientes sin primera respuesta (los que esperan que la asesora les escriba);
         -- 1) menos conversaciones en la bandeja PRINCIPAL (las pausadas no cuentan: el asesor no las está
         --    trabajando); 2) empate: menos activas en total (principal + pausados); 3) empate: menos asignadas
         --    hoy; 4) empate: quien lleva más tiempo sin recibir una (NULLS FIRST = nunca recibió); 5) id.
         -- El cupo (HAVING) sigue contando principal + pausados.
-        ORDER BY en_principal ASC, activas ASC, asignadas_hoy ASC, ultima_asignacion ASC NULLS FIRST, a.id ASC
+        ORDER BY sin_respuesta ASC, en_principal ASC, activas ASC, asignadas_hoy ASC, ultima_asignacion ASC NULLS FIRST, a.id ASC
         LIMIT 1
         """,
-        (campana_id,),
+        (campana_id, tope, tope),
     )
     row = cur.fetchone()
     return (row[0], row[1]) if row else None
@@ -412,6 +438,11 @@ async def asignar_desde_cola_para_asesor(asesor_id: int, manager):
             )
             activas = cur.fetchone()[0]
             cupo_libre = cupo_max - activas
+            tope = _tope_sin_respuesta(cur)
+            if tope:
+                cur.execute(f"SELECT COUNT(*) FROM conversaciones c WHERE c.asesor_id = %s AND {_SIN_PRIMERA_RESPUESTA}",
+                            (asesor_id,))
+                cupo_libre = min(cupo_libre, tope - cur.fetchone()[0])
             if cupo_libre <= 0:
                 return
 
